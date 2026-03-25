@@ -32,7 +32,7 @@ const env = {
   appSlug: "invoice-tracker",
   // S3 URL of the app logo - set this to the URL returned by generate_image when creating custom logo
   // Leave empty to use the default icon from assets/images/icon.png
-  logoUrl: "",
+  logoUrl: "https://d2xsxph8kpxj0f.cloudfront.net/310519663477501681/K9hvSw3XxNX7UuMuv9u5sq/icon-fT5vpf5N4CATQKjjBUze57.png",
   scheme: schemeFromBundleId,
   iosBundleId: bundleId,
   androidPackage: bundleId,
@@ -86,6 +86,18 @@ const config: ExpoConfig = {
   },
   plugins: [
     "expo-router",
+    [
+      "expo-camera",
+      {
+        "cameraPermission": "Allow Invoice Tracker to access your camera to scan receipts."
+      }
+    ],
+    [
+      "expo-image-picker",
+      {
+        "photosPermission": "Allow Invoice Tracker to access your photos to upload receipts."
+      }
+    ],
     [
       "expo-audio",
       {
