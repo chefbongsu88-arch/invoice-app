@@ -42,6 +42,11 @@ const config: ExpoConfig = {
   name: env.appName,
   slug: env.appSlug,
   version: "1.0.0",
+  extra: {
+    eas: {
+      projectId: "invoice-tracker-manus",
+    },
+  },
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: env.scheme,
