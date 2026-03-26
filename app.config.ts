@@ -137,6 +137,7 @@ const config: ExpoConfig = {
     typedRoutes: true,
     reactCompiler: true,
   },
+  runtimeVersion: "1.0.0",
 };
 
 export default config;
