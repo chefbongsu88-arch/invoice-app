@@ -5,6 +5,31 @@ import { invokeLLM } from "./_core/llm";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 
+// Helper function to generate JWT for Google Service Account
+async function generateJWT(serviceAccount: any): Promise<string> {
+  const { createSign } = await import("crypto");
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: serviceAccount.client_email,
+    scope: "https://www.googleapis.com/auth/spreadsheets",
+    aud: "https://oauth2.googleapis.com/token",
+    exp: now + 3600,
+    iat: now,
+  };
+  
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signatureInput = `${header}.${encodedPayload}`;
+  
+  const sign = createSign("RSA-SHA256");
+  sign.update(signatureInput);
+  const signature = sign.sign(serviceAccount.private_key, "base64url");
+  
+  return `${signatureInput}.${signature}`;
+}
+
+
 const RECEIPT_PARSE_PROMPT = `You are an expert at extracting data from Spanish receipts and invoices.
 Analyze the provided receipt image and extract the following fields.
 Return ONLY a valid JSON object with these exact keys:
@@ -126,7 +151,6 @@ export const appRouter = router({
         z.object({
           spreadsheetId: z.string(),
           sheetName: z.string().default("Invoices"),
-          apiKey: z.string(),
           rows: z.array(
             z.object({
               source: z.string(),
@@ -144,11 +168,41 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input }) => {
-        const { spreadsheetId, sheetName, apiKey, rows } = input;
+        const { spreadsheetId, sheetName, rows } = input;
         
-        if (!apiKey) {
-          throw new Error("Google API Key is required. Please configure it in Settings.");
+        // Get Service Account credentials from environment
+        const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+        if (!serviceAccountJson) {
+          throw new Error("Service Account credentials not configured. Please contact support.");
         }
+
+        let serviceAccount: any;
+        try {
+          serviceAccount = JSON.parse(serviceAccountJson);
+        } catch (e) {
+          throw new Error("Invalid Service Account credentials configuration.");
+        }
+
+        // Get access token using Service Account
+        const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({
+            grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            assertion: await generateJWT(serviceAccount),
+          }),
+        });
+
+        if (!tokenRes.ok) {
+          const errText = await tokenRes.text();
+          console.error("Token error:", errText);
+          throw new Error("Failed to authenticate with Google Sheets.");
+        }
+
+        const tokenData = await tokenRes.json() as { access_token: string };
+        const accessToken = tokenData.access_token;
 
         // First, ensure header row exists
         const headerValues = [
@@ -156,19 +210,24 @@ export const appRouter = router({
         ];
 
         // Check if sheet exists and has headers
-        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:K1?key=${apiKey}`;
-        const checkRes = await fetch(checkUrl);
+        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:K1`;
+        const checkRes = await fetch(checkUrl, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
 
         if (checkRes.ok) {
           const checkData = await checkRes.json() as { values?: string[][] };
           if (!checkData.values || checkData.values.length === 0) {
             // Add headers
             await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:K1?valueInputOption=RAW&key=${apiKey}`,
+              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:K1?valueInputOption=RAW`,
               {
                 method: "PUT",
                 headers: {
                   "Content-Type": "application/json",
+                  Authorization: `Bearer ${accessToken}`,
                 },
                 body: JSON.stringify({ values: headerValues }),
               }
@@ -192,11 +251,13 @@ export const appRouter = router({
           now,
         ]);
 
-        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:K:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS&key=${apiKey}`;
+        const range = `${sheetName}!A:K`;
+        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
         const appendRes = await fetch(appendUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
           },
           body: JSON.stringify({ values: dataRows }),
         });
@@ -204,7 +265,8 @@ export const appRouter = router({
         if (!appendRes.ok) {
           const errText = await appendRes.text();
           console.error("Sheets API error:", errText);
-          throw new Error(`Failed to export to Google Sheets. Check your API key and spreadsheet ID.`);
+          console.error("Append URL:", appendUrl);
+          throw new Error(`Failed to export to Google Sheets. Please try again.`);
         }
 
         return { success: true, rowsAdded: rows.length, message: "Invoice exported successfully" };

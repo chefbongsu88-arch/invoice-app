@@ -74,21 +74,13 @@ export default function ReceiptDetailScreen() {
       return;
     }
 
-    if (!apiKey) {
-      Alert.alert(
-        "API Key Not Configured",
-        "Please enter your Google API Key in Settings.",
-        [{ text: "OK" }]
-      );
-      return;
-    }
+    // API Key is no longer required - using Service Account authentication
 
     setExporting(true);
     try {
       await exportMutation.mutateAsync({
         spreadsheetId,
         sheetName,
-        apiKey,
         rows: [
           {
             source: invoice.source === "camera" ? "Camera" : "Email",

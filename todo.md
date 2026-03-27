@@ -67,6 +67,14 @@
 - [x] Enable direct Google Sheets export without Gmail connection
 - [x] Add manual invoice entry feature in Receipts tab
 - [x] Handle missing invoice numbers (auto-generate if empty)
-- [ ] Test complete flow: Camera scan → AI extraction → Google Sheets export
-- [ ] Test manual invoice entry → Google Sheets export
-- [ ] Verify Settings page shows new API Key field
+- [x] Test complete flow: Camera scan → AI extraction → Google Sheets export
+- [x] Test manual invoice entry → Google Sheets export
+- [x] Verify Settings page shows new API Key field
+
+## Google Sheets Service Account Fix (Current Session)
+- [x] Identified JWT token generation issue
+- [x] Fixed Google Sheets API URL format (removed extra colon)
+- [x] Verified Service Account authentication working
+- [x] Tested end-to-end export: Camera receipt → Google Sheets
+- [x] Confirmed data successfully written to Google Sheet
+- [x] IKEA receipt data (€324, €56.23 IVA, €267.77 Base) exported successfully
