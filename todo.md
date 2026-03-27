@@ -53,3 +53,9 @@
 - [x] Statistics data calculation (total, IVA, average)
 - [x] Month selection filter
 - [x] Statistics tab in navigation
+
+## OAuth Simplification (Current)
+- [x] Remove complex OAuth flow from settings screen
+- [x] Simplify Gmail integration to use backend API directly
+- [x] Simplify Google Sheets export to use backend API directly
+- [x] Test end-to-end flow without OAuth complications

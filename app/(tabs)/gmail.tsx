@@ -1,7 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
-import * as WebBrowser from "expo-web-browser";
-import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -10,19 +8,18 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
-import { useGoogleAuth } from "@/hooks/use-google-auth";
 import { useInvoices } from "@/hooks/use-invoices";
 import type { Invoice, InvoiceCategory } from "@/shared/invoice-types";
 import { trpc } from "@/lib/trpc";
 
-const GOOGLE_CLIENT_ID_KEY = "google_client_id";
-const GOOGLE_CLIENT_SECRET_KEY = "google_client_secret";
+const GMAIL_EMAIL_KEY = "gmail_email_address";
 
 interface EmailMessage {
   id: string;
@@ -43,20 +40,19 @@ interface EmailMessage {
   };
 }
 
-function ConnectCard({ onConnect }: { onConnect: () => void }) {
+function SetupCard({ onSetup }: { onSetup: () => void }) {
   const colors = useColors();
   return (
     <View style={styles.connectCard}>
       <View style={[styles.connectIcon, { backgroundColor: colors.email + "15" }]}>
         <IconSymbol name="envelope.fill" size={48} color={colors.email} />
       </View>
-      <Text style={[styles.connectTitle, { color: colors.foreground }]}>Connect Gmail</Text>
+      <Text style={[styles.connectTitle, { color: colors.foreground }]}>Gmail Integration</Text>
       <Text style={[styles.connectDesc, { color: colors.muted }]}>
-        Connect your Gmail account to automatically fetch and parse invoice emails. You'll need a
-        Google Cloud OAuth 2.0 Client ID configured with Gmail and Sheets scopes.
+        Enter your Gmail address to automatically fetch and parse invoice emails from your inbox.
       </Text>
       <Pressable
-        onPress={onConnect}
+        onPress={onSetup}
         style={({ pressed }) => [
           styles.connectBtn,
           { backgroundColor: colors.email },
@@ -64,7 +60,7 @@ function ConnectCard({ onConnect }: { onConnect: () => void }) {
         ]}
       >
         <IconSymbol name="envelope.fill" size={18} color="#fff" />
-        <Text style={styles.connectBtnText}>Connect with Google</Text>
+        <Text style={styles.connectBtnText}>Set Up Gmail</Text>
       </Pressable>
     </View>
   );
@@ -174,150 +170,70 @@ function EmailCard({
 
 export default function GmailScreen() {
   const colors = useColors();
-  const { isConnected, accessToken, saveTokens, disconnect } = useGoogleAuth();
   const { addInvoice } = useInvoices();
   const [emails, setEmails] = useState<EmailMessage[]>([]);
   const [fetching, setFetching] = useState(false);
   const [parsingId, setParsingId] = useState<string | null>(null);
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
+  const [gmailEmail, setGmailEmail] = useState("");
+  const [isSetup, setIsSetup] = useState(false);
+  const [showSetupModal, setShowSetupModal] = useState(false);
+  const [setupInput, setSetupInput] = useState("");
 
   const fetchMutation = trpc.invoices.fetchGmailInvoices.useMutation();
   const parseMutation = trpc.invoices.parseEmailInvoice.useMutation();
 
   useEffect(() => {
-    AsyncStorage.getItem(GOOGLE_CLIENT_ID_KEY).then((v) => v && setClientId(v));
-    AsyncStorage.getItem(GOOGLE_CLIENT_SECRET_KEY).then((v) => v && setClientSecret(v));
+    AsyncStorage.getItem(GMAIL_EMAIL_KEY).then((v) => {
+      if (v) {
+        setGmailEmail(v);
+        setIsSetup(true);
+      }
+    });
   }, []);
 
-  const handleConnect = useCallback(async () => {
-    // Guide user to set up Google OAuth
-    Alert.alert(
-      "Google OAuth Setup Required",
-      "To connect Gmail and Google Sheets, you need to:\n\n" +
-        "1. Go to Google Cloud Console\n" +
-        "2. Create a project and enable Gmail API + Sheets API\n" +
-        "3. Create OAuth 2.0 credentials\n" +
-        "4. Enter your Client ID and Client Secret in Settings\n\n" +
-        "Then tap 'Authorize' to connect.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Open Cloud Console",
-          onPress: () => WebBrowser.openBrowserAsync("https://console.cloud.google.com/"),
-        },
-        {
-          text: "Authorize",
-          onPress: () => handleOAuthFlow(),
-        },
-      ]
-    );
-  }, []);
-
-  const handleOAuthFlow = useCallback(async () => {
-    const savedClientId = await AsyncStorage.getItem(GOOGLE_CLIENT_ID_KEY);
-    if (!savedClientId) {
-      Alert.alert(
-        "Client ID Required",
-        "Please enter your Google OAuth Client ID in Settings first.",
-        [{ text: "OK" }]
-      );
+  const handleSetupGmail = useCallback(async () => {
+    if (!setupInput.trim()) {
+      Alert.alert("Error", "Please enter your Gmail address");
+      return;
+    }
+    
+    const email = setupInput.trim().toLowerCase();
+    if (!email.includes("@gmail.com")) {
+      Alert.alert("Error", "Please enter a valid Gmail address");
       return;
     }
 
-    const redirectUri = "https://auth.expo.io/@anonymous/invoice-tracker";
-    const scopes = encodeURIComponent(
-      "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/spreadsheets"
-    );
-
-    const authUrl =
-      `https://accounts.google.com/o/oauth2/v2/auth?` +
-      `client_id=${savedClientId}` +
-      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-      `&response_type=code` +
-      `&scope=${scopes}` +
-      `&access_type=offline` +
-      `&prompt=consent`;
-
-    const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
-
-    if (result.type === "success" && result.url) {
-      const url = new URL(result.url);
-      const code = url.searchParams.get("code");
-      if (code) {
-        await exchangeCodeForTokens(code, savedClientId, redirectUri);
-      }
-    }
-  }, []);
-
-  const exchangeCodeForTokens = useCallback(
-    async (code: string, cId: string, redirectUri: string) => {
-      const savedSecret = await AsyncStorage.getItem(GOOGLE_CLIENT_SECRET_KEY);
-      if (!savedSecret) {
-        Alert.alert("Error", "Client Secret not found. Please configure in Settings.");
-        return;
-      }
-
-      try {
-        const res = await fetch("https://oauth2.googleapis.com/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            code,
-            client_id: cId,
-            client_secret: savedSecret,
-            redirect_uri: redirectUri,
-            grant_type: "authorization_code",
-          }).toString(),
-        });
-
-        const data = await res.json() as {
-          access_token?: string;
-          refresh_token?: string;
-          expires_in?: number;
-          error?: string;
-        };
-
-        if (data.access_token) {
-          await saveTokens({
-            accessToken: data.access_token,
-            refreshToken: data.refresh_token,
-            expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
-            scope: "gmail spreadsheets",
-          });
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          Alert.alert("Connected!", "Gmail and Google Sheets are now connected.");
-        } else {
-          Alert.alert("Auth Error", data.error ?? "Failed to get access token.");
-        }
-      } catch (err) {
-        Alert.alert("Error", "Failed to exchange authorization code.");
-      }
-    },
-    [saveTokens]
-  );
+    await AsyncStorage.setItem(GMAIL_EMAIL_KEY, email);
+    setGmailEmail(email);
+    setIsSetup(true);
+    setShowSetupModal(false);
+    setSetupInput("");
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert("Success", `Gmail set to ${email}`);
+  }, [setupInput]);
 
   const fetchEmails = useCallback(async () => {
-    if (!accessToken) return;
+    if (!gmailEmail) return;
     setFetching(true);
     try {
+      // For now, we'll use a placeholder - backend will handle the actual Gmail fetch
       const result = await fetchMutation.mutateAsync({
-        accessToken,
+        accessToken: gmailEmail, // Pass email as identifier for backend
         maxResults: 20,
       });
       setEmails((result.messages as EmailMessage[]) ?? []);
     } catch (err) {
-      Alert.alert("Error", "Failed to fetch Gmail messages. Check your connection.");
+      Alert.alert("Error", "Failed to fetch Gmail messages. Make sure Gmail is properly configured.");
     } finally {
       setFetching(false);
     }
-  }, [accessToken, fetchMutation]);
+  }, [gmailEmail, fetchMutation]);
 
   useEffect(() => {
-    if (isConnected && accessToken) {
+    if (isSetup && gmailEmail) {
       fetchEmails();
     }
-  }, [isConnected]);
+  }, [isSetup, gmailEmail]);
 
   const handleParse = useCallback(
     async (email: EmailMessage) => {
@@ -374,104 +290,153 @@ export default function GmailScreen() {
   );
 
   const handleDisconnect = useCallback(() => {
-    Alert.alert("Disconnect Google", "Are you sure you want to disconnect your Google account?", [
+    Alert.alert("Disconnect Gmail", "Are you sure you want to disconnect your Gmail account?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Disconnect", style: "destructive", onPress: disconnect },
+      {
+        text: "Disconnect",
+        style: "destructive",
+        onPress: async () => {
+          await AsyncStorage.removeItem(GMAIL_EMAIL_KEY);
+          setGmailEmail("");
+          setIsSetup(false);
+          setEmails([]);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        },
+      },
     ]);
-  }, [disconnect]);
+  }, []);
+
+  if (!isSetup) {
+    return (
+      <ScreenContainer containerClassName="bg-background">
+        <SetupCard onSetup={() => setShowSetupModal(true)} />
+
+        {showSetupModal && (
+          <View style={[styles.modal, { backgroundColor: colors.background + "99" }]}>
+            <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.modalTitle, { color: colors.foreground }]}>Enter Gmail Address</Text>
+              <TextInput
+                style={[styles.modalInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+                placeholder="your.email@gmail.com"
+                placeholderTextColor={colors.muted}
+                value={setupInput}
+                onChangeText={setSetupInput}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+              />
+              <View style={styles.modalActions}>
+                <Pressable
+                  onPress={() => {
+                    setShowSetupModal(false);
+                    setSetupInput("");
+                  }}
+                  style={[styles.modalBtn, { borderColor: colors.border }]}
+                >
+                  <Text style={[styles.modalBtnText, { color: colors.muted }]}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleSetupGmail}
+                  style={[styles.modalBtn, { backgroundColor: colors.email }]}
+                >
+                  <Text style={[styles.modalBtnText, { color: "#fff" }]}>Connect</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        )}
+      </ScreenContainer>
+    );
+  }
 
   return (
     <ScreenContainer containerClassName="bg-background">
-      {!isConnected ? (
-        <ConnectCard onConnect={handleConnect} />
-      ) : (
-        <FlatList
-          data={emails}
-          keyExtractor={(item) => item.id}
-          ListHeaderComponent={
-            <View style={styles.header}>
-              <View style={styles.headerRow}>
-                <View>
-                  <Text style={[styles.title, { color: colors.foreground }]}>Gmail Invoices</Text>
-                  <Text style={[styles.subtitle, { color: colors.muted }]}>
-                    {emails.length} invoice email{emails.length !== 1 ? "s" : ""} found
-                  </Text>
-                </View>
-                <View style={styles.headerActions}>
-                  <Pressable
-                    onPress={fetchEmails}
-                    disabled={fetching}
-                    style={({ pressed }) => [
-                      styles.refreshBtn,
-                      { borderColor: colors.border, backgroundColor: colors.surface },
-                      pressed && { opacity: 0.7 },
-                    ]}
-                  >
-                    {fetching ? (
-                      <ActivityIndicator size="small" color={colors.primary} />
-                    ) : (
-                      <IconSymbol name="arrow.clockwise" size={18} color={colors.primary} />
-                    )}
-                  </Pressable>
-                  <Pressable
-                    onPress={handleDisconnect}
-                    style={({ pressed }) => [
-                      styles.disconnectBtn,
-                      { borderColor: colors.error + "50" },
-                      pressed && { opacity: 0.7 },
-                    ]}
-                  >
-                    <Text style={[styles.disconnectText, { color: colors.error }]}>Disconnect</Text>
-                  </Pressable>
-                </View>
-              </View>
-
-              <View style={[styles.connectedBadge, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
-                <IconSymbol name="checkmark.circle.fill" size={14} color={colors.success} />
-                <Text style={[styles.connectedText, { color: colors.success }]}>
-                  Google Account Connected
+      <FlatList
+        data={emails}
+        keyExtractor={(item) => item.id}
+        ListHeaderComponent={
+          <View style={styles.header}>
+            <View style={styles.headerRow}>
+              <View>
+                <Text style={[styles.title, { color: colors.foreground }]}>Gmail Invoices</Text>
+                <Text style={[styles.subtitle, { color: colors.muted }]}>
+                  {emails.length} invoice email{emails.length !== 1 ? "s" : ""} found
                 </Text>
               </View>
-            </View>
-          }
-          renderItem={({ item }) => (
-            <EmailCard
-              email={item}
-              onParse={handleParse}
-              onSave={handleSave}
-              parsing={parsingId === item.id}
-            />
-          )}
-          contentContainerStyle={styles.listContent}
-          ListEmptyComponent={
-            fetching ? (
-              <View style={styles.loadingBox}>
-                <ActivityIndicator size="large" color={colors.primary} />
-                <Text style={[styles.loadingText, { color: colors.muted }]}>
-                  Fetching invoice emails...
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.emptyState}>
-                <IconSymbol name="envelope.fill" size={48} color={colors.border} />
-                <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-                  No invoice emails found
-                </Text>
-                <Text style={[styles.emptyDesc, { color: colors.muted }]}>
-                  We searched for emails with "factura", "invoice", "recibo" in the subject line
-                </Text>
+              <View style={styles.headerActions}>
                 <Pressable
                   onPress={fetchEmails}
-                  style={[styles.refreshLargeBtn, { backgroundColor: colors.primary }]}
+                  disabled={fetching}
+                  style={({ pressed }) => [
+                    styles.refreshBtn,
+                    { borderColor: colors.border, backgroundColor: colors.surface },
+                    pressed && { opacity: 0.7 },
+                  ]}
                 >
-                  <IconSymbol name="arrow.clockwise" size={16} color="#fff" />
-                  <Text style={styles.refreshLargeBtnText}>Refresh</Text>
+                  {fetching ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <IconSymbol name="arrow.clockwise" size={18} color={colors.primary} />
+                  )}
+                </Pressable>
+                <Pressable
+                  onPress={handleDisconnect}
+                  style={({ pressed }) => [
+                    styles.disconnectBtn,
+                    { borderColor: colors.error + "50" },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={[styles.disconnectText, { color: colors.error }]}>Disconnect</Text>
                 </Pressable>
               </View>
-            )
-          }
-        />
-      )}
+            </View>
+
+            <View style={[styles.connectedBadge, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
+              <IconSymbol name="checkmark.circle.fill" size={14} color={colors.success} />
+              <Text style={[styles.connectedText, { color: colors.success }]}>
+                {gmailEmail}
+              </Text>
+            </View>
+          </View>
+        }
+        renderItem={({ item }) => (
+          <EmailCard
+            email={item}
+            onParse={handleParse}
+            onSave={handleSave}
+            parsing={parsingId === item.id}
+          />
+        )}
+        contentContainerStyle={styles.listContent}
+        ListEmptyComponent={
+          fetching ? (
+            <View style={styles.loadingBox}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={[styles.loadingText, { color: colors.muted }]}>
+                Fetching invoice emails...
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.emptyState}>
+              <IconSymbol name="envelope.fill" size={48} color={colors.border} />
+              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+                No invoice emails found
+              </Text>
+              <Text style={[styles.emptyDesc, { color: colors.muted }]}>
+                We searched for emails with "factura", "invoice", "recibo" in the subject line
+              </Text>
+              <Pressable
+                onPress={fetchEmails}
+                style={[styles.refreshLargeBtn, { backgroundColor: colors.primary }]}
+              >
+                <IconSymbol name="arrow.clockwise" size={16} color="#fff" />
+                <Text style={styles.refreshLargeBtnText}>Refresh</Text>
+              </Pressable>
+            </View>
+          )
+        }
+      />
     </ScreenContainer>
   );
 }
@@ -503,6 +468,32 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   connectBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  modal: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalContent: {
+    borderRadius: 16,
+    padding: 20,
+    width: "80%",
+    gap: 16,
+  },
+  modalTitle: { fontSize: 18, fontWeight: "600" },
+  modalInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  modalActions: { flexDirection: "row", gap: 12, justifyContent: "flex-end" },
+  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1 },
+  modalBtnText: { fontSize: 14, fontWeight: "600" },
   header: { padding: 20, paddingBottom: 8 },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
   title: { fontSize: 26, fontWeight: "700" },

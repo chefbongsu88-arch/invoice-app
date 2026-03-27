@@ -1,8 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as WebBrowser from "expo-web-browser";
 import { useEffect, useState } from "react";
 import {
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,11 +12,8 @@ import {
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
-import { useGoogleAuth } from "@/hooks/use-google-auth";
 
 const SETTINGS_KEY = "app_settings_v1";
-const GOOGLE_CLIENT_ID_KEY = "google_client_id";
-const GOOGLE_CLIENT_SECRET_KEY = "google_client_secret";
 
 interface AppSettings {
   spreadsheetId: string;
@@ -123,17 +118,12 @@ function EditableField({
 
 export default function SettingsScreen() {
   const colors = useColors();
-  const { isConnected, disconnect } = useGoogleAuth();
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
 
   useEffect(() => {
     AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
       if (raw) setSettings(JSON.parse(raw) as AppSettings);
     });
-    AsyncStorage.getItem(GOOGLE_CLIENT_ID_KEY).then((v) => v && setClientId(v));
-    AsyncStorage.getItem(GOOGLE_CLIENT_SECRET_KEY).then((v) => v && setClientSecret(v));
   }, []);
 
   const saveSettings = async (updated: AppSettings) => {
@@ -141,79 +131,10 @@ export default function SettingsScreen() {
     setSettings(updated);
   };
 
-  const handleDisconnect = () => {
-    Alert.alert("Disconnect Google", "Are you sure?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Disconnect", style: "destructive", onPress: disconnect },
-    ]);
-  };
-
   return (
     <ScreenContainer containerClassName="bg-background">
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={[styles.title, { color: colors.foreground }]}>Settings</Text>
-
-        {/* Google Account */}
-        <SectionHeader title="Google Account" />
-        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <View style={[styles.settingRow, { borderBottomColor: colors.border }]}>
-            <View style={styles.settingLeft}>
-              <View style={[styles.settingIcon, { backgroundColor: (isConnected ? colors.success : colors.muted) + "20" }]}>
-                <IconSymbol name="checkmark.seal.fill" size={18} color={isConnected ? colors.success : colors.muted} />
-              </View>
-              <View>
-                <Text style={[styles.settingLabel, { color: colors.foreground }]}>Google Account</Text>
-                <Text style={[styles.settingValue, { color: isConnected ? colors.success : colors.muted }]}>
-                  {isConnected ? "Connected" : "Not connected"}
-                </Text>
-              </View>
-            </View>
-            {isConnected && (
-              <Pressable
-                onPress={handleDisconnect}
-                style={[styles.smallBtn, { borderColor: colors.error + "50" }]}
-              >
-                <Text style={[styles.smallBtnText, { color: colors.error }]}>Disconnect</Text>
-              </Pressable>
-            )}
-          </View>
-        </View>
-
-        {/* Google OAuth Credentials */}
-        <SectionHeader title="Google OAuth Credentials" />
-        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <EditableField
-            label="Client ID"
-            value={clientId}
-            placeholder="Your Google OAuth Client ID"
-            onSave={async (v) => {
-              await AsyncStorage.setItem(GOOGLE_CLIENT_ID_KEY, v);
-              setClientId(v);
-            }}
-          />
-          <EditableField
-            label="Client Secret"
-            value={clientSecret}
-            placeholder="Your Google OAuth Client Secret"
-            secure
-            onSave={async (v) => {
-              await AsyncStorage.setItem(GOOGLE_CLIENT_SECRET_KEY, v);
-              setClientSecret(v);
-            }}
-          />
-        </View>
-
-        <Pressable
-          onPress={() => WebBrowser.openBrowserAsync("https://console.cloud.google.com/apis/credentials")}
-          style={[styles.infoBox, { backgroundColor: colors.primary + "10", borderColor: colors.primary + "30" }]}
-        >
-          <IconSymbol name="info.circle.fill" size={16} color={colors.primary} />
-          <Text style={[styles.infoText, { color: colors.muted }]}>
-            Create OAuth 2.0 credentials at Google Cloud Console with Gmail API and Sheets API enabled.
-            Tap to open Google Cloud Console.
-          </Text>
-          <IconSymbol name="chevron.right" size={14} color={colors.primary} />
-        </Pressable>
 
         {/* Spreadsheet Configuration */}
         <SectionHeader title="Google Sheets Configuration" />
@@ -274,6 +195,46 @@ export default function SettingsScreen() {
             <Text style={[styles.settingValue, { color: colors.muted }]}>Spain (EUR / IVA)</Text>
           </View>
         </View>
+
+        {/* Quick Start Guide */}
+        <SectionHeader title="Quick Start" />
+        <View style={[styles.guideBox, { backgroundColor: colors.primary + "10", borderColor: colors.primary + "30" }]}>
+          <View style={styles.guideStep}>
+            <View style={[styles.stepNumber, { backgroundColor: colors.primary }]}>
+              <Text style={styles.stepNumberText}>1</Text>
+            </View>
+            <View style={styles.stepContent}>
+              <Text style={[styles.stepTitle, { color: colors.foreground }]}>Scan Receipts</Text>
+              <Text style={[styles.stepDesc, { color: colors.muted }]}>
+                Use the Scan tab to capture paper receipts with your camera. AI will automatically extract the data.
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.guideStep}>
+            <View style={[styles.stepNumber, { backgroundColor: colors.primary }]}>
+              <Text style={styles.stepNumberText}>2</Text>
+            </View>
+            <View style={styles.stepContent}>
+              <Text style={[styles.stepTitle, { color: colors.foreground }]}>Connect Gmail</Text>
+              <Text style={[styles.stepDesc, { color: colors.muted }]}>
+                Go to Gmail tab and enter your email address to automatically fetch invoice emails.
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.guideStep}>
+            <View style={[styles.stepNumber, { backgroundColor: colors.primary }]}>
+              <Text style={styles.stepNumberText}>3</Text>
+            </View>
+            <View style={styles.stepContent}>
+              <Text style={[styles.stepTitle, { color: colors.foreground }]}>Export to Sheets</Text>
+              <Text style={[styles.stepDesc, { color: colors.muted }]}>
+                Enter your Google Sheets ID above and export all invoices with one tap.
+              </Text>
+            </View>
+          </View>
+        </View>
       </ScrollView>
     </ScreenContainer>
   );
@@ -292,13 +253,9 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderBottomWidth: 1,
   },
-  settingLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-  settingIcon: { width: 34, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center" },
   settingLabel: { fontSize: 15, fontWeight: "500" },
   settingRight: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1, justifyContent: "flex-end" },
   settingValue: { fontSize: 13, maxWidth: 200 },
-  smallBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
-  smallBtnText: { fontSize: 13, fontWeight: "500" },
   editRow: { padding: 14, gap: 8, borderBottomWidth: 1 },
   editLabel: { fontSize: 11, fontWeight: "600", letterSpacing: 0.3 },
   editInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
@@ -306,16 +263,6 @@ const styles = StyleSheet.create({
   editActions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
   editBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
   editBtnText: { fontSize: 14, fontWeight: "600" },
-  infoBox: {
-    flexDirection: "row",
-    gap: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 14,
-    marginTop: 10,
-    alignItems: "center",
-  },
-  infoText: { flex: 1, fontSize: 12, lineHeight: 18 },
   columnsBox: {
     borderRadius: 14,
     borderWidth: 1,
@@ -329,4 +276,24 @@ const styles = StyleSheet.create({
   columnLetter: { width: 24, height: 24, borderRadius: 6, textAlign: "center", lineHeight: 24, fontSize: 12, fontWeight: "700" },
   columnName: { fontSize: 13, fontWeight: "500", width: 80 },
   columnDesc: { fontSize: 12, flex: 1 },
+  guideBox: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+    gap: 16,
+    marginTop: 10,
+  },
+  guideStep: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
+  stepNumber: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  stepNumberText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  stepContent: { flex: 1, gap: 4 },
+  stepTitle: { fontSize: 13, fontWeight: "600" },
+  stepDesc: { fontSize: 12, lineHeight: 18 },
 });
