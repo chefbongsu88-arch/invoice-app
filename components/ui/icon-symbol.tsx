@@ -50,6 +50,7 @@ const MAPPING = {
   "chevron.left.forwardslash.chevron.right": "code",
   "arrow.right.circle.fill": "arrow-circle-right",
   "wifi.slash": "wifi-off",
+  "chart.bar.fill": "bar-chart",
 } as IconMapping;
 
 /**

@@ -44,3 +44,12 @@
 - [x] Error handling and user feedback
 - [x] Loading states (skeleton cards)
 - [x] Haptic feedback on key actions
+
+## Statistics & Analytics
+- [x] Monthly statistics screen with charts
+- [x] Category-wise statistics screen
+- [x] Monthly expense trend chart (Line Chart)
+- [x] Category-wise expense ratio chart (Pie Chart)
+- [x] Statistics data calculation (total, IVA, average)
+- [x] Month selection filter
+- [x] Statistics tab in navigation
