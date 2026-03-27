@@ -18,11 +18,13 @@ const SETTINGS_KEY = "app_settings_v1";
 interface AppSettings {
   spreadsheetId: string;
   sheetName: string;
+  googleApiKey: string;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   spreadsheetId: "",
   sheetName: "Invoices",
+  googleApiKey: "",
 };
 
 function SectionHeader({ title }: { title: string }) {
@@ -135,6 +137,19 @@ export default function SettingsScreen() {
     <ScreenContainer containerClassName="bg-background">
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={[styles.title, { color: colors.foreground }]}>Settings</Text>
+
+        {/* Google API Configuration */}
+        <SectionHeader title="Google Sheets API" />
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <EditableField
+            label="API Key"
+            value={settings.googleApiKey}
+            placeholder="Paste your Google API Key here"
+            onSave={(v) => saveSettings({ ...settings, googleApiKey: v })}
+            secure={true}
+            hint="Create at: console.cloud.google.com → APIs & Services → Credentials"
+          />
+        </View>
 
         {/* Spreadsheet Configuration */}
         <SectionHeader title="Google Sheets Configuration" />

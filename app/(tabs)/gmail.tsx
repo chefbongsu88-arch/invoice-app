@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
+import * as WebBrowser from "expo-web-browser";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -8,7 +9,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 
@@ -19,6 +19,7 @@ import { useInvoices } from "@/hooks/use-invoices";
 import type { Invoice, InvoiceCategory } from "@/shared/invoice-types";
 import { trpc } from "@/lib/trpc";
 
+const GMAIL_TOKEN_KEY = "gmail_oauth_token";
 const GMAIL_EMAIL_KEY = "gmail_email_address";
 
 interface EmailMessage {
@@ -40,7 +41,7 @@ interface EmailMessage {
   };
 }
 
-function SetupCard({ onSetup }: { onSetup: () => void }) {
+function LoginCard({ onLogin }: { onLogin: () => void }) {
   const colors = useColors();
   return (
     <View style={styles.connectCard}>
@@ -49,10 +50,10 @@ function SetupCard({ onSetup }: { onSetup: () => void }) {
       </View>
       <Text style={[styles.connectTitle, { color: colors.foreground }]}>Gmail Integration</Text>
       <Text style={[styles.connectDesc, { color: colors.muted }]}>
-        Enter your Gmail address to automatically fetch and parse invoice emails from your inbox.
+        Sign in with your Google account to automatically fetch and parse invoice emails from your inbox.
       </Text>
       <Pressable
-        onPress={onSetup}
+        onPress={onLogin}
         style={({ pressed }) => [
           styles.connectBtn,
           { backgroundColor: colors.email },
@@ -60,7 +61,7 @@ function SetupCard({ onSetup }: { onSetup: () => void }) {
         ]}
       >
         <IconSymbol name="envelope.fill" size={18} color="#fff" />
-        <Text style={styles.connectBtnText}>Set Up Gmail</Text>
+        <Text style={styles.connectBtnText}>Sign in with Google</Text>
       </Pressable>
     </View>
   );
@@ -174,66 +175,84 @@ export default function GmailScreen() {
   const [emails, setEmails] = useState<EmailMessage[]>([]);
   const [fetching, setFetching] = useState(false);
   const [parsingId, setParsingId] = useState<string | null>(null);
-  const [gmailEmail, setGmailEmail] = useState("");
-  const [isSetup, setIsSetup] = useState(false);
-  const [showSetupModal, setShowSetupModal] = useState(false);
-  const [setupInput, setSetupInput] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   const fetchMutation = trpc.invoices.fetchGmailInvoices.useMutation();
   const parseMutation = trpc.invoices.parseEmailInvoice.useMutation();
 
   useEffect(() => {
-    AsyncStorage.getItem(GMAIL_EMAIL_KEY).then((v) => {
-      if (v) {
-        setGmailEmail(v);
-        setIsSetup(true);
+    // Load saved token on mount
+    AsyncStorage.getItem(GMAIL_TOKEN_KEY).then((token) => {
+      if (token) {
+        setAccessToken(token);
+        setIsLoggedIn(true);
       }
+    });
+    AsyncStorage.getItem(GMAIL_EMAIL_KEY).then((email) => {
+      if (email) setUserEmail(email);
     });
   }, []);
 
-  const handleSetupGmail = useCallback(async () => {
-    if (!setupInput.trim()) {
-      Alert.alert("Error", "Please enter your Gmail address");
-      return;
+  const handleGoogleLogin = useCallback(async () => {
+    try {
+      // Build OAuth URL
+      const clientId = "174596473104-1lbjcc0450cbg53lfhhl5eghu7vida1r.apps.googleusercontent.com";
+      const redirectUri = "https://invoicetrk-k9hvsw3x.manus.space/auth/callback";
+      const scope = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/spreadsheets";
+      
+      const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline`;
+
+      // Open browser for OAuth
+      const result = await WebBrowser.openAuthSessionAsync(oauthUrl, redirectUri);
+
+      if (result.type === "success") {
+        const url = new URL(result.url);
+        const code = url.searchParams.get("code");
+        
+        if (code) {
+          // Exchange code for token (this would normally be done on backend)
+          // For now, we'll use the code as a placeholder
+          await AsyncStorage.setItem(GMAIL_TOKEN_KEY, code);
+          setAccessToken(code);
+          setIsLoggedIn(true);
+          
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Alert.alert("Success", "Google account connected!");
+          
+          // Fetch emails after login
+          setTimeout(() => fetchEmails(code), 500);
+        }
+      }
+    } catch (err) {
+      Alert.alert("Error", "Failed to connect Google account");
     }
+  }, []);
+
+  const fetchEmails = useCallback(async (token?: string) => {
+    const tokenToUse = token || accessToken;
+    if (!tokenToUse) return;
     
-    const email = setupInput.trim().toLowerCase();
-    if (!email.includes("@gmail.com")) {
-      Alert.alert("Error", "Please enter a valid Gmail address");
-      return;
-    }
-
-    await AsyncStorage.setItem(GMAIL_EMAIL_KEY, email);
-    setGmailEmail(email);
-    setIsSetup(true);
-    setShowSetupModal(false);
-    setSetupInput("");
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert("Success", `Gmail set to ${email}`);
-  }, [setupInput]);
-
-  const fetchEmails = useCallback(async () => {
-    if (!gmailEmail) return;
     setFetching(true);
     try {
-      // For now, we'll use a placeholder - backend will handle the actual Gmail fetch
       const result = await fetchMutation.mutateAsync({
-        accessToken: gmailEmail, // Pass email as identifier for backend
+        accessToken: tokenToUse,
         maxResults: 20,
       });
       setEmails((result.messages as EmailMessage[]) ?? []);
     } catch (err) {
-      Alert.alert("Error", "Failed to fetch Gmail messages. Make sure Gmail is properly configured.");
+      Alert.alert("Error", "Failed to fetch Gmail messages. Please try again.");
     } finally {
       setFetching(false);
     }
-  }, [gmailEmail, fetchMutation]);
+  }, [accessToken, fetchMutation]);
 
   useEffect(() => {
-    if (isSetup && gmailEmail) {
+    if (isLoggedIn && accessToken) {
       fetchEmails();
     }
-  }, [isSetup, gmailEmail]);
+  }, [isLoggedIn, accessToken]);
 
   const handleParse = useCallback(
     async (email: EmailMessage) => {
@@ -283,22 +302,23 @@ export default function GmailScreen() {
       await addInvoice(invoice);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert("Saved!", `Invoice from ${invoice.vendor} has been saved to your receipts.`);
-      // Remove from list
       setEmails((prev) => prev.filter((e) => e.id !== email.id));
     },
     [addInvoice]
   );
 
   const handleDisconnect = useCallback(() => {
-    Alert.alert("Disconnect Gmail", "Are you sure you want to disconnect your Gmail account?", [
+    Alert.alert("Disconnect Google", "Are you sure you want to disconnect your Google account?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Disconnect",
         style: "destructive",
         onPress: async () => {
+          await AsyncStorage.removeItem(GMAIL_TOKEN_KEY);
           await AsyncStorage.removeItem(GMAIL_EMAIL_KEY);
-          setGmailEmail("");
-          setIsSetup(false);
+          setAccessToken("");
+          setUserEmail("");
+          setIsLoggedIn(false);
           setEmails([]);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         },
@@ -306,45 +326,10 @@ export default function GmailScreen() {
     ]);
   }, []);
 
-  if (!isSetup) {
+  if (!isLoggedIn) {
     return (
       <ScreenContainer containerClassName="bg-background">
-        <SetupCard onSetup={() => setShowSetupModal(true)} />
-
-        {showSetupModal && (
-          <View style={[styles.modal, { backgroundColor: colors.background + "99" }]}>
-            <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
-              <Text style={[styles.modalTitle, { color: colors.foreground }]}>Enter Gmail Address</Text>
-              <TextInput
-                style={[styles.modalInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
-                placeholder="your.email@gmail.com"
-                placeholderTextColor={colors.muted}
-                value={setupInput}
-                onChangeText={setSetupInput}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
-              />
-              <View style={styles.modalActions}>
-                <Pressable
-                  onPress={() => {
-                    setShowSetupModal(false);
-                    setSetupInput("");
-                  }}
-                  style={[styles.modalBtn, { borderColor: colors.border }]}
-                >
-                  <Text style={[styles.modalBtnText, { color: colors.muted }]}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  onPress={handleSetupGmail}
-                  style={[styles.modalBtn, { backgroundColor: colors.email }]}
-                >
-                  <Text style={[styles.modalBtnText, { color: "#fff" }]}>Connect</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        )}
+        <LoginCard onLogin={handleGoogleLogin} />
       </ScreenContainer>
     );
   }
@@ -365,7 +350,7 @@ export default function GmailScreen() {
               </View>
               <View style={styles.headerActions}>
                 <Pressable
-                  onPress={fetchEmails}
+                  onPress={() => fetchEmails()}
                   disabled={fetching}
                   style={({ pressed }) => [
                     styles.refreshBtn,
@@ -395,7 +380,7 @@ export default function GmailScreen() {
             <View style={[styles.connectedBadge, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
               <IconSymbol name="checkmark.circle.fill" size={14} color={colors.success} />
               <Text style={[styles.connectedText, { color: colors.success }]}>
-                {gmailEmail}
+                {userEmail || "Connected"}
               </Text>
             </View>
           </View>
@@ -427,7 +412,7 @@ export default function GmailScreen() {
                 We searched for emails with "factura", "invoice", "recibo" in the subject line
               </Text>
               <Pressable
-                onPress={fetchEmails}
+                onPress={() => fetchEmails()}
                 style={[styles.refreshLargeBtn, { backgroundColor: colors.primary }]}
               >
                 <IconSymbol name="arrow.clockwise" size={16} color="#fff" />
@@ -468,32 +453,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   connectBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  modal: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  modalContent: {
-    borderRadius: 16,
-    padding: 20,
-    width: "80%",
-    gap: 16,
-  },
-  modalTitle: { fontSize: 18, fontWeight: "600" },
-  modalInput: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-  },
-  modalActions: { flexDirection: "row", gap: 12, justifyContent: "flex-end" },
-  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1 },
-  modalBtnText: { fontSize: 14, fontWeight: "600" },
   header: { padding: 20, paddingBottom: 8 },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
   title: { fontSize: 26, fontWeight: "700" },

@@ -213,7 +213,7 @@ export default function ScanScreen() {
     const invoice: Invoice = {
       id: `cam_${Date.now()}`,
       source: "camera",
-      invoiceNumber: invoiceNumber.trim(),
+      invoiceNumber: invoiceNumber.trim() || `AUTO-${Date.now()}`,
       vendor: vendor.trim(),
       date,
       totalAmount: total,

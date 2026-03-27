@@ -1,4 +1,5 @@
 import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useState } from "react";
 import {
   FlatList,
@@ -205,6 +206,19 @@ export default function ReceiptsScreen() {
                 onPress={() => setFilter("email")}
               />
             </View>
+
+            {/* Add Manual Invoice Button */}
+            <Pressable
+              onPress={() => router.push("/manual-invoice" as never)}
+              style={({ pressed }) => [
+                styles.addBtn,
+                { backgroundColor: colors.primary },
+                pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
+              ]}
+            >
+              <IconSymbol name="plus.circle.fill" size={20} color="#fff" />
+              <Text style={styles.addBtnText}>Add Manual Invoice</Text>
+            </Pressable>
           </View>
         }
         renderItem={({ item }) => <InvoiceCard invoice={item} />}
@@ -252,7 +266,17 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   searchInput: { flex: 1, fontSize: 15 },
-  filters: { flexDirection: "row", gap: 8, marginBottom: 8 },
+  filters: { flexDirection: "row", gap: 8, marginBottom: 12 },
+  addBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  addBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
   pill: {
     paddingHorizontal: 14,
     paddingVertical: 6,

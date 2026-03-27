@@ -59,3 +59,14 @@
 - [x] Simplify Gmail integration to use backend API directly
 - [x] Simplify Google Sheets export to use backend API directly
 - [x] Test end-to-end flow without OAuth complications
+
+## Gmail OAuth Removal & Direct Export (Latest)
+- [x] Remove Gmail OAuth dependency from export flow
+- [x] Replace OAuth credentials with Google API Key in Settings
+- [x] Update backend to use API Key instead of OAuth tokens
+- [x] Enable direct Google Sheets export without Gmail connection
+- [x] Add manual invoice entry feature in Receipts tab
+- [x] Handle missing invoice numbers (auto-generate if empty)
+- [ ] Test complete flow: Camera scan → AI extraction → Google Sheets export
+- [ ] Test manual invoice entry → Google Sheets export
+- [ ] Verify Settings page shows new API Key field

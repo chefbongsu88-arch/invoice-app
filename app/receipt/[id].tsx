@@ -16,7 +16,6 @@ import {
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
-import { useGoogleAuth } from "@/hooks/use-google-auth";
 import { useInvoices } from "@/hooks/use-invoices";
 import { trpc } from "@/lib/trpc";
 
@@ -37,7 +36,6 @@ export default function ReceiptDetailScreen() {
   const colors = useColors();
   const router = useRouter();
   const { invoices, deleteInvoice, updateInvoice } = useInvoices();
-  const { accessToken, isConnected } = useGoogleAuth();
   const [exporting, setExporting] = useState(false);
 
   const exportMutation = trpc.invoices.exportToSheets.useMutation();
@@ -61,19 +59,11 @@ export default function ReceiptDetailScreen() {
   const handleExport = useCallback(async () => {
     if (!invoice) return;
 
-    if (!isConnected || !accessToken) {
-      Alert.alert(
-        "Not Connected",
-        "Please connect your Google account in the Gmail tab first.",
-        [{ text: "OK" }]
-      );
-      return;
-    }
-
     const settings = await AsyncStorage.getItem(SETTINGS_KEY);
     const parsed = settings ? JSON.parse(settings) : {};
     const spreadsheetId = parsed.spreadsheetId;
     const sheetName = parsed.sheetName ?? "Invoices";
+    const apiKey = parsed.googleApiKey;
 
     if (!spreadsheetId) {
       Alert.alert(
@@ -84,12 +74,21 @@ export default function ReceiptDetailScreen() {
       return;
     }
 
+    if (!apiKey) {
+      Alert.alert(
+        "API Key Not Configured",
+        "Please enter your Google API Key in Settings.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
+
     setExporting(true);
     try {
       await exportMutation.mutateAsync({
         spreadsheetId,
         sheetName,
-        accessToken,
+        apiKey,
         rows: [
           {
             source: invoice.source === "camera" ? "Camera" : "Email",
@@ -118,7 +117,7 @@ export default function ReceiptDetailScreen() {
     } finally {
       setExporting(false);
     }
-  }, [invoice, isConnected, accessToken, exportMutation, updateInvoice, id]);
+  }, [invoice, exportMutation, updateInvoice, id]);
 
   if (!invoice) {
     return (
@@ -278,11 +277,7 @@ export default function ReceiptDetailScreen() {
           </Text>
         </Pressable>
 
-        {!isConnected && !invoice.exportedToSheets && (
-          <Text style={[styles.connectHint, { color: colors.muted }]}>
-            Connect your Google account in the Gmail tab to enable export
-          </Text>
-        )}
+
       </ScrollView>
     </ScreenContainer>
   );

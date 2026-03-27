@@ -126,7 +126,7 @@ export const appRouter = router({
         z.object({
           spreadsheetId: z.string(),
           sheetName: z.string().default("Invoices"),
-          accessToken: z.string(),
+          apiKey: z.string(),
           rows: z.array(
             z.object({
               source: z.string(),
@@ -144,7 +144,11 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input }) => {
-        const { spreadsheetId, sheetName, accessToken, rows } = input;
+        const { spreadsheetId, sheetName, apiKey, rows } = input;
+        
+        if (!apiKey) {
+          throw new Error("Google API Key is required. Please configure it in Settings.");
+        }
 
         // First, ensure header row exists
         const headerValues = [
@@ -152,21 +156,18 @@ export const appRouter = router({
         ];
 
         // Check if sheet exists and has headers
-        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:K1`;
-        const checkRes = await fetch(checkUrl, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:K1?key=${apiKey}`;
+        const checkRes = await fetch(checkUrl);
 
         if (checkRes.ok) {
           const checkData = await checkRes.json() as { values?: string[][] };
           if (!checkData.values || checkData.values.length === 0) {
             // Add headers
             await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:K1?valueInputOption=RAW`,
+              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:K1?valueInputOption=RAW&key=${apiKey}`,
               {
                 method: "PUT",
                 headers: {
-                  Authorization: `Bearer ${accessToken}`,
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({ values: headerValues }),
@@ -191,11 +192,10 @@ export const appRouter = router({
           now,
         ]);
 
-        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:K:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:K:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS&key=${apiKey}`;
         const appendRes = await fetch(appendUrl, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ values: dataRows }),
@@ -203,10 +203,11 @@ export const appRouter = router({
 
         if (!appendRes.ok) {
           const errText = await appendRes.text();
-          throw new Error(`Sheets API error: ${errText}`);
+          console.error("Sheets API error:", errText);
+          throw new Error(`Failed to export to Google Sheets. Check your API key and spreadsheet ID.`);
         }
 
-        return { success: true, rowsAdded: rows.length };
+        return { success: true, rowsAdded: rows.length, message: "Invoice exported successfully" };
       }),
 
     // Fetch Gmail messages with invoice keywords
