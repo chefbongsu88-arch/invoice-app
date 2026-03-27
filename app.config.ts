@@ -44,7 +44,7 @@ const config: ExpoConfig = {
   version: "1.0.0",
   extra: {
     eas: {
-      projectId: "invoice-tracker-manus",
+      projectId: "72f765f6-0000-4000-8000-000000000000",
     },
   },
   orientation: "portrait",
@@ -142,7 +142,9 @@ const config: ExpoConfig = {
     typedRoutes: true,
     reactCompiler: true,
   },
-  runtimeVersion: "1.0.0",
+  runtimeVersion: {
+    policy: "appVersion",
+  },
 };
 
 export default config;
