@@ -126,7 +126,7 @@ export async function appendToSheet(
 ): Promise<boolean> {
   try {
     const range = `${sheetName}!A:Z`;
-    const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+    const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
 
     const appendRes = await fetch(appendUrl, {
       method: "POST",
@@ -275,7 +275,7 @@ export async function createQuarterlySummarySheets(
   };
 
   const headers = [
-    "Vendor", "Total (€)", "% of Quarter", "Count", "Avg Amount (€)"
+    "Vendor", "Total (€)", "IVA (€)", "Base (€)", "% of Quarter", "Count", "Avg Amount (€)"
   ];
 
   for (const quarter of quarters) {
@@ -293,19 +293,25 @@ export async function createQuarterlySummarySheets(
     // Group by vendor and calculate totals (aggregate all invoices in the quarter)
     const vendorTotals: Record<string, {
       total: number;
+      iva: number;
+      base: number;
       count: number;
     }> = {};
 
     quarterInvoices.forEach((inv) => {
       if (!vendorTotals[inv.vendor]) {
-        vendorTotals[inv.vendor] = { total: 0, count: 0 };
+        vendorTotals[inv.vendor] = { total: 0, iva: 0, base: 0, count: 0 };
       }
       vendorTotals[inv.vendor].total += inv.totalAmount;
+      vendorTotals[inv.vendor].iva += inv.ivaAmount;
+      vendorTotals[inv.vendor].base += inv.baseAmount;
       vendorTotals[inv.vendor].count += 1;
     });
 
-    // Calculate quarter total
+    // Calculate quarter totals
     const quarterTotal = quarterInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+    const quarterIva = quarterInvoices.reduce((sum, inv) => sum + inv.ivaAmount, 0);
+    const quarterBase = quarterInvoices.reduce((sum, inv) => sum + inv.baseAmount, 0);
 
     // Format data rows with percentages (one row per vendor)
     const rows = Object.entries(vendorTotals)
@@ -315,6 +321,8 @@ export async function createQuarterlySummarySheets(
         return [
           vendor,
           data.total.toFixed(2),
+          data.iva.toFixed(2),
+          data.base.toFixed(2),
           `${percentage}%`,
           data.count,
           (data.total / data.count).toFixed(2),
@@ -325,6 +333,8 @@ export async function createQuarterlySummarySheets(
     rows.push([
       `${quarter} TOTAL`,
       quarterTotal.toFixed(2),
+      quarterIva.toFixed(2),
+      quarterBase.toFixed(2),
       "100%",
       quarterInvoices.length,
       (quarterTotal / quarterInvoices.length).toFixed(2),
@@ -491,17 +501,11 @@ export async function createMeatTrackingSheets(
 
   const meatAnalysisRows = [
     ["MEAT SPENDING ANALYSIS", ""],
-    ["", ""],
     ["Total Meat Spending (€)", totalMeat.toFixed(2)],
     ["Total IVA on Meat (€)", totalMeatIva.toFixed(2)],
     ["Total Base (Meat) (€)", totalMeatBase.toFixed(2)],
-    ["", ""],
-    ["Purchase Statistics", ""],
     ["Total Purchases", totalMeatCount],
     ["Average per Purchase (€)", avgMeatAmount.toFixed(2)],
-    ["Monthly Average (€)", (totalMeat / 12).toFixed(2)],
-    ["", ""],
-    ["Meat vs Total Spending", ""],
     ["% of Total Spending", `${meatPercentage}%`],
   ];
 
@@ -553,6 +557,117 @@ export async function createDashboardSheet(
 }
 
 /**
+ * Create Executive Summary sheet for investor reporting
+ */
+export async function createExecutiveSummarySheet(
+  config: SheetAutomationConfig,
+  meatVendors?: string[]
+): Promise<void> {
+  const summaryHeaders = ["Metric", "Value"];
+  await ensureSheetExists(config.spreadsheetId, "Executive_Summary", config.accessToken, summaryHeaders);
+
+  // Calculate all metrics
+  const totalSpending = config.invoiceData.reduce((sum, inv) => sum + inv.totalAmount, 0);
+  const totalIva = config.invoiceData.reduce((sum, inv) => sum + inv.ivaAmount, 0);
+  const totalBase = config.invoiceData.reduce((sum, inv) => sum + inv.baseAmount, 0);
+  const totalInvoices = config.invoiceData.length;
+  const avgAmount = totalInvoices > 0 ? totalSpending / totalInvoices : 0;
+
+  // Meat spending
+  const meatVendorsList = meatVendors || ["La portenia", "es cuco"];
+  const meatInvoices = config.invoiceData.filter((inv) =>
+    meatVendorsList.some(vendor => inv.vendor.toLowerCase().includes(vendor.toLowerCase()))
+  );
+  const meatSpending = meatInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+  const meatPercentage = totalSpending > 0 ? (meatSpending / totalSpending * 100).toFixed(2) : "0";
+
+  // Get unique vendors
+  const uniqueVendors = new Set(config.invoiceData.map((inv) => inv.vendor));
+  const vendorCount = uniqueVendors.size;
+
+  // Group by vendor for TOP vendors
+  const vendorTotals: Record<string, number> = {};
+  config.invoiceData.forEach((inv) => {
+    if (!vendorTotals[inv.vendor]) {
+      vendorTotals[inv.vendor] = 0;
+    }
+    vendorTotals[inv.vendor] += inv.totalAmount;
+  });
+
+  // Sort vendors by spending and get top 3
+  const topVendors = Object.entries(vendorTotals)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 3);
+
+  // Get date range
+  const dates = config.invoiceData.map((inv) => new Date(inv.date).getTime()).sort((a, b) => a - b);
+  const startDate = dates.length > 0 ? new Date(dates[0]).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "N/A";
+  const endDate = dates.length > 0 ? new Date(dates[dates.length - 1]).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "N/A";
+
+  // Get quarter from first invoice
+  const quarter = config.invoiceData.length > 0 ? getQuarter(config.invoiceData[0].date) : "N/A";
+  const year = config.invoiceData.length > 0 ? getYear(config.invoiceData[0].date) : "N/A";
+
+  // Monthly breakdown
+  const monthlyTotals: Record<string, number> = {};
+  config.invoiceData.forEach((inv) => {
+    const month = getMonthName(inv.date);
+    if (!monthlyTotals[month]) {
+      monthlyTotals[month] = 0;
+    }
+    monthlyTotals[month] += inv.totalAmount;
+  });
+
+  const months = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+
+  // Build summary rows
+  const summaryRows: (string | number)[][] = [
+    ["EXECUTIVE SUMMARY", ""],
+    ["Analysis Period", `${quarter} ${year} (${startDate} - ${endDate})`],
+    ["", ""],
+    ["CORE METRICS", ""],
+    ["Total Spending (€)", totalSpending.toFixed(2)],
+    ["Total IVA (€)", totalIva.toFixed(2)],
+    ["Total Base (€)", totalBase.toFixed(2)],
+    ["Total Invoices", totalInvoices],
+    ["Average per Invoice (€)", avgAmount.toFixed(2)],
+    ["Unique Vendors", vendorCount],
+    ["", ""],
+    ["MEAT SPENDING", ""],
+    ["Meat Total (€)", meatSpending.toFixed(2)],
+    ["Meat % of Total", `${meatPercentage}%`],
+    ["Meat Invoices", meatInvoices.length],
+    ["Meat Average (€)", meatInvoices.length > 0 ? (meatSpending / meatInvoices.length).toFixed(2) : "0"],
+    ["", ""],
+    ["TOP 3 VENDORS", ""],
+  ];
+
+  // Add top vendors
+  topVendors.forEach(([vendor, amount], index) => {
+    const percentage = totalSpending > 0 ? ((amount / totalSpending) * 100).toFixed(2) : "0";
+    summaryRows.push([`${index + 1}. ${vendor}`, `€${amount.toFixed(2)} (${percentage}%)`]);
+  });
+
+  summaryRows.push(["", ""]);
+  summaryRows.push(["MONTHLY TREND", ""]);
+
+  // Add monthly breakdown
+  months.forEach((month) => {
+    const monthTotal = monthlyTotals[month] || 0;
+    if (monthTotal > 0) {
+      summaryRows.push([month, monthTotal.toFixed(2)]);
+    }
+  });
+
+  if (summaryRows.length > 0) {
+    await appendToSheet(config.spreadsheetId, "Executive_Summary", config.accessToken, summaryRows);
+  }
+}
+
+/**
  * Main function to orchestrate all sheet creation
  */
 export async function automateGoogleSheets(
@@ -577,6 +692,10 @@ export async function automateGoogleSheets(
     // Create dashboard sheet
     console.log("Creating dashboard sheet...");
     await createDashboardSheet(config, meatVendors);
+
+    // Create executive summary sheet
+    console.log("Creating executive summary sheet...");
+    await createExecutiveSummarySheet(config, meatVendors);
 
     console.log("Google Sheets automation completed successfully!");
   } catch (error) {

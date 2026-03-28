@@ -317,7 +317,7 @@ export const appRouter = router({
         // Trigger sheet automation in background
         if (input.automateSheets) {
           try {
-            const { automateGoogleSheets } = await import("./sheets-automation-enhanced");
+            const { automateGoogleSheets, addChartsToQuarterlySheets } = await import("./sheets-automation-enhanced");
             
             // Run automation without blocking the response
             // Don't await - let it run in background
@@ -338,11 +338,31 @@ export const appRouter = router({
                 imageUrl: r.imageUrl,
                 tip: r.tip,
               })),
-            }, ["La portenia", "es cuco"]).catch((err: any) => {
+            }, ["La portenia", "es cuco"]).then(() => {
+              // After automation completes, add charts to quarterly sheets
+              return addChartsToQuarterlySheets(
+                spreadsheetId,
+                accessToken,
+                rows.map((r) => ({
+                  source: r.source,
+                  invoiceNumber: r.invoiceNumber,
+                  vendor: r.vendor,
+                  date: r.date,
+                  totalAmount: r.totalAmount,
+                  ivaAmount: r.ivaAmount,
+                  baseAmount: r.baseAmount,
+                  category: r.category,
+                  currency: r.currency,
+                  notes: r.notes,
+                  imageUrl: r.imageUrl,
+                  tip: r.tip,
+                }))
+              );
+            }).catch((err: any) => {
               console.error("Background automation error:", err);
             });
             // Return immediately without waiting for automation to complete
-            console.log("Automation triggered in background");
+            console.log("Automation and chart creation triggered in background");
           } catch (error) {
             console.error("Error starting automation:", error);
           }

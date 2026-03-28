@@ -26,7 +26,7 @@ import { trpc } from "@/lib/trpc";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
-type ScanStep = "capture" | "preview" | "review" | "done";
+type ScanStep = "capture" | "preview" | "review" | "done" | "batch-review";
 
 const CATEGORIES: InvoiceCategory[] = [
   "Office Supplies",
@@ -107,7 +107,7 @@ function FieldRow({
 export default function ScanScreen() {
   const colors = useColors();
   const router = useRouter();
-  const { addInvoice } = useInvoices();
+  const { addInvoice, checkDuplicate } = useInvoices();
   const [step, setStep] = useState<ScanStep>("capture");
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
@@ -122,6 +122,16 @@ export default function ScanScreen() {
   const [notes, setNotes] = useState("");
   const [tip, setTip] = useState("");
   const [items, setItems] = useState<MeatItem[]>([]);
+
+  // Batch upload state
+  const [batchImages, setBatchImages] = useState<string[]>([]);
+  const [currentBatchIndex, setCurrentBatchIndex] = useState(0);
+  const [batchInvoices, setBatchInvoices] = useState<Invoice[]>([]);
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [duplicateWarning, setDuplicateWarning] = useState<Invoice | null>(null);
+  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
+  const [pendingInvoice, setPendingInvoice] = useState<Invoice | null>(null);
+  const [duplicateAction, setDuplicateAction] = useState<"skip" | "continue" | null>(null);
 
   const ocrMutation = trpc.invoices.parseReceipt.useMutation();
 
@@ -148,7 +158,7 @@ export default function ScanScreen() {
     }
   }, []);
 
-  const pickFromLibrary = useCallback(async () => {
+  const pickFromLibrary = useCallback(async (allowMultiple: boolean = false) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
       Alert.alert("Permission Required", "Photo library permission is needed.");
@@ -158,12 +168,24 @@ export default function ScanScreen() {
       mediaTypes: ["images"],
       quality: 0.85,
       base64: true,
-      allowsEditing: true,
-      aspect: [3, 4],
+      allowsEditing: !allowMultiple,
+      aspect: allowMultiple ? undefined : [3, 4],
+      selectionLimit: allowMultiple ? 0 : 1,
     });
-    if (!result.canceled && result.assets[0]) {
-      setImageUri(result.assets[0].uri);
-      setStep("preview");
+    if (!result.canceled && result.assets.length > 0) {
+      if (allowMultiple && result.assets.length > 1) {
+        const imageUris = result.assets.map((asset) => asset.uri);
+        setBatchImages(imageUris);
+        setCurrentBatchIndex(0);
+        setIsBatchMode(true);
+        setBatchInvoices([]);
+        setImageUri(imageUris[0]);
+        setStep("preview");
+      } else {
+        setImageUri(result.assets[0].uri);
+        setIsBatchMode(false);
+        setStep("preview");
+      }
     }
   }, []);
 
@@ -227,6 +249,71 @@ export default function ScanScreen() {
     }
   }, [imageUri, ocrMutation]);
 
+  const handleBatchNext = useCallback(async () => {
+    // Save current invoice
+    if (vendor.trim()) {
+      const total = parseFloat(totalAmount) || 0;
+      const iva = parseFloat(ivaAmount) || 0;
+      const tipAmount = parseFloat(tip) || 0;
+      const invoice: Invoice = {
+        id: `cam_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        source: "camera",
+        invoiceNumber: invoiceNumber.trim() || `AUTO-${Date.now()}`,
+        vendor: vendor.trim(),
+        date,
+        totalAmount: total,
+        ivaAmount: iva,
+        baseAmount: total - iva,
+        currency: "EUR",
+        category,
+        notes: notes.trim(),
+        tip: tipAmount > 0 ? tipAmount : undefined,
+        imageUri: imageUri ?? undefined,
+        items: items.length > 0 ? items : undefined,
+        exportedToSheets: false,
+        createdAt: new Date().toISOString(),
+      };
+      setBatchInvoices([...batchInvoices, invoice]);
+    }
+
+    // Move to next image
+    if (currentBatchIndex < batchImages.length - 1) {
+      setCurrentBatchIndex(currentBatchIndex + 1);
+      setImageUri(batchImages[currentBatchIndex + 1]);
+      setInvoiceNumber("");
+      setVendor("");
+      setDate(new Date().toISOString().split("T")[0]);
+      setTotalAmount("");
+      setIvaAmount("");
+      setCategory("Other");
+      setNotes("");
+      setTip("");
+      setItems([]);
+      setProcessing(false);
+      setStep("preview");
+    } else {
+      setStep("batch-review");
+    }
+  }, [currentBatchIndex, batchImages, vendor, totalAmount, ivaAmount, tip, invoiceNumber, date, category, notes, imageUri, items, batchInvoices]);
+
+  const handleBatchPrevious = useCallback(() => {
+    if (currentBatchIndex > 0) {
+      setCurrentBatchIndex(currentBatchIndex - 1);
+      setImageUri(batchImages[currentBatchIndex - 1]);
+      setInvoiceNumber("");
+      setVendor("");
+      setDate(new Date().toISOString().split("T")[0]);
+      setTotalAmount("");
+      setIvaAmount("");
+      setCategory("Other");
+      setNotes("");
+      setTip("");
+      setItems([]);
+      setProcessing(false);
+      setStep("preview");
+    }
+  }, [currentBatchIndex, batchImages]);
+
   const handleSave = useCallback(async () => {
     if (!vendor.trim()) {
       Alert.alert("Required", "Please enter the vendor name.");
@@ -253,10 +340,24 @@ export default function ScanScreen() {
       exportedToSheets: false,
       createdAt: new Date().toISOString(),
     };
-    await addInvoice(invoice);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setStep("done");
-  }, [vendor, totalAmount, ivaAmount, tip, invoiceNumber, date, category, notes, imageUri, addInvoice]);
+    
+    // Check for duplicates
+    const duplicate = checkDuplicate(invoice);
+    if (duplicate) {
+      setDuplicateWarning(duplicate);
+      setPendingInvoice(invoice);
+      setShowDuplicateDialog(true);
+      return;
+    }
+    
+    if (isBatchMode) {
+      await handleBatchNext();
+    } else {
+      await addInvoice(invoice);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setStep("done");
+    }
+  }, [vendor, totalAmount, ivaAmount, tip, invoiceNumber, date, category, notes, imageUri, addInvoice, isBatchMode, handleBatchNext, checkDuplicate]);
 
   const resetScan = useCallback(() => {
     setStep("capture");
@@ -270,7 +371,108 @@ export default function ScanScreen() {
     setNotes("");
     setTip("");
     setItems([]);
+    setBatchImages([]);
+    setCurrentBatchIndex(0);
+    setBatchInvoices([]);
+    setIsBatchMode(false);
+    setShowDuplicateDialog(false);
+    setDuplicateWarning(null);
+    setPendingInvoice(null);
   }, []);
+
+  const handleDuplicateAction = useCallback(async (action: "skip" | "continue") => {
+    setShowDuplicateDialog(false);
+    
+    if (action === "continue" && pendingInvoice) {
+      if (isBatchMode) {
+        setBatchInvoices([...batchInvoices, pendingInvoice]);
+        if (currentBatchIndex < batchImages.length - 1) {
+          setCurrentBatchIndex(currentBatchIndex + 1);
+          setImageUri(batchImages[currentBatchIndex + 1]);
+          setInvoiceNumber("");
+          setVendor("");
+          setDate(new Date().toISOString().split("T")[0]);
+          setTotalAmount("");
+          setIvaAmount("");
+          setCategory("Other");
+          setNotes("");
+          setTip("");
+          setItems([]);
+          setProcessing(false);
+          setStep("preview");
+        } else {
+          setStep("batch-review");
+        }
+      } else {
+        await addInvoice(pendingInvoice);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setStep("done");
+      }
+    } else {
+      if (isBatchMode) {
+        if (currentBatchIndex < batchImages.length - 1) {
+          setCurrentBatchIndex(currentBatchIndex + 1);
+          setImageUri(batchImages[currentBatchIndex + 1]);
+          setInvoiceNumber("");
+          setVendor("");
+          setDate(new Date().toISOString().split("T")[0]);
+          setTotalAmount("");
+          setIvaAmount("");
+          setCategory("Other");
+          setNotes("");
+          setTip("");
+          setItems([]);
+          setProcessing(false);
+          setStep("preview");
+        } else {
+          setStep("batch-review");
+        }
+      } else {
+        resetScan();
+      }
+    }
+    
+    setPendingInvoice(null);
+    setDuplicateWarning(null);
+  }, [pendingInvoice, isBatchMode, currentBatchIndex, batchImages, batchInvoices, addInvoice, resetScan]);
+
+  // Duplicate warning dialog
+  if (showDuplicateDialog && duplicateWarning) {
+    return (
+      <ScreenContainer containerClassName="bg-background">
+        <View style={{ flex: 1, justifyContent: "center", padding: 24, gap: 16 }}>
+          <View style={{ alignItems: "center", gap: 12 }}>
+            <View style={[{ width: 80, height: 80, borderRadius: 40, alignItems: "center", justifyContent: "center" }, { backgroundColor: colors.warning + "20" }]}>
+              <IconSymbol name="exclamationmark.triangle.fill" size={40} color={colors.warning} />
+            </View>
+            <Text style={[styles.captureTitle, { color: colors.foreground, textAlign: "center" }]}>Duplicate Receipt</Text>
+          </View>
+
+          <View style={[styles.formCard, { backgroundColor: colors.surface, borderColor: colors.border, padding: 16 }]}>
+            <Text style={[styles.fieldLabel, { color: colors.muted, marginBottom: 8 }]}>This receipt appears to be a duplicate:</Text>
+            <Text style={[styles.fieldLabel, { color: colors.foreground, fontSize: 14, marginBottom: 4 }]}>Vendor: {duplicateWarning.vendor}</Text>
+            <Text style={[styles.fieldLabel, { color: colors.foreground, fontSize: 14, marginBottom: 4 }]}>Date: {duplicateWarning.date}</Text>
+            <Text style={[styles.fieldLabel, { color: colors.foreground, fontSize: 14 }]}>Amount: €{duplicateWarning.totalAmount.toFixed(2)}</Text>
+          </View>
+
+          <View style={styles.reviewActions}>
+            <Pressable
+              onPress={() => handleDuplicateAction("skip")}
+              style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface, flex: 1 }]}
+            >
+              <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Skip</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => handleDuplicateAction("continue")}
+              style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
+            >
+              <Text style={styles.primaryBtnText}>Continue Anyway</Text>
+            </Pressable>
+          </View>
+        </View>
+      </ScreenContainer>
+    );
+  }
 
   // STEP: CAPTURE
   if (step === "capture") {
@@ -305,7 +507,7 @@ export default function ScanScreen() {
             </Pressable>
 
             <Pressable
-              onPress={pickFromLibrary}
+              onPress={() => pickFromLibrary(false)}
               style={({ pressed }) => [
                 styles.secondaryBtn,
                 { borderColor: colors.border, backgroundColor: colors.surface },
@@ -315,6 +517,20 @@ export default function ScanScreen() {
               <IconSymbol name="photo.fill" size={20} color={colors.primary} />
               <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>
                 Choose from Library
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => pickFromLibrary(true)}
+              style={({ pressed }) => [
+                styles.secondaryBtn,
+                { borderColor: colors.border, backgroundColor: colors.surface },
+                pressed && { opacity: 0.75 },
+              ]}
+            >
+              <IconSymbol name="photo.fill" size={20} color={colors.primary} />
+              <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>
+                Batch Upload (Multiple)
               </Text>
             </Pressable>
           </View>
@@ -417,18 +633,92 @@ export default function ScanScreen() {
           )}
 
           <View style={styles.reviewActions}>
-            <Pressable
-              onPress={resetScan}
-              style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
-            >
-              <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Cancel</Text>
-            </Pressable>
+            {isBatchMode && currentBatchIndex > 0 && (
+              <Pressable
+                onPress={handleBatchPrevious}
+                style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+              >
+                <IconSymbol name="arrow.left" size={18} color={colors.muted} />
+                <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Previous</Text>
+              </Pressable>
+            )}
+            {isBatchMode && currentBatchIndex === 0 && (
+              <Pressable
+                onPress={resetScan}
+                style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+              >
+                <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Cancel</Text>
+              </Pressable>
+            )}
+            {!isBatchMode && (
+              <Pressable
+                onPress={resetScan}
+                style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+              >
+                <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Cancel</Text>
+              </Pressable>
+            )}
             <Pressable
               onPress={handleSave}
               style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
             >
+              <IconSymbol name={isBatchMode && currentBatchIndex < batchImages.length - 1 ? "arrow.right" : "checkmark.circle.fill"} size={18} color="#fff" />
+              <Text style={styles.primaryBtnText}>
+                {isBatchMode ? (currentBatchIndex < batchImages.length - 1 ? "Next" : "Review All") : "Save Invoice"}
+              </Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </ScreenContainer>
+    );
+  }
+
+  // STEP: BATCH REVIEW
+  if (step === "batch-review" && isBatchMode) {
+    return (
+      <ScreenContainer containerClassName="bg-background">
+        <ScrollView contentContainerStyle={styles.reviewContent}>
+          <Text style={[styles.captureTitle, { color: colors.foreground }]}>Review Batch ({batchInvoices.length} invoices)</Text>
+          <Text style={[styles.captureSubtitle, { color: colors.muted }]}>
+            All receipts processed. Ready to export?
+          </Text>
+
+          {batchInvoices.map((inv, idx) => (
+            <View key={idx} style={[styles.formCard, { backgroundColor: colors.surface, borderColor: colors.border, marginBottom: 12 }]}>
+              <View style={{ padding: 12 }}>
+                <Text style={[styles.fieldLabel, { color: colors.foreground, marginBottom: 4 }]}>
+                  {idx + 1}. {inv.vendor}
+                </Text>
+                <Text style={[styles.fieldLabel, { color: colors.muted, fontSize: 12 }]}>
+                  {inv.date} • €{inv.totalAmount.toFixed(2)}
+                </Text>
+              </View>
+            </View>
+          ))}
+
+          <View style={styles.reviewActions}>
+            <Pressable
+              onPress={() => {
+                setCurrentBatchIndex(0);
+                setImageUri(batchImages[0]);
+                setStep("preview");
+              }}
+              style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+            >
+              <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Edit</Text>
+            </Pressable>
+            <Pressable
+              onPress={async () => {
+                for (const invoice of batchInvoices) {
+                  await addInvoice(invoice);
+                }
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                setStep("done");
+              }}
+              style={[styles.primaryBtn, { backgroundColor: colors.success, flex: 1 }]}
+            >
               <IconSymbol name="checkmark.circle.fill" size={18} color="#fff" />
-              <Text style={styles.primaryBtnText}>Save Invoice</Text>
+              <Text style={styles.primaryBtnText}>Export All ({batchInvoices.length})</Text>
             </Pressable>
           </View>
         </ScrollView>

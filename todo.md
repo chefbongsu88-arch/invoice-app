@@ -101,3 +101,26 @@
 - [ ] Test Dashboard sheet generation
 - [ ] Verify all data organization
 - [ ] Create final checkpoint
+
+## Executive Summary for Investor Reporting (NEW)
+- [x] Design Executive Summary sheet structure with key metrics
+- [x] Implement Executive Summary sheet creation in Google Sheets (both sheets-automation.ts and sheets-automation-enhanced.ts)
+- [x] Add analysis period fields (Quarter, Year, Date Range)
+- [x] Calculate and display core metrics (total spending, meat spending, vendor count, average)
+- [x] Create TOP 3 vendor breakdown section with percentages
+- [x] Add monthly trend analysis
+- [x] Integrate Executive Summary into automation flow
+- [ ] Test Executive Summary generation with real data
+- [ ] Verify investor-ready formatting and presentation
+
+## Batch Upload & Duplicate Detection (NEW)
+- [x] Design batch upload flow with sequential review
+- [x] Implement multi-image picker (allow selecting multiple photos)
+- [x] Add batch OCR processing with progress indicator (1/5, 2/5, etc)
+- [x] Create sequential review screen with Next/Previous buttons
+- [x] Implement duplicate detection (by Invoice #, Vendor+Amount+Date)
+- [x] Add duplicate warning dialog with options (Skip/Continue/Replace)
+- [x] Add "Export All" button for batch export
+- [ ] Test batch upload with multiple receipts
+- [ ] Test duplicate detection and warning messages
+- [ ] Verify all receipts export correctly

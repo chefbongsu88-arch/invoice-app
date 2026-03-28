@@ -55,6 +55,25 @@ export function useInvoices() {
     [invoices, save]
   );
 
+  const checkDuplicate = useCallback((invoice: Invoice): Invoice | null => {
+    // Check by invoice number first
+    if (invoice.invoiceNumber && invoice.invoiceNumber !== "AUTO-" + Date.now()) {
+      const byNumber = invoices.find((inv) => inv.invoiceNumber === invoice.invoiceNumber);
+      if (byNumber) return byNumber;
+    }
+
+    // Check by vendor + amount + date
+    const byVendorAmountDate = invoices.find(
+      (inv) =>
+        inv.vendor.toLowerCase() === invoice.vendor.toLowerCase() &&
+        Math.abs(inv.totalAmount - invoice.totalAmount) < 0.01 &&
+        inv.date === invoice.date
+    );
+    if (byVendorAmountDate) return byVendorAmountDate;
+
+    return null;
+  }, [invoices]);
+
   const getStats = useCallback((): DashboardStats => {
     const now = new Date();
     const thisMonth = invoices.filter((inv) => {
@@ -72,5 +91,5 @@ export function useInvoices() {
     };
   }, [invoices]);
 
-  return { invoices, loading, addInvoice, updateInvoice, deleteInvoice, getStats, reload: load };
+  return { invoices, loading, addInvoice, updateInvoice, deleteInvoice, getStats, reload: load, checkDuplicate };
 }
