@@ -184,14 +184,13 @@ export default function ScanScreen() {
       mediaTypes: ["images"],
       quality: 0.85,
       base64: true,
-      allowsEditing: !allowMultiple,
+      allowsEditing: false,
     };
     
     if (allowMultiple) {
       options.allowsMultiple = true;
-    } else {
-      options.aspect = [3, 4];
     }
+    // Note: No aspect ratio constraint for library photos to preserve original images
     
     const result = await ImagePicker.launchImageLibraryAsync(options);
     if (!result.canceled && result.assets.length > 0) {
