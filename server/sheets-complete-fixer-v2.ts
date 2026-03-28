@@ -1,6 +1,6 @@
 /**
- * Complete Google Sheets Fixer
- * Fixes images, standardizes all 12 months, removes duplicates, applies SUMIF
+ * Complete Google Sheets Fixer V2
+ * Properly fixes all monthly sheets to match January template structure
  */
 
 const MONTH_NAMES = [
@@ -44,38 +44,42 @@ async function getMainSheetData(
 }
 
 /**
- * Get January template structure
+ * Get unique vendors for a month
  */
-async function getJanuaryTemplate(
-  spreadsheetId: string,
-  accessToken: string
-): Promise<{
-  headers: string[];
-  totalRowFormulas: { [key: string]: string };
-}> {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/January!A1:M2`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+function getVendorsForMonth(
+  mainSheetData: any[][],
+  monthName: string
+): Set<string> {
+  const dates = MONTH_DATES[monthName];
+  if (!dates) return new Set();
 
-  if (!res.ok) {
-    throw new Error(`Failed to fetch January template: ${res.statusText}`);
-  }
-
-  const data = await res.json() as any;
-  const rows = data.values || [];
-  const headers = rows[0] || [];
-  const totalRow = rows[1] || [];
-
-  const totalRowFormulas: { [key: string]: string } = {};
-  ["E", "F", "G", "H"].forEach((col, idx) => {
-    const cellValue = totalRow[4 + idx];
-    if (typeof cellValue === "string" && cellValue.startsWith("=")) {
-      totalRowFormulas[col] = cellValue;
+  const vendors = new Set<string>();
+  
+  mainSheetData.slice(1).forEach((row: any) => {
+    const dateStr = row[3]; // Column D: Date
+    const vendor = row[2]; // Column C: Vendor
+    
+    if (!dateStr || !vendor) return;
+    
+    // Parse date - handle both "2026-03-26" and "2026. 3. 26" formats
+    let date: Date;
+    if (dateStr.includes('.')) {
+      // Format: "2026. 3. 26"
+      const parts = dateStr.split('.').map((p: string) => p.trim());
+      date = new Date(`${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`);
+    } else {
+      date = new Date(dateStr);
+    }
+    
+    const startDate = new Date(dates.start);
+    const endDate = new Date(dates.end);
+    
+    if (date >= startDate && date <= endDate) {
+      vendors.add(vendor);
     }
   });
 
-  return { headers, totalRowFormulas };
+  return vendors;
 }
 
 /**
@@ -99,23 +103,26 @@ function buildSumifFormula(
   const col = columnMap[column];
   if (!col) return "";
 
+  // Escape vendor name for formula
+  const escapedVendor = vendor.replace(/"/g, '""');
+
   // SUMIFS with date range
-  return `=SUMIFS('2026 Invoice tracker'!${col}:${col},'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${dates.start}",'2026 Invoice tracker'!D:D,"<=${dates.end}")`;
+  return `=SUMIFS('2026 Invoice tracker'!${col}:${col},'2026 Invoice tracker'!C:C,"${escapedVendor}",'2026 Invoice tracker'!D:D,">=${dates.start}",'2026 Invoice tracker'!D:D,"<=${dates.end}")`;
 }
 
 /**
- * Build total row with formulas
+ * Build total row with SUM formulas
  */
-function buildTotalRow(template: { totalRowFormulas: { [key: string]: string } }): any[] {
+function buildTotalRow(lastRow: number): any[] {
   return [
     "", // A: Source
     "", // B: Invoice #
     "TOTAL", // C: Vendor
     "", // D: Date
-    template.totalRowFormulas["E"] || "=SUM(E3:E1000)", // E: Total
-    template.totalRowFormulas["F"] || "=SUM(F3:F1000)", // F: IVA
-    template.totalRowFormulas["G"] || "=SUM(G3:G1000)", // G: Base
-    template.totalRowFormulas["H"] || "=SUM(H3:H1000)", // H: Tip
+    `=SUM(E3:E${lastRow})`, // E: Total
+    `=SUM(F3:F${lastRow})`, // F: IVA
+    `=SUM(G3:G${lastRow})`, // G: Base
+    `=SUM(H3:H${lastRow})`, // H: Tip
     "", // I: Category
     "", // J: Currency
     "", // K: Notes
@@ -131,7 +138,6 @@ async function fixMonthSheet(
   spreadsheetId: string,
   monthName: string,
   mainSheetData: any[][],
-  template: { headers: string[]; totalRowFormulas: { [key: string]: string } },
   accessToken: string
 ): Promise<{
   success: boolean;
@@ -139,60 +145,35 @@ async function fixMonthSheet(
   vendorCount: number;
   message: string;
 }> {
-  console.log(`[CompleteFix] Fixing ${monthName}...`);
+  console.log(`[FixV2] Fixing ${monthName}...`);
 
   try {
-    const dates = MONTH_DATES[monthName];
-    if (!dates) {
-      return { success: false, month: monthName, vendorCount: 0, message: "Invalid month" };
-    }
+    // Get unique vendors for this month
+    const vendors = getVendorsForMonth(mainSheetData, monthName);
+    console.log(`[FixV2] Found ${vendors.size} unique vendors for ${monthName}`);
 
-    // Filter invoices for this month
-    const monthInvoices = mainSheetData.slice(1).filter((row: any) => {
-      const dateStr = row[3]; // Column D: Date
-      if (!dateStr) return false;
-      const date = new Date(dateStr);
-      return date >= new Date(dates.start) && date <= new Date(dates.end);
-    });
+    // Build headers
+    const headers = [
+      "Source",
+      "Invoice #",
+      "Vendor",
+      "Date",
+      "Total (€)",
+      "IVA (€)",
+      "Base (€)",
+      "Tip (€)",
+      "Category",
+      "Currency",
+      "Notes",
+      "Image URL",
+      "Exported At",
+    ];
 
-    console.log(`[CompleteFix] Found ${monthInvoices.length} invoices for ${monthName}`);
-
-    // Aggregate by vendor
-    const vendorMap = new Map<string, {
-      category: string;
-      currency: string;
-      imageUrls: string[];
-    }>();
-
-    monthInvoices.forEach((row: any) => {
-      const vendor = row[2]; // Column C: Vendor
-      const category = row[8] || ""; // Column I: Category
-      const currency = row[9] || "EUR"; // Column J: Currency
-      const imageUrl = row[11] || ""; // Column L: Image URL
-
-      if (vendor) {
-        if (!vendorMap.has(vendor)) {
-          vendorMap.set(vendor, {
-            category,
-            currency,
-            imageUrls: [],
-          });
-        }
-        const entry = vendorMap.get(vendor)!;
-        if (imageUrl) {
-          entry.imageUrls.push(imageUrl);
-        }
-      }
-    });
-
-    console.log(`[CompleteFix] Aggregated to ${vendorMap.size} unique vendors`);
-
-    // Build new data rows with SUMIF formulas
-    const newDataRows: any[] = [];
-
-    vendorMap.forEach((data, vendor) => {
+    // Build data rows with SUMIF formulas
+    const dataRows: any[] = [];
+    vendors.forEach((vendor) => {
       const row = [
-        "Camera", // A: Source
+        "", // A: Source
         "", // B: Invoice #
         vendor, // C: Vendor
         "", // D: Date
@@ -200,23 +181,26 @@ async function fixMonthSheet(
         buildSumifFormula(vendor, "F", monthName), // F: IVA (SUMIF)
         buildSumifFormula(vendor, "G", monthName), // G: Base (SUMIF)
         buildSumifFormula(vendor, "H", monthName), // H: Tip (SUMIF)
-        data.category, // I: Category
-        data.currency, // J: Currency
+        "", // I: Category
+        "", // J: Currency
         "", // K: Notes
-        data.imageUrls[0] || "", // L: Image URL (first image)
-        new Date().toISOString(), // M: Exported At
+        "", // L: Image URL
+        "", // M: Exported At
       ];
-      newDataRows.push(row);
+      dataRows.push(row);
     });
 
     // Build complete sheet data
+    const lastDataRow = 2 + dataRows.length;
     const completeData = [
-      template.headers, // Headers
-      buildTotalRow(template), // Total row
-      ...newDataRows, // Data rows
+      headers, // Row 1: Headers
+      buildTotalRow(lastDataRow), // Row 2: Total row
+      ...dataRows, // Row 3+: Data rows
     ];
 
-    // Clear and write to sheet
+    console.log(`[FixV2] Built ${completeData.length} rows for ${monthName}`);
+
+    // Clear sheet first
     const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(monthName)}!A:M`;
     await fetch(clearUrl, {
       method: "DELETE",
@@ -237,19 +221,20 @@ async function fixMonthSheet(
     });
 
     if (!writeRes.ok) {
-      throw new Error(`Failed to write data: ${writeRes.statusText}`);
+      const errorData = await writeRes.json();
+      throw new Error(`Failed to write data: ${writeRes.statusText} - ${JSON.stringify(errorData)}`);
     }
 
-    console.log(`[CompleteFix] Successfully fixed ${monthName}`);
+    console.log(`[FixV2] Successfully fixed ${monthName}`);
 
     return {
       success: true,
       month: monthName,
-      vendorCount: vendorMap.size,
-      message: `Fixed with ${vendorMap.size} vendors`,
+      vendorCount: vendors.size,
+      message: `Fixed with ${vendors.size} vendors`,
     };
   } catch (error) {
-    console.error(`[CompleteFix] Error fixing ${monthName}:`, error);
+    console.error(`[FixV2] Error fixing ${monthName}:`, error);
     return {
       success: false,
       month: monthName,
@@ -280,20 +265,15 @@ export async function executeCompleteSheetsFix(
     message: string;
   }>;
 }> {
-  console.log("[CompleteFix] Starting complete Google Sheets fix...");
+  console.log("[FixV2] Starting complete Google Sheets fix V2...");
 
   try {
     // Step 1: Get main sheet data
-    console.log("[CompleteFix] Fetching main sheet data...");
+    console.log("[FixV2] Fetching main sheet data...");
     const mainSheetData = await getMainSheetData(spreadsheetId, accessToken);
-    console.log(`[CompleteFix] Found ${mainSheetData.length - 1} total invoices`);
+    console.log(`[FixV2] Found ${mainSheetData.length - 1} total invoices`);
 
-    // Step 2: Get January template
-    console.log("[CompleteFix] Analyzing January template...");
-    const template = await getJanuaryTemplate(spreadsheetId, accessToken);
-    console.log("[CompleteFix] Template headers:", template.headers);
-
-    // Step 3: Fix all 12 months
+    // Step 2: Fix all 12 months
     const monthResults = [];
     let fixedMonths = 0;
     let totalVendors = 0;
@@ -303,7 +283,6 @@ export async function executeCompleteSheetsFix(
         spreadsheetId,
         monthName,
         mainSheetData,
-        template,
         accessToken
       );
       monthResults.push(result);
@@ -317,7 +296,7 @@ export async function executeCompleteSheetsFix(
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
-    console.log("[CompleteFix] All fixes complete");
+    console.log("[FixV2] All fixes complete");
 
     const issues: string[] = [];
     monthResults.forEach((result) => {
@@ -337,7 +316,7 @@ export async function executeCompleteSheetsFix(
       monthResults,
     };
   } catch (error) {
-    console.error("[CompleteFix] Fatal error:", error);
+    console.error("[FixV2] Fatal error:", error);
     return {
       success: false,
       summary: {

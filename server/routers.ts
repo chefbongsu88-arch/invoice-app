@@ -514,7 +514,7 @@ export const appRouter = router({
     )
     .mutation(async ({ input }) => {
       try {
-        const { executeCompleteSheetsFix } = await import("./sheets-complete-fixer");
+        const { executeCompleteSheetsFix } = await import("./sheets-complete-fixer-v2");
         const result = await executeCompleteSheetsFix(input.spreadsheetId, input.accessToken);
         return result;
       } catch (error) {
