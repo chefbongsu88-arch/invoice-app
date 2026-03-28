@@ -166,10 +166,15 @@ export async function createMonthlySheets(
   ];
 
     const headers = [
-      "Invoice #", "Vendor", "Total (€)", "IVA (€)", "Base (€)", "Count", "Avg Amount (€)", "% of Month"
+      "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Category", "Currency", "Tip (€)", "Notes", "Image URL", "Exported At"
     ];
 
-  for (const month of months) {
+  for (let monthIndex = 0; monthIndex < months.length; monthIndex++) {
+    const month = months[monthIndex];
+    const monthNum = monthIndex + 1;
+    const startDate = `2026-${String(monthNum).padStart(2, "0")}-01`;
+    const endDate = `2026-${String(monthNum + 1).padStart(2, "0")}-01`;
+    
     await ensureSheetExists(config.spreadsheetId, month, config.accessToken, headers);
 
     // Filter invoices for this month
@@ -202,18 +207,29 @@ export async function createMonthlySheets(
       const percentage = ((vendorTotal / monthTotal) * 100).toFixed(1);
 
       // Create row with SUMIF formulas for dynamic calculation
-      // Format: Invoice # | Vendor | SUMIF formula for total | SUMIF formula for IVA | etc.
       // Use INDEX/MATCH to get the first invoice number for this vendor from the main sheet
       const invoiceNumberFormula = `=IFERROR(INDEX('2026 Invoice tracker'!B:B,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const dateFormula = `=IFERROR(INDEX('2026 Invoice tracker'!D:D,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const categoryFormula = `=IFERROR(INDEX('2026 Invoice tracker'!H:H,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const currencyFormula = `=IFERROR(INDEX('2026 Invoice tracker'!I:I,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const tipFormula = `=IFERROR(INDEX('2026 Invoice tracker'!J:J,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const notesFormula = `=IFERROR(INDEX('2026 Invoice tracker'!K:K,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const imageUrlFormula = `=IFERROR(INDEX('2026 Invoice tracker'!L:L,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const exportedAtFormula = `=IFERROR(INDEX('2026 Invoice tracker'!M:M,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      
       const row = [
         invoiceNumberFormula,
         vendor,
-        `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=2026-01-01",'2026 Invoice tracker'!D:D,"<2026-02-01")`,
-        `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=2026-01-01",'2026 Invoice tracker'!D:D,"<2026-02-01")`,
-        `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=2026-01-01",'2026 Invoice tracker'!D:D,"<2026-02-01")`,
-        count,
-        avgAmount.toFixed(2),
-        `${percentage}%`,
+        dateFormula,
+        `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
+        `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
+        `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
+        categoryFormula,
+        currencyFormula,
+        tipFormula,
+        notesFormula,
+        imageUrlFormula,
+        exportedAtFormula,
       ];
       
       summaryRows.push(row);
@@ -223,12 +239,16 @@ export async function createMonthlySheets(
     summaryRows.push([
       "",  // No Invoice # for total row
       `${month} TOTAL`,
-      `=SUM(C2:C${summaryRows.length + 1})`,
+      "",  // No Date for total row
       `=SUM(D2:D${summaryRows.length + 1})`,
       `=SUM(E2:E${summaryRows.length + 1})`,
-      monthInvoices.length,
-      (monthTotal / monthInvoices.length).toFixed(2),
-      "100%",
+      `=SUM(F2:F${summaryRows.length + 1})`,
+      "",  // No Category for total row
+      "",  // No Currency for total row
+      "",  // No Tip for total row
+      "",  // No Notes for total row
+      "",  // No Image URL for total row
+      "",  // No Exported At for total row
     ]);
 
     // Append vendor summary rows
