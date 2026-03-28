@@ -577,6 +577,25 @@ export default function ScanScreen() {
             resizeMode="contain"
           />
 
+          {isBatchMode && batchImages.length > 0 && (
+            <View style={[styles.batchIndicator, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.batchIndicatorText, { color: colors.muted }]}>
+                Photo {currentBatchIndex + 1} of {batchImages.length}
+              </Text>
+              <View style={styles.batchProgressBar}>
+                <View
+                  style={[
+                    styles.batchProgressFill,
+                    {
+                      backgroundColor: colors.primary,
+                      width: `${((currentBatchIndex + 1) / batchImages.length) * 100}%`,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          )}
+
           {processing ? (
             <View style={styles.processingBox}>
               <ActivityIndicator size="large" color={colors.primary} />
@@ -593,13 +612,26 @@ export default function ScanScreen() {
                 <IconSymbol name="arrow.clockwise" size={18} color={colors.muted} />
                 <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Retake</Text>
               </Pressable>
-              <Pressable
-                onPress={processImage}
-                style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
-              >
-                <IconSymbol name="bolt.fill" size={18} color="#fff" />
-                <Text style={styles.primaryBtnText}>Process with AI</Text>
-              </Pressable>
+              {isBatchMode && currentBatchIndex < batchImages.length - 1 ? (
+                <Pressable
+                  onPress={() => {
+                    setCurrentBatchIndex(currentBatchIndex + 1);
+                    setImageUri(batchImages[currentBatchIndex + 1]);
+                  }}
+                  style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
+                >
+                  <IconSymbol name="plus.circle.fill" size={18} color="#fff" />
+                  <Text style={styles.primaryBtnText}>Add Next Photo</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={processImage}
+                  style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
+                >
+                  <IconSymbol name="bolt.fill" size={18} color="#fff" />
+                  <Text style={styles.primaryBtnText}>{isBatchMode ? "Analyze All" : "Process with AI"}</Text>
+                </Pressable>
+              )}
             </View>
           )}
         </View>
@@ -917,6 +949,20 @@ const styles = StyleSheet.create({
   customCategoryActions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
   customCategoryBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
   customCategoryBtnText: { fontSize: 13, fontWeight: "600" },
+  batchIndicator: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 12,
+    marginBottom: 12,
+    gap: 8,
+  },
+  batchIndicatorText: { fontSize: 12, fontWeight: "600" },
+  batchProgressBar: {
+    height: 6,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  batchProgressFill: { height: 6, borderRadius: 3 },
   doneContainer: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
   doneIcon: { width: 100, height: 100, borderRadius: 28, alignItems: "center", justifyContent: "center" },
   doneTitle: { fontSize: 26, fontWeight: "700" },
