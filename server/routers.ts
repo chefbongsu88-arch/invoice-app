@@ -4,6 +4,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { invokeLLM } from "./_core/llm";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
+import { uploadImageToStorage } from "./image-upload-storage";
 
 // Helper function to generate JWT for Google Service Account
 async function generateJWT(serviceAccount: any): Promise<string> {
@@ -39,12 +40,15 @@ Return ONLY a valid JSON object with these exact keys:
 - totalAmount: number (total amount including IVA, in EUR)
 - ivaAmount: number (IVA/tax amount in EUR, 0 if not found)
 - category: string (one of: "Office Supplies", "Travel & Transport", "Meals & Entertainment", "Utilities", "Professional Services", "Software & Subscriptions", "Equipment", "Marketing", "Other")
+- items: array (ONLY for La Portenia or Es Cuco vendors - extract line items with: partName, quantity (in kg), unit ("kg"), pricePerUnit, total. For other vendors, return empty array [])
 
 Important notes:
 - In Spain, IVA is the VAT tax (usually 21%, 10%, or 4%)
 - Look for "TOTAL", "IMPORTE TOTAL", or similar for total amount
 - Look for "IVA", "I.V.A.", "CUOTA IVA" for tax amount
 - Dates may be in DD/MM/YYYY format in Spain
+- For meat vendors (La Portenia, Es Cuco): Extract from table columns PRODUCTO (part name), CANT. (quantity in kg), TARIFA (price per unit), IMPORTE (total)
+- For non-meat vendors: Return empty items array []
 - Return only the JSON, no markdown, no explanation`;
 
 const EMAIL_PARSE_PROMPT = `You are an expert at extracting invoice data from email content.
@@ -57,6 +61,7 @@ Return ONLY a valid JSON object with these exact keys:
 - ivaAmount: number (IVA/VAT amount in EUR, 0 if not found)
 - category: string (one of: "Office Supplies", "Travel & Transport", "Meals & Entertainment", "Utilities", "Professional Services", "Software & Subscriptions", "Equipment", "Marketing", "Other")
 - subject: string (email subject line)
+- items: array (return empty array [] for email invoices)
 
 Return only the JSON, no markdown, no explanation.`;
 
@@ -238,23 +243,57 @@ export const appRouter = router({
           }
         }
 
-        // Append data rows
+        // Append data rows with image upload
         const now = new Date().toISOString();
-        const dataRows = rows.map((r) => [
-          r.source,
-          r.invoiceNumber,
-          r.vendor,
-          r.date,
-          r.totalAmount,
-          r.ivaAmount,
-          r.baseAmount,
-          r.category,
-          r.currency,
-          r.tip ?? 0,
-          r.notes ?? "",
-          r.imageUrl ?? "",
-          now,
-        ]);
+        const dataRows = await Promise.all(
+          rows.map(async (r) => {
+            let imageUrl = r.imageUrl ?? "";
+            
+            // If imageUrl is a base64 string or local file path, upload it to storage
+            if (imageUrl && (imageUrl.startsWith("data:") || imageUrl.startsWith("file://"))) {
+              try {
+                // Extract base64 if it's a data URL
+                let base64Data = imageUrl;
+                if (imageUrl.startsWith("data:")) {
+                  // Format: data:image/jpeg;base64,{base64data}
+                  const match = imageUrl.match(/base64,(.+)$/);
+                  base64Data = match ? match[1] : imageUrl;
+                } else if (imageUrl.startsWith("file://")) {
+                  // For local file paths, we'll skip upload (client should send base64)
+                  console.warn("[Export] Skipping local file path upload:", imageUrl);
+                  imageUrl = "";
+                }
+                
+                if (base64Data && !imageUrl.startsWith("file://")) {
+                  // Generate filename from invoice number or timestamp
+                  const fileName = `${r.invoiceNumber || "receipt"}-${Date.now()}.jpg`;
+                  imageUrl = await uploadImageToStorage(base64Data, fileName);
+                  console.log(`[Export] Image uploaded for ${r.vendor}: ${imageUrl}`);
+                }
+              } catch (error) {
+                console.error(`[Export] Failed to upload image for ${r.vendor}:`, error);
+                // Continue without image URL if upload fails
+                imageUrl = "";
+              }
+            }
+            
+            return [
+              r.source,
+              r.invoiceNumber,
+              r.vendor,
+              r.date,
+              r.totalAmount,
+              r.ivaAmount,
+              r.baseAmount,
+              r.category,
+              r.currency,
+              r.tip ?? 0,
+              r.notes ?? "",
+              imageUrl,
+              now,
+            ];
+          })
+        );
 
         const range = `${sheetName}!A:M`;
         const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
@@ -278,9 +317,10 @@ export const appRouter = router({
         // Trigger sheet automation in background
         if (input.automateSheets) {
           try {
-            const { automateGoogleSheets } = await import("./sheets-automation.js");
+            const { automateGoogleSheets } = await import("./sheets-automation-enhanced");
             
             // Run automation without blocking the response
+            // Don't await - let it run in background
             automateGoogleSheets({
               spreadsheetId,
               accessToken,
@@ -298,9 +338,11 @@ export const appRouter = router({
                 imageUrl: r.imageUrl,
                 tip: r.tip,
               })),
-            }, ["La portenia", "es cuco"]).catch((err) => {
+            }, ["La portenia", "es cuco"]).catch((err: any) => {
               console.error("Background automation error:", err);
             });
+            // Return immediately without waiting for automation to complete
+            console.log("Automation triggered in background");
           } catch (error) {
             console.error("Error starting automation:", error);
           }

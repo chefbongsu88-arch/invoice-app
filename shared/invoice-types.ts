@@ -11,6 +11,14 @@ export type InvoiceCategory =
   | "Marketing"
   | "Other";
 
+export interface MeatItem {
+  partName: string; // e.g., "Quinta Costilla Angus"
+  quantity: number; // in kg
+  unit: string; // "kg"
+  pricePerUnit: number; // price per kg
+  total: number; // total price for this item
+}
+
 export interface Invoice {
   id: string;
   source: InvoiceSource;
@@ -27,6 +35,7 @@ export interface Invoice {
   imageUri?: string; // for camera receipts
   emailId?: string; // for email invoices
   emailSubject?: string;
+  items?: MeatItem[]; // for meat vendors (La Portenia, Es Cuco)
   exportedToSheets: boolean;
   exportedAt?: string;
   createdAt: string;

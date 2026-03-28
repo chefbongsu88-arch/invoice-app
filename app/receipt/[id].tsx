@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
+import * as FileSystem from "expo-file-system/legacy";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -18,8 +19,44 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
 import { trpc } from "@/lib/trpc";
+import type { Invoice } from "@/shared/invoice-types";
 
 const SETTINGS_KEY = "app_settings_v1";
+
+// Helper function to convert image file to base64
+async function convertImageToBase64(imageUri: string): Promise<string> {
+  try {
+    // Try FileSystem first (works with both camera and library images)
+    const base64 = await FileSystem.readAsStringAsync(imageUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    return base64;
+  } catch (fsError) {
+    console.warn("[Export] FileSystem read failed, using fetch fallback", fsError);
+    try {
+      // Fallback to fetch + blob conversion
+      const response = await fetch(imageUri);
+      const blob = await response.blob();
+      return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const result = reader.result as string;
+          const b64 = result.split(",")[1];
+          if (!b64) {
+            reject(new Error("Failed to extract base64 from blob"));
+          } else {
+            resolve(b64);
+          }
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (fetchError) {
+      console.error("[Export] Both FileSystem and fetch failed", fetchError);
+      throw new Error("Failed to convert image to base64");
+    }
+  }
+}
 
 function DetailRow({ label, value, accent }: { label: string; value: string; accent?: string }) {
   const colors = useColors();
@@ -78,6 +115,18 @@ export default function ReceiptDetailScreen() {
 
     setExporting(true);
     try {
+      // Convert image to base64 if it exists
+      let imageBase64 = "";
+      if (invoice.imageUri) {
+        try {
+          imageBase64 = await convertImageToBase64(invoice.imageUri);
+          console.log("[Export] Image converted to base64, length:", imageBase64.length);
+        } catch (imgError) {
+          console.warn("[Export] Failed to convert image to base64:", imgError);
+          // Continue without image if conversion fails
+        }
+      }
+
       await exportMutation.mutateAsync({
         spreadsheetId,
         sheetName,
@@ -94,7 +143,7 @@ export default function ReceiptDetailScreen() {
             currency: invoice.currency,
             tip: invoice.tip,
             notes: invoice.notes ?? "",
-            imageUrl: invoice.imageUri,
+            imageUrl: imageBase64 ? `data:image/jpeg;base64,${imageBase64}` : "",
           },
         ],
         automateSheets: true,

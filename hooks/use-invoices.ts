@@ -31,9 +31,10 @@ export function useInvoices() {
   const addInvoice = useCallback(
     async (invoice: Invoice) => {
       const updated = [invoice, ...invoices];
-      await save(updated);
+      setInvoices(updated); // Update state immediately
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated)); // Then save to storage
     },
-    [invoices, save]
+    [invoices]
   );
 
   const updateInvoice = useCallback(

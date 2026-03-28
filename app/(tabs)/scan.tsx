@@ -21,7 +21,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
-import type { Invoice, InvoiceCategory } from "@/shared/invoice-types";
+import type { Invoice, InvoiceCategory, MeatItem } from "@/shared/invoice-types";
 import { trpc } from "@/lib/trpc";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -121,6 +121,7 @@ export default function ScanScreen() {
   const [category, setCategory] = useState<InvoiceCategory>("Other");
   const [notes, setNotes] = useState("");
   const [tip, setTip] = useState("");
+  const [items, setItems] = useState<MeatItem[]>([]);
 
   const ocrMutation = trpc.invoices.parseReceipt.useMutation();
 
@@ -198,6 +199,12 @@ export default function ScanScreen() {
       }
 
       const parsed = await ocrMutation.mutateAsync({ imageBase64: base64 });
+      
+      // Extract items if present (for meat vendors)
+      if (parsed.items && Array.isArray(parsed.items)) {
+        setItems(parsed.items);
+      }
+
       setInvoiceNumber(parsed.invoiceNumber ?? "");
       setVendor(parsed.vendor ?? "");
       setDate(parsed.date ?? new Date().toISOString().split("T")[0]);
@@ -229,7 +236,7 @@ export default function ScanScreen() {
     const iva = parseFloat(ivaAmount) || 0;
     const tipAmount = parseFloat(tip) || 0;
     const invoice: Invoice = {
-      id: `cam_${Date.now()}`,
+      id: `cam_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       source: "camera",
       invoiceNumber: invoiceNumber.trim() || `AUTO-${Date.now()}`,
       vendor: vendor.trim(),
@@ -242,6 +249,7 @@ export default function ScanScreen() {
       notes: notes.trim(),
       tip: tipAmount > 0 ? tipAmount : undefined,
       imageUri: imageUri ?? undefined,
+      items: items.length > 0 ? items : undefined,
       exportedToSheets: false,
       createdAt: new Date().toISOString(),
     };
@@ -261,6 +269,7 @@ export default function ScanScreen() {
     setCategory("Other");
     setNotes("");
     setTip("");
+    setItems([]);
   }, []);
 
   // STEP: CAPTURE
@@ -391,6 +400,22 @@ export default function ScanScreen() {
           <Text style={[styles.fieldLabel, { color: colors.muted, marginBottom: 8 }]}>Category</Text>
           <CategoryPicker value={category} onChange={setCategory} />
 
+          {items.length > 0 && (
+            <View style={[styles.formCard, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 16 }]}>
+              <Text style={[styles.fieldLabel, { color: colors.foreground, marginBottom: 12 }]}>Meat Items</Text>
+              {items.map((item, idx) => (
+                <View key={idx} style={[styles.meatItemCard, { borderColor: colors.border, backgroundColor: colors.background }]}>
+                  <Text style={[styles.meatItemText, { color: colors.foreground }]}>
+                    {item.partName}
+                  </Text>
+                  <Text style={[styles.meatItemSubtext, { color: colors.muted }]}>
+                    {item.quantity.toFixed(2)} {item.unit} @ {item.pricePerUnit.toFixed(2)} €/{item.unit} = {item.total.toFixed(2)} €
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
           <View style={styles.reviewActions}>
             <Pressable
               onPress={resetScan}
@@ -516,6 +541,14 @@ const styles = StyleSheet.create({
   },
   catPillText: { fontSize: 13, fontWeight: "500" },
   reviewActions: { flexDirection: "row", gap: 12, marginTop: 8 },
+  meatItemCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 12,
+    marginBottom: 8,
+  },
+  meatItemText: { fontSize: 14, fontWeight: "600", marginBottom: 4 },
+  meatItemSubtext: { fontSize: 12, lineHeight: 16 },
   doneContainer: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
   doneIcon: { width: 100, height: 100, borderRadius: 28, alignItems: "center", justifyContent: "center" },
   doneTitle: { fontSize: 26, fontWeight: "700" },
