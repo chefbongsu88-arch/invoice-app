@@ -504,6 +504,25 @@ export const appRouter = router({
       }),
   }),
   
+  // Complete fix endpoint - fixes everything at once
+  executeCompleteSheetsFix: publicProcedure
+    .input(
+      z.object({
+        spreadsheetId: z.string(),
+        accessToken: z.string(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      try {
+        const { executeCompleteSheetsFix } = await import("./sheets-complete-fixer");
+        const result = await executeCompleteSheetsFix(input.spreadsheetId, input.accessToken);
+        return result;
+      } catch (error) {
+        console.error("[CompleteFix] Error:", error);
+        throw new Error(`Failed to execute complete fix: ${error instanceof Error ? error.message : "Unknown error"}`);
+      }
+    }),
+
   // Apply fixes endpoint
   applyMonthlySheetFixes: publicProcedure
     .input(
