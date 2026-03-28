@@ -1,162 +1,398 @@
-import { ScrollView, Text, View, TouchableOpacity, TextInput, Alert } from "react-native";
-import { useState, useEffect } from "react";
-import { ScreenContainer } from "@/components/screen-container";
-import { useColors } from "@/hooks/use-colors";
-import { getGoogleSheetsConfig, saveGoogleSheetsConfig, clearGoogleSheetsConfig } from "@/lib/google-sheets";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useEffect, useState } from "react";
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
-export default function SettingsScreen() {
+import { ScreenContainer } from "@/components/screen-container";
+import { IconSymbol } from "@/components/ui/icon-symbol";
+import { useColors } from "@/hooks/use-colors";
+
+const SETTINGS_KEY = "app_settings_v1";
+
+interface AppSettings {
+  spreadsheetId: string;
+  sheetName: string;
+  googleApiKey: string;
+  autoSaveGmailEmails?: boolean;
+  autoExportToSheets?: boolean;
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  spreadsheetId: "",
+  sheetName: "Invoices",
+  googleApiKey: "",
+  autoSaveGmailEmails: false,
+  autoExportToSheets: false,
+};
+
+function SectionHeader({ title }: { title: string }) {
   const colors = useColors();
-  const [spreadsheetId, setSpreadsheetId] = useState("");
-  const [accessToken, setAccessToken] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
+  return (
+    <Text style={[styles.sectionHeader, { color: colors.muted }]}>{title.toUpperCase()}</Text>
+  );
+}
+
+function ToggleField({
+  label,
+  value,
+  onToggle,
+  hint,
+}: {
+  label: string;
+  value: boolean;
+  onToggle: (v: boolean) => void;
+  hint?: string;
+}) {
+  const colors = useColors();
+  return (
+    <Pressable
+      onPress={() => onToggle(!value)}
+      style={({ pressed }) => [
+        styles.settingRow,
+        { borderBottomColor: colors.border },
+        pressed && { opacity: 0.7 },
+      ]}
+    >
+      <View style={styles.toggleLeft}>
+        <Text style={[styles.settingLabel, { color: colors.foreground }]}>{label}</Text>
+        {hint && <Text style={[styles.hintText, { color: colors.muted }]}>{hint}</Text>}
+      </View>
+      <View
+        style={[
+          styles.toggleSwitch,
+          {
+            backgroundColor: value ? colors.primary : colors.border,
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.toggleThumb,
+            {
+              transform: [{ translateX: value ? 20 : 2 }],
+              backgroundColor: "#fff",
+            },
+          ]}
+        />
+      </View>
+    </Pressable>
+  );
+}
+
+function EditableField({
+  label,
+  value,
+  onSave,
+  placeholder,
+  secure,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onSave: (v: string) => void;
+  placeholder?: string;
+  secure?: boolean;
+  hint?: string;
+}) {
+  const colors = useColors();
+  const [editing, setEditing] = useState(false);
+  const [input, setInput] = useState(value);
 
   useEffect(() => {
-    loadConfig();
-  }, []);
+    setInput(value);
+  }, [value]);
 
-  const loadConfig = async () => {
-    try {
-      const config = await getGoogleSheetsConfig();
-      if (config) {
-        setSpreadsheetId(config.spreadsheetId);
-        setAccessToken(config.accessToken);
-      }
-    } catch (error) {
-      console.error("Failed to load config:", error);
-    } finally {
-      setIsLoading(false);
-    }
+  const handleSave = () => {
+    onSave(input.trim());
+    setEditing(false);
   };
 
-  const handleSave = async () => {
-    if (!spreadsheetId.trim() || !accessToken.trim()) {
-      Alert.alert("Error", "Please fill in all fields");
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      const success = await saveGoogleSheetsConfig({
-        spreadsheetId: spreadsheetId.trim(),
-        accessToken: accessToken.trim(),
-      });
-
-      if (success) {
-        Alert.alert("Success", "Google Sheets configuration saved!");
-      } else {
-        Alert.alert("Error", "Failed to save configuration");
-      }
-    } catch (error) {
-      Alert.alert("Error", "An error occurred while saving");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleClear = async () => {
-    Alert.alert("Clear Configuration", "Are you sure you want to clear the Google Sheets configuration?", [
-      { text: "Cancel", onPress: () => {} },
-      {
-        text: "Clear",
-        onPress: async () => {
-          try {
-            await clearGoogleSheetsConfig();
-            setSpreadsheetId("");
-            setAccessToken("");
-            Alert.alert("Success", "Configuration cleared");
-          } catch (error) {
-            Alert.alert("Error", "Failed to clear configuration");
-          }
-        },
-      },
-    ]);
-  };
-
-  if (isLoading) {
+  if (editing) {
     return (
-      <ScreenContainer className="p-6 justify-center items-center">
-        <Text className="text-foreground">Loading...</Text>
-      </ScreenContainer>
+      <View style={[styles.editRow, { borderBottomColor: colors.border }]}>
+        <Text style={[styles.editLabel, { color: colors.muted }]}>{label}</Text>
+        <TextInput
+          style={[styles.editInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+          value={input}
+          onChangeText={setInput}
+          placeholder={placeholder ?? ""}
+          placeholderTextColor={colors.muted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry={secure}
+          returnKeyType="done"
+          onSubmitEditing={handleSave}
+          autoFocus
+        />
+        {hint && <Text style={[styles.hintText, { color: colors.muted }]}>{hint}</Text>}
+        <View style={styles.editActions}>
+          <Pressable
+            onPress={() => { setEditing(false); setInput(value); }}
+            style={[styles.editBtn, { borderColor: colors.border }]}
+          >
+            <Text style={[styles.editBtnText, { color: colors.muted }]}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            onPress={handleSave}
+            style={[styles.editBtn, { backgroundColor: colors.primary }]}
+          >
+            <Text style={[styles.editBtnText, { color: "#fff" }]}>Save</Text>
+          </Pressable>
+        </View>
+      </View>
     );
   }
 
   return (
-    <ScreenContainer className="p-6">
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
-        <View className="gap-6">
-          <View>
-            <Text className="text-2xl font-bold text-foreground mb-2">Settings</Text>
-            <Text className="text-sm text-muted">Configure Google Sheets export</Text>
-          </View>
+    <Pressable
+      onPress={() => setEditing(true)}
+      style={({ pressed }) => [
+        styles.settingRow,
+        { borderBottomColor: colors.border },
+        pressed && { opacity: 0.7 },
+      ]}
+    >
+      <Text style={[styles.settingLabel, { color: colors.foreground }]}>{label}</Text>
+      <View style={styles.settingRight}>
+        <Text style={[styles.settingValue, { color: value ? colors.muted : colors.error }]} numberOfLines={1}>
+          {value ? (secure ? "••••••••" : value) : "Not set"}
+        </Text>
+        <IconSymbol name="chevron.right" size={16} color={colors.muted} />
+      </View>
+    </Pressable>
+  );
+}
 
-          <View className="gap-4">
-            {/* Spreadsheet ID */}
-            <View>
-              <Text className="text-sm font-semibold text-foreground mb-2">Google Sheets Spreadsheet ID</Text>
-              <TextInput
-                value={spreadsheetId}
-                onChangeText={setSpreadsheetId}
-                placeholder="Paste your spreadsheet ID here"
-                placeholderTextColor={colors.muted}
-                className="border border-border rounded-lg p-3 text-foreground bg-surface"
-                editable={!isSaving}
-              />
-              <Text className="text-xs text-muted mt-2">
-                Find this in your Google Sheets URL: https://docs.google.com/spreadsheets/d/[ID]/edit
+export default function SettingsScreen() {
+  const colors = useColors();
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+
+  useEffect(() => {
+    AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
+      if (raw) setSettings(JSON.parse(raw) as AppSettings);
+    });
+  }, []);
+
+  const saveSettings = async (updated: AppSettings) => {
+    await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
+    setSettings(updated);
+  };
+
+  return (
+    <ScreenContainer containerClassName="bg-background">
+      <ScrollView contentContainerStyle={styles.content}>
+        <Text style={[styles.title, { color: colors.foreground }]}>Settings</Text>
+
+        {/* Gmail Automation */}
+        <SectionHeader title="Gmail Automation" />
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <ToggleField
+            label="Auto-save Gmail Emails"
+            value={settings.autoSaveGmailEmails ?? false}
+            onToggle={(v) => saveSettings({ ...settings, autoSaveGmailEmails: v })}
+            hint="Automatically save parsed Gmail invoices to Receipts"
+          />
+          <ToggleField
+            label="Auto-export to Sheets"
+            value={settings.autoExportToSheets ?? false}
+            onToggle={(v) => saveSettings({ ...settings, autoExportToSheets: v })}
+            hint="Automatically export to all Google Sheets tabs"
+          />
+        </View>
+
+        {/* Google API Configuration */}
+        <SectionHeader title="Google Sheets API" />
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <EditableField
+            label="API Key"
+            value={settings.googleApiKey}
+            placeholder="Paste your Google API Key here"
+            onSave={(v) => saveSettings({ ...settings, googleApiKey: v })}
+            secure={true}
+            hint="Create at: console.cloud.google.com → APIs & Services → Credentials"
+          />
+        </View>
+
+        {/* Spreadsheet Configuration */}
+        <SectionHeader title="Google Sheets Configuration" />
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <EditableField
+            label="Spreadsheet ID"
+            value={settings.spreadsheetId}
+            placeholder="Paste your Spreadsheet ID here"
+            onSave={(v) => saveSettings({ ...settings, spreadsheetId: v })}
+            hint="From: docs.google.com/spreadsheets/d/[SPREADSHEET_ID]/edit"
+          />
+          <EditableField
+            label="Sheet Name (Tab)"
+            value={settings.sheetName}
+            placeholder="e.g. Invoices"
+            onSave={(v) => saveSettings({ ...settings, sheetName: v || "Invoices" })}
+          />
+        </View>
+
+        {/* Column Structure Info */}
+        <View style={[styles.columnsBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.columnsTitle, { color: colors.foreground }]}>Spreadsheet Columns</Text>
+          <Text style={[styles.columnsDesc, { color: colors.muted }]}>
+            Data will be exported with these columns:
+          </Text>
+          {[
+            ["A", "Source", "Camera / Email"],
+            ["B", "Invoice #", "Factura number"],
+            ["C", "Vendor", "Business name"],
+            ["D", "Date", "Receipt date"],
+            ["E", "Total (€)", "Total amount"],
+            ["F", "IVA (€)", "Tax amount"],
+            ["G", "Base (€)", "Amount before tax"],
+            ["H", "Category", "AI classification"],
+            ["I", "Currency", "EUR"],
+            ["J", "Notes", "Additional notes"],
+            ["K", "Exported At", "Export timestamp"],
+          ].map(([col, name, desc]) => (
+            <View key={col} style={styles.columnRow}>
+              <Text style={[styles.columnLetter, { color: colors.primary, backgroundColor: colors.primary + "15" }]}>
+                {col}
+              </Text>
+              <Text style={[styles.columnName, { color: colors.foreground }]}>{name}</Text>
+              <Text style={[styles.columnDesc, { color: colors.muted }]}>{desc}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* App Info */}
+        <SectionHeader title="App Information" />
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.settingRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.settingLabel, { color: colors.foreground }]}>Version</Text>
+            <Text style={[styles.settingValue, { color: colors.muted }]}>1.0.0</Text>
+          </View>
+          <View style={[styles.settingRow, { borderBottomColor: "transparent" }]}>
+            <Text style={[styles.settingLabel, { color: colors.foreground }]}>Region</Text>
+            <Text style={[styles.settingValue, { color: colors.muted }]}>Spain (EUR / IVA)</Text>
+          </View>
+        </View>
+
+        {/* Quick Start Guide */}
+        <SectionHeader title="Quick Start" />
+        <View style={[styles.guideBox, { backgroundColor: colors.primary + "10", borderColor: colors.primary + "30" }]}>
+          <View style={styles.guideStep}>
+            <View style={[styles.stepNumber, { backgroundColor: colors.primary }]}>
+              <Text style={styles.stepNumberText}>1</Text>
+            </View>
+            <View style={styles.stepContent}>
+              <Text style={[styles.stepTitle, { color: colors.foreground }]}>Scan Receipts</Text>
+              <Text style={[styles.stepDesc, { color: colors.muted }]}>
+                Use the Scan tab to capture paper receipts with your camera. AI will automatically extract the data.
               </Text>
             </View>
-
-            {/* Access Token */}
-            <View>
-              <Text className="text-sm font-semibold text-foreground mb-2">Google Access Token</Text>
-              <TextInput
-                value={accessToken}
-                onChangeText={setAccessToken}
-                placeholder="Paste your access token here"
-                placeholderTextColor={colors.muted}
-                className="border border-border rounded-lg p-3 text-foreground bg-surface"
-                secureTextEntry={true}
-                editable={!isSaving}
-              />
-              <Text className="text-xs text-muted mt-2">
-                Your token is stored securely on your device and never shared.
-              </Text>
-            </View>
-
-            {/* Save Button */}
-            <TouchableOpacity
-              onPress={handleSave}
-              disabled={isSaving}
-              className={`rounded-lg p-4 items-center ${isSaving ? "opacity-50" : ""}`}
-              style={{ backgroundColor: colors.primary }}
-            >
-              <Text className="text-white font-semibold">{isSaving ? "Saving..." : "Save Configuration"}</Text>
-            </TouchableOpacity>
-
-            {/* Clear Button */}
-            {spreadsheetId && (
-              <TouchableOpacity
-                onPress={handleClear}
-                disabled={isSaving}
-                className="rounded-lg p-4 items-center border border-error"
-              >
-                <Text className="text-error font-semibold">Clear Configuration</Text>
-              </TouchableOpacity>
-            )}
           </View>
 
-          {/* Info Section */}
-          <View className="bg-surface rounded-lg p-4 gap-2">
-            <Text className="text-sm font-semibold text-foreground">How to get your credentials:</Text>
-            <Text className="text-xs text-muted">
-              1. Create a Google Sheet and share it with your Google account{"\n"}
-              2. Copy the Spreadsheet ID from the URL{"\n"}
-              3. Generate an access token from Google Cloud Console
-            </Text>
+          <View style={styles.guideStep}>
+            <View style={[styles.stepNumber, { backgroundColor: colors.primary }]}>
+              <Text style={styles.stepNumberText}>2</Text>
+            </View>
+            <View style={styles.stepContent}>
+              <Text style={[styles.stepTitle, { color: colors.foreground }]}>Connect Gmail</Text>
+              <Text style={[styles.stepDesc, { color: colors.muted }]}>
+                Go to Gmail tab and enter your email address to automatically fetch invoice emails.
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.guideStep}>
+            <View style={[styles.stepNumber, { backgroundColor: colors.primary }]}>
+              <Text style={styles.stepNumberText}>3</Text>
+            </View>
+            <View style={styles.stepContent}>
+              <Text style={[styles.stepTitle, { color: colors.foreground }]}>Export to Sheets</Text>
+              <Text style={[styles.stepDesc, { color: colors.muted }]}>
+                Enter your Google Sheets ID above and export all invoices with one tap.
+              </Text>
+            </View>
           </View>
         </View>
       </ScrollView>
     </ScreenContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  content: { padding: 20, paddingBottom: 48 },
+  title: { fontSize: 28, fontWeight: "700", marginBottom: 24 },
+  sectionHeader: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5, marginBottom: 8, marginTop: 20 },
+  section: { borderRadius: 14, borderWidth: 1, overflow: "hidden" },
+  settingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+  },
+  settingLabel: { fontSize: 15, fontWeight: "500" },
+  settingRight: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1, justifyContent: "flex-end" },
+  settingValue: { fontSize: 13, maxWidth: 200 },
+  editRow: { padding: 14, gap: 8, borderBottomWidth: 1 },
+  editLabel: { fontSize: 11, fontWeight: "600", letterSpacing: 0.3 },
+  editInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  hintText: { fontSize: 11, lineHeight: 16 },
+  editActions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
+  editBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
+  editBtnText: { fontSize: 14, fontWeight: "600" },
+  columnsBox: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+    gap: 8,
+    marginTop: 10,
+  },
+  columnsTitle: { fontSize: 14, fontWeight: "600" },
+  columnsDesc: { fontSize: 12, marginBottom: 4 },
+  columnRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  columnLetter: { width: 24, height: 24, borderRadius: 6, textAlign: "center", lineHeight: 24, fontSize: 12, fontWeight: "700" },
+  columnName: { fontSize: 13, fontWeight: "500", width: 80 },
+  columnDesc: { fontSize: 12, flex: 1 },
+  guideBox: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+    gap: 16,
+    marginTop: 10,
+  },
+  guideStep: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
+  stepNumber: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  stepNumberText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  stepContent: { flex: 1, gap: 4 },
+  stepTitle: { fontSize: 13, fontWeight: "600" },
+  stepDesc: { fontSize: 12, lineHeight: 18 },
+  toggleLeft: {
+    flex: 1,
+    gap: 4,
+  },
+  toggleSwitch: {
+    width: 50,
+    height: 28,
+    borderRadius: 14,
+    padding: 2,
+    justifyContent: "center",
+  },
+  toggleThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+  },
+});
