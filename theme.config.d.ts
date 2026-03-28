@@ -8,9 +8,6 @@ export const themeColors: {
   success: { light: string; dark: string };
   warning: { light: string; dark: string };
   error: { light: string; dark: string };
-  camera: { light: string; dark: string };
-  email: { light: string; dark: string };
-  tint: { light: string; dark: string };
 };
 
 declare const themeConfig: {

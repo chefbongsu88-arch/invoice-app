@@ -9,52 +9,21 @@ type IconMapping = Record<SymbolViewProps["name"], ComponentProps<typeof Materia
 type IconSymbolName = keyof typeof MAPPING;
 
 /**
- * SF Symbols to Material Icons mappings for Invoice Tracker app.
+ * Add your SF Symbols to Material Icons mappings here.
+ * - see Material Icons in the [Icons Directory](https://icons.expo.fyi).
+ * - see SF Symbols in the [SF Symbols](https://developer.apple.com/sf-symbols/) app.
  */
 const MAPPING = {
-  // Navigation
   "house.fill": "home",
-  "doc.text.fill": "description",
-  "camera.fill": "camera-alt",
-  "envelope.fill": "email",
-  "gearshape.fill": "settings",
-  // Actions
   "paperplane.fill": "send",
-  "plus": "add",
-  "plus.circle.fill": "add-circle",
-  "checkmark.circle.fill": "check-circle",
-  "xmark.circle.fill": "cancel",
-  "trash.fill": "delete",
-  "pencil": "edit",
-  "square.and.arrow.up": "ios-share",
-  "arrow.clockwise": "refresh",
-  "magnifyingglass": "search",
-  "chevron.right": "chevron-right",
-  "chevron.left": "chevron-left",
-  "chevron.down": "keyboard-arrow-down",
-  // Status
-  "exclamationmark.triangle.fill": "warning",
-  "info.circle.fill": "info",
-  "checkmark.seal.fill": "verified",
-  "clock.fill": "schedule",
-  // Invoice specific
-  "doc.text.magnifyingglass": "find-in-page",
-  "tablecells": "table-chart",
-  "link": "link",
-  "photo.fill": "photo",
-  "bolt.fill": "bolt",
-  "tag.fill": "label",
-  "building.2.fill": "business",
-  "calendar": "calendar-today",
-  "eurosign.circle.fill": "euro",
   "chevron.left.forwardslash.chevron.right": "code",
-  "arrow.right.circle.fill": "arrow-circle-right",
-  "wifi.slash": "wifi-off",
-  "chart.bar.fill": "bar-chart",
+  "chevron.right": "chevron-right",
 } as IconMapping;
 
 /**
  * An icon component that uses native SF Symbols on iOS, and Material Icons on Android and web.
+ * This ensures a consistent look across platforms, and optimal resource usage.
+ * Icon `name`s are based on SF Symbols and require manual mapping to Material Icons.
  */
 export function IconSymbol({
   name,
