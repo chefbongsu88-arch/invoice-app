@@ -124,3 +124,20 @@
 - [ ] Test batch upload with multiple receipts
 - [ ] Test duplicate detection and warning messages
 - [ ] Verify all receipts export correctly
+
+## Gmail Invoice Automation with Apps Script (NEW)
+- [x] Create Google Apps Script for Gmail invoice extraction
+- [x] Implement invoice keyword filtering (Spanish + English)
+- [x] Integrate Gemini API for AI parsing
+- [x] Add duplicate detection logic
+- [x] Create automatic Google Sheets insertion
+- [ ] Set up automatic triggers in Google Sheets
+- [ ] Test Gmail automation with real emails
+- [ ] Verify data accuracy and formatting
+- [ ] Monitor and debug any issues
+
+## Google Sheets Layout Fix (Current)
+- [x] Fix monthly sheet layout (separate transactions from summary)
+- [x] Combine individual transactions and monthly summary in one append
+- [ ] Test fixed layout with real data
+- [ ] Verify summary calculations are correct

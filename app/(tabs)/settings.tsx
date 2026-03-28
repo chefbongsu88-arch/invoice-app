@@ -19,18 +19,69 @@ interface AppSettings {
   spreadsheetId: string;
   sheetName: string;
   googleApiKey: string;
+  autoSaveGmailEmails?: boolean;
+  autoExportToSheets?: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   spreadsheetId: "",
   sheetName: "Invoices",
   googleApiKey: "",
+  autoSaveGmailEmails: false,
+  autoExportToSheets: false,
 };
 
 function SectionHeader({ title }: { title: string }) {
   const colors = useColors();
   return (
     <Text style={[styles.sectionHeader, { color: colors.muted }]}>{title.toUpperCase()}</Text>
+  );
+}
+
+function ToggleField({
+  label,
+  value,
+  onToggle,
+  hint,
+}: {
+  label: string;
+  value: boolean;
+  onToggle: (v: boolean) => void;
+  hint?: string;
+}) {
+  const colors = useColors();
+  return (
+    <Pressable
+      onPress={() => onToggle(!value)}
+      style={({ pressed }) => [
+        styles.settingRow,
+        { borderBottomColor: colors.border },
+        pressed && { opacity: 0.7 },
+      ]}
+    >
+      <View style={styles.toggleLeft}>
+        <Text style={[styles.settingLabel, { color: colors.foreground }]}>{label}</Text>
+        {hint && <Text style={[styles.hintText, { color: colors.muted }]}>{hint}</Text>}
+      </View>
+      <View
+        style={[
+          styles.toggleSwitch,
+          {
+            backgroundColor: value ? colors.primary : colors.border,
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.toggleThumb,
+            {
+              transform: [{ translateX: value ? 20 : 2 }],
+              backgroundColor: "#fff",
+            },
+          ]}
+        />
+      </View>
+    </Pressable>
   );
 }
 
@@ -137,6 +188,23 @@ export default function SettingsScreen() {
     <ScreenContainer containerClassName="bg-background">
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={[styles.title, { color: colors.foreground }]}>Settings</Text>
+
+        {/* Gmail Automation */}
+        <SectionHeader title="Gmail Automation" />
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <ToggleField
+            label="Auto-save Gmail Emails"
+            value={settings.autoSaveGmailEmails ?? false}
+            onToggle={(v) => saveSettings({ ...settings, autoSaveGmailEmails: v })}
+            hint="Automatically save parsed Gmail invoices to Receipts"
+          />
+          <ToggleField
+            label="Auto-export to Sheets"
+            value={settings.autoExportToSheets ?? false}
+            onToggle={(v) => saveSettings({ ...settings, autoExportToSheets: v })}
+            hint="Automatically export to all Google Sheets tabs"
+          />
+        </View>
 
         {/* Google API Configuration */}
         <SectionHeader title="Google Sheets API" />
@@ -311,4 +379,20 @@ const styles = StyleSheet.create({
   stepContent: { flex: 1, gap: 4 },
   stepTitle: { fontSize: 13, fontWeight: "600" },
   stepDesc: { fontSize: 12, lineHeight: 18 },
+  toggleLeft: {
+    flex: 1,
+    gap: 4,
+  },
+  toggleSwitch: {
+    width: 50,
+    height: 28,
+    borderRadius: 14,
+    padding: 2,
+    justifyContent: "center",
+  },
+  toggleThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+  },
 });

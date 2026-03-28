@@ -21,6 +21,7 @@ import { trpc } from "@/lib/trpc";
 
 const GMAIL_TOKEN_KEY = "gmail_oauth_token";
 const GMAIL_EMAIL_KEY = "gmail_email_address";
+const SETTINGS_KEY = "app_settings_v1";
 
 interface EmailMessage {
   id: string;
@@ -178,6 +179,7 @@ export default function GmailScreen() {
   const [accessToken, setAccessToken] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
 
   const fetchMutation = trpc.invoices.fetchGmailInvoices.useMutation();
   const parseMutation = trpc.invoices.parseEmailInvoice.useMutation();
@@ -192,6 +194,13 @@ export default function GmailScreen() {
     });
     AsyncStorage.getItem(GMAIL_EMAIL_KEY).then((email) => {
       if (email) setUserEmail(email);
+    });
+    // Load auto-save setting
+    AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
+      if (raw) {
+        const settings = JSON.parse(raw);
+        setAutoSaveEnabled(settings.autoSaveGmailEmails ?? false);
+      }
     });
   }, []);
 
@@ -306,6 +315,18 @@ export default function GmailScreen() {
     },
     [addInvoice]
   );
+
+  // Auto-save parsed emails if enabled
+  useEffect(() => {
+    if (!autoSaveEnabled) return;
+    
+    emails.forEach(async (email) => {
+      if (email.parsedData && !email.parsed) {
+        // Auto-save this email
+        await handleSave(email);
+      }
+    });
+  }, [emails, autoSaveEnabled, handleSave]);
 
   const handleDisconnect = useCallback(() => {
     Alert.alert("Disconnect Google", "Are you sure you want to disconnect your Google account?", [
