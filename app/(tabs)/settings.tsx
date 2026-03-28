@@ -7,6 +7,7 @@ import {
   Text,
   TextInput,
   View,
+  Linking,
 } from "react-native";
 
 import { ScreenContainer } from "@/components/screen-container";
@@ -235,6 +236,23 @@ export default function SettingsScreen() {
             placeholder="e.g. Invoices"
             onSave={(v) => saveSettings({ ...settings, sheetName: v || "Invoices" })}
           />
+          <Pressable
+            onPress={() => {
+              if (settings.spreadsheetId) {
+                Linking.openURL(`https://docs.google.com/spreadsheets/d/${settings.spreadsheetId}/edit`);
+              } else {
+                Linking.openURL("https://docs.google.com/spreadsheets/d/1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E/edit");
+              }
+            }}
+            style={({ pressed }) => [
+              styles.viewSheetsBtn,
+              { backgroundColor: colors.primary },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <IconSymbol name="paperplane.fill" size={18} color="#fff" />
+            <Text style={styles.viewSheetsBtnText}>View Sheets</Text>
+          </Pressable>
         </View>
 
         {/* Column Structure Info */}
@@ -394,5 +412,21 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
+  },
+  viewSheetsBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginHorizontal: 14,
+    marginVertical: 14,
+  },
+  viewSheetsBtnText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "600",
   },
 });
