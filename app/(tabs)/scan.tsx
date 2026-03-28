@@ -164,14 +164,20 @@ export default function ScanScreen() {
       Alert.alert("Permission Required", "Photo library permission is needed.");
       return;
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const options: any = {
       mediaTypes: ["images"],
       quality: 0.85,
       base64: true,
       allowsEditing: !allowMultiple,
-      aspect: allowMultiple ? undefined : [3, 4],
-      selectionLimit: allowMultiple ? 0 : 1,
-    });
+    };
+    
+    if (allowMultiple) {
+      options.allowsMultiple = true;
+    } else {
+      options.aspect = [3, 4];
+    }
+    
+    const result = await ImagePicker.launchImageLibraryAsync(options);
     if (!result.canceled && result.assets.length > 0) {
       if (allowMultiple && result.assets.length > 1) {
         const imageUris = result.assets.map((asset) => asset.uri);

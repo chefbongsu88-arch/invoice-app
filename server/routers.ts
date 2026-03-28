@@ -317,17 +317,42 @@ export const appRouter = router({
         }
 
         // If automateSheets is true, trigger the full automation
-        // Trigger sheet automation in background
         if (input.automateSheets) {
           try {
             const { automateGoogleSheets, addChartsToQuarterlySheets } = await import("./sheets-automation-enhanced");
             
-            // Run automation without blocking the response
-            // Don't await - let it run in background
-            automateGoogleSheets({
+            // Fetch ALL data from 2026 Invoice tracker sheet for complete monthly/quarterly aggregation
+            const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("2026 Invoice tracker")}!A2:L`;
+            const trackerRes = await fetch(trackerSheetUrl, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            
+            let allInvoiceData: any[] = [];
+            if (trackerRes.ok) {
+              const trackerData = await trackerRes.json() as { values?: any[][] };
+              if (trackerData.values) {
+                allInvoiceData = trackerData.values.map((row: any[]) => ({
+                  source: row[0] || "",          // A: Source
+                  invoiceNumber: row[1] || "",   // B: Invoice #
+                  vendor: row[2] || "",          // C: Vendor
+                  date: row[3] || "",            // D: Date
+                  totalAmount: parseFloat(row[4]) || 0,   // E: Total (€)
+                  ivaAmount: parseFloat(row[5]) || 0,     // F: IVA (€)
+                  baseAmount: parseFloat(row[6]) || 0,    // G: Base (€)
+                  category: row[7] || "",        // H: Category
+                  currency: row[8] || "EUR",     // I: Currency
+                  tip: parseFloat(row[9]) || 0,  // J: Tip (€)
+                  notes: row[10] || "",          // K: Notes
+                  imageUrl: row[11] || "",       // L: Image URL
+                }));
+              }
+            }
+            
+            // Use all data for automation (includes current + previous invoices)
+            await automateGoogleSheets({
               spreadsheetId,
               accessToken,
-              invoiceData: rows.map((r) => ({
+              invoiceData: allInvoiceData.length > 0 ? allInvoiceData : rows.map((r) => ({
                 source: r.source,
                 invoiceNumber: r.invoiceNumber,
                 vendor: r.vendor,
@@ -341,31 +366,28 @@ export const appRouter = router({
                 imageUrl: r.imageUrl,
                 tip: r.tip,
               })),
-            }, ["La portenia", "es cuco"]).then(() => {
-              // After automation completes, add charts to quarterly sheets
-              return addChartsToQuarterlySheets(
-                spreadsheetId,
-                accessToken,
-                rows.map((r) => ({
-                  source: r.source,
-                  invoiceNumber: r.invoiceNumber,
-                  vendor: r.vendor,
-                  date: r.date,
-                  totalAmount: r.totalAmount,
-                  ivaAmount: r.ivaAmount,
-                  baseAmount: r.baseAmount,
-                  category: r.category,
-                  currency: r.currency,
-                  notes: r.notes,
-                  imageUrl: r.imageUrl,
-                  tip: r.tip,
-                }))
-              );
-            }).catch((err: any) => {
-              console.error("Background automation error:", err);
-            });
-            // Return immediately without waiting for automation to complete
-            console.log("Automation and chart creation triggered in background");
+            }, ["La portenia", "es cuco"]);
+            
+            // After automation completes, add charts to quarterly sheets
+            await addChartsToQuarterlySheets(
+              spreadsheetId,
+              accessToken,
+              rows.map((r) => ({
+                source: r.source,
+                invoiceNumber: r.invoiceNumber,
+                vendor: r.vendor,
+                date: r.date,
+                totalAmount: r.totalAmount,
+                ivaAmount: r.ivaAmount,
+                baseAmount: r.baseAmount,
+                category: r.category,
+                currency: r.currency,
+                notes: r.notes,
+                imageUrl: r.imageUrl,
+                tip: r.tip,
+              }))
+            );
+            console.log("Automation and chart creation completed successfully");
           } catch (error) {
             console.error("Error starting automation:", error);
           }
