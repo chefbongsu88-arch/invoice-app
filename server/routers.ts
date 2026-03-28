@@ -163,8 +163,11 @@ export const appRouter = router({
               category: z.string(),
               currency: z.string().default("EUR"),
               notes: z.string().optional(),
+              imageUrl: z.string().optional(),
+              tip: z.number().optional(),
             })
           ),
+          automateSheets: z.boolean().optional().default(false),
         })
       )
       .mutation(async ({ input }) => {
@@ -206,7 +209,7 @@ export const appRouter = router({
 
         // First, ensure header row exists
         const headerValues = [
-          ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Category", "Currency", "Notes", "Exported At"],
+          ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Category", "Currency", "Tip (€)", "Notes", "Image URL", "Exported At"],
         ];
 
         // Check if sheet exists and has headers
@@ -247,11 +250,13 @@ export const appRouter = router({
           r.baseAmount,
           r.category,
           r.currency,
+          r.tip ?? 0,
           r.notes ?? "",
+          r.imageUrl ?? "",
           now,
         ]);
 
-        const range = `${sheetName}!A:K`;
+        const range = `${sheetName}!A:M`;
         const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
         const appendRes = await fetch(appendUrl, {
           method: "POST",
@@ -267,6 +272,38 @@ export const appRouter = router({
           console.error("Sheets API error:", errText);
           console.error("Append URL:", appendUrl);
           throw new Error(`Failed to export to Google Sheets. Please try again.`);
+        }
+
+        // If automateSheets is true, trigger the full automation
+        // Trigger sheet automation in background
+        if (input.automateSheets) {
+          try {
+            const { automateGoogleSheets } = await import("./sheets-automation.js");
+            
+            // Run automation without blocking the response
+            automateGoogleSheets({
+              spreadsheetId,
+              accessToken,
+              invoiceData: rows.map((r) => ({
+                source: r.source,
+                invoiceNumber: r.invoiceNumber,
+                vendor: r.vendor,
+                date: r.date,
+                totalAmount: r.totalAmount,
+                ivaAmount: r.ivaAmount,
+                baseAmount: r.baseAmount,
+                category: r.category,
+                currency: r.currency,
+                notes: r.notes,
+                imageUrl: r.imageUrl,
+                tip: r.tip,
+              })),
+            }, ["La portenia", "es cuco"]).catch((err) => {
+              console.error("Background automation error:", err);
+            });
+          } catch (error) {
+            console.error("Error starting automation:", error);
+          }
         }
 
         return { success: true, rowsAdded: rows.length, message: "Invoice exported successfully" };

@@ -1,5 +1,6 @@
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
@@ -119,6 +120,7 @@ export default function ScanScreen() {
   const [ivaAmount, setIvaAmount] = useState("");
   const [category, setCategory] = useState<InvoiceCategory>("Other");
   const [notes, setNotes] = useState("");
+  const [tip, setTip] = useState("");
 
   const ocrMutation = trpc.invoices.parseReceipt.useMutation();
 
@@ -169,17 +171,31 @@ export default function ScanScreen() {
     setProcessing(true);
     try {
       // Convert image to base64 for server processing
-      const response = await fetch(imageUri);
-      const blob = await response.blob();
-      const reader = new FileReader();
-      const base64 = await new Promise<string>((resolve, reject) => {
-        reader.onloadend = () => {
-          const result = reader.result as string;
-          resolve(result.split(",")[1] ?? "");
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
+      // Use FileSystem for reliable Base64 conversion (works with both camera and library images)
+      let base64: string;
+      try {
+        base64 = await FileSystem.readAsStringAsync(imageUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      } catch (fsError) {
+        console.warn("FileSystem read failed, using fetch fallback", fsError);
+        const response = await fetch(imageUri);
+        const blob = await response.blob();
+        const reader = new FileReader();
+        base64 = await new Promise<string>((resolve, reject) => {
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            const b64 = result.split(",")[1];
+            if (!b64) {
+              reject(new Error("Failed to extract base64 from blob"));
+            } else {
+              resolve(b64);
+            }
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      }
 
       const parsed = await ocrMutation.mutateAsync({ imageBase64: base64 });
       setInvoiceNumber(parsed.invoiceNumber ?? "");
@@ -188,6 +204,7 @@ export default function ScanScreen() {
       setTotalAmount(parsed.totalAmount?.toString() ?? "");
       setIvaAmount(parsed.ivaAmount?.toString() ?? "");
       setCategory((parsed.category as InvoiceCategory) ?? "Other");
+      setTip(""); // Reset tip for manual entry
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setStep("review");
     } catch (err) {
@@ -210,6 +227,7 @@ export default function ScanScreen() {
     }
     const total = parseFloat(totalAmount) || 0;
     const iva = parseFloat(ivaAmount) || 0;
+    const tipAmount = parseFloat(tip) || 0;
     const invoice: Invoice = {
       id: `cam_${Date.now()}`,
       source: "camera",
@@ -222,6 +240,7 @@ export default function ScanScreen() {
       currency: "EUR",
       category,
       notes: notes.trim(),
+      tip: tipAmount > 0 ? tipAmount : undefined,
       imageUri: imageUri ?? undefined,
       exportedToSheets: false,
       createdAt: new Date().toISOString(),
@@ -229,7 +248,7 @@ export default function ScanScreen() {
     await addInvoice(invoice);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setStep("done");
-  }, [vendor, totalAmount, ivaAmount, invoiceNumber, date, category, notes, imageUri, addInvoice]);
+  }, [vendor, totalAmount, ivaAmount, tip, invoiceNumber, date, category, notes, imageUri, addInvoice]);
 
   const resetScan = useCallback(() => {
     setStep("capture");
@@ -241,6 +260,7 @@ export default function ScanScreen() {
     setIvaAmount("");
     setCategory("Other");
     setNotes("");
+    setTip("");
   }, []);
 
   // STEP: CAPTURE
@@ -364,6 +384,7 @@ export default function ScanScreen() {
             <FieldRow label="Date (YYYY-MM-DD)" value={date} onChange={setDate} placeholder="2024-01-15" />
             <FieldRow label="Total Amount (€)" value={totalAmount} onChange={setTotalAmount} keyboardType="decimal-pad" placeholder="0.00" />
             <FieldRow label="IVA Amount (€)" value={ivaAmount} onChange={setIvaAmount} keyboardType="decimal-pad" placeholder="0.00" />
+            <FieldRow label="Tip (€) - optional" value={tip} onChange={setTip} keyboardType="decimal-pad" placeholder="0.00" />
             <FieldRow label="Notes (optional)" value={notes} onChange={setNotes} placeholder="Any additional notes" />
           </View>
 

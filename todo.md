@@ -78,3 +78,26 @@
 - [x] Tested end-to-end export: Camera receipt → Google Sheets
 - [x] Confirmed data successfully written to Google Sheet
 - [x] IKEA receipt data (€324, €56.23 IVA, €267.77 Base) exported successfully
+
+## Feature Improvements (Current Session)
+- [x] Fix photo library image parsing error (FileSystem-based Base64)
+- [x] Add tip field to receipt data model
+- [x] Add tip field to Scan screen UI
+- [x] Add image URL field to export data
+- [x] Create Google Sheets automation module
+- [x] Implement monthly sheet creation (January-December)
+- [x] Implement quarterly summary sheets (Q1-Q4)
+- [x] Create Meat tracking sheets (La portenia, es cuco)
+- [x] Create Dashboard sheet
+- [x] Integrate automation with export flow
+- [x] Enable background automation
+
+## Testing & Deployment
+- [ ] Test photo library image upload
+- [ ] Test tip field in scan screen
+- [ ] Test monthly sheet creation
+- [ ] Test quarterly sheet creation
+- [ ] Test Meat tracking sheets
+- [ ] Test Dashboard sheet generation
+- [ ] Verify all data organization
+- [ ] Create final checkpoint

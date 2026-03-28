@@ -92,9 +92,12 @@ export default function ReceiptDetailScreen() {
             baseAmount: invoice.baseAmount,
             category: invoice.category,
             currency: invoice.currency,
+            tip: invoice.tip,
             notes: invoice.notes ?? "",
+            imageUrl: invoice.imageUri,
           },
         ],
+        automateSheets: true,
       });
 
       await updateInvoice(id, {

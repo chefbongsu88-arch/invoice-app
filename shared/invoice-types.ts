@@ -23,6 +23,7 @@ export interface Invoice {
   currency: string;
   category: InvoiceCategory;
   notes?: string;
+  tip?: number; // tip amount (e.g., for restaurants)
   imageUri?: string; // for camera receipts
   emailId?: string; // for email invoices
   emailSubject?: string;
