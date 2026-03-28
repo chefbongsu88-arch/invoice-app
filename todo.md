@@ -141,3 +141,36 @@
 - [x] Combine individual transactions and monthly summary in one append
 - [ ] Test fixed layout with real data
 - [ ] Verify summary calculations are correct
+
+## Image URL Generation Fix (Current Issue)
+- [x] Fix image filename generation to be consistent
+- [x] Ensure all images use same path structure: invoices/{timestamp}-{random}/{fileName}
+- [x] Fix vendor name extraction for filename (some images have folder structure)
+- [x] Create filename sanitization tests (11 tests, all passing)
+- [x] Verify all 3 problematic images now display in Google Sheets
+- [x] Test end-to-end image upload and display
+
+## Meat Cut-Level Detail Tracking (NEW)
+- [x] Add items field to exportToSheets input schema
+- [x] Update InvoiceRecord interface to include items
+- [x] Create createMeatDetailSheet function
+- [x] Add Meat_Detail sheet to automation flow
+- [ ] Test meat invoice upload with cut details
+- [ ] Verify Meat_Detail sheet populates correctly
+- [ ] Test monthly aggregation of meat cuts
+
+
+## Google Sheets Structure Redesign (NEW - Major Refactor)
+- [ ] Create Supplier master sheet with: Category, Name, Product, Proof, Note
+- [ ] Add supplier management to app (add new supplier, edit category)
+- [ ] Redesign monthly sheets layout:
+  * Left side: Transaction details (Date, Supplier, Total, IVA, Base, Factura #, Note, Who, Photo)
+  * Right side: Monthly statistics by supplier (Supplier, Total, IVA, Base, %)
+- [ ] Implement automatic supplier statistics calculation with SUMIF
+- [ ] Add region field to invoice data model (Ibiza, Madrid, Cape Town, UAE, etc.)
+- [ ] Create regional tracking sheets (Ibiza, Madrid, Cape Town, UAE, Out of Spain)
+- [ ] Implement quarterly summary sheets (Q1, Q2, Q3, Q4)
+- [ ] Add "who" field to invoice (staff member name)
+- [ ] Update scan screen UI to capture: Region, Who, Supplier Category
+- [ ] Test complete automation with new structure
+- [ ] Verify all sheets generate correctly with sample data

@@ -170,6 +170,15 @@ export const appRouter = router({
               notes: z.string().optional(),
               imageUrl: z.string().optional(),
               tip: z.number().optional(),
+              items: z.array(
+                z.object({
+                  partName: z.string(),
+                  quantity: z.number(),
+                  unit: z.string(),
+                  pricePerUnit: z.number(),
+                  total: z.number(),
+                })
+              ).optional(),
             })
           ),
           automateSheets: z.boolean().optional().default(false),
@@ -266,7 +275,12 @@ export const appRouter = router({
                 
                 if (base64Data && !imageUrl.startsWith("file://")) {
                   // Generate filename from invoice number or timestamp
-                  const fileName = `${r.invoiceNumber || "receipt"}-${Date.now()}.jpg`;
+                  // Sanitize invoice number: remove folder separators and special characters
+                  const sanitizedInvoiceNum = (r.invoiceNumber || "receipt")
+                    .replace(/\//g, "-")  // Replace folder separators with dash
+                    .replace(/[^a-zA-Z0-9-]/g, "")  // Remove special characters
+                    .substring(0, 50);  // Limit length
+                  const fileName = `${sanitizedInvoiceNum || "receipt"}-${Date.now()}.jpg`;
                   imageUrl = await uploadImageToStorage(base64Data, fileName);
                   console.log(`[Export] Image uploaded for ${r.vendor}: ${imageUrl}`);
                 }

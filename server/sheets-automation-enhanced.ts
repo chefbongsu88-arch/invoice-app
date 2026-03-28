@@ -22,6 +22,13 @@ interface InvoiceRecord {
   notes?: string;
   imageUrl?: string;
   tip?: number;
+  items?: Array<{
+    partName: string;
+    quantity: number;
+    unit: string;
+    pricePerUnit: number;
+    total: number;
+  }>;
 }
 
 /**
@@ -511,6 +518,47 @@ export async function createDashboardSheet(
 }
 
 /**
+ * Create meat detail sheet with cut-level breakdown
+ */
+export async function createMeatDetailSheet(
+  config: SheetAutomationConfig,
+  meatVendors: string[] = ["La portenia", "es cuco"]
+): Promise<void> {
+  const meatDetailHeaders = [
+    "Date", "Vendor", "Part Name", "Quantity (kg)", "Price/kg (€)", "Total (€)", "Month"
+  ];
+  await ensureSheetExists(config.spreadsheetId, "Meat_Detail", config.accessToken, meatDetailHeaders);
+
+  const meatDetailRows: (string | number)[][] = [];
+
+  // Process all invoices with meat items
+  for (const invoice of config.invoiceData) {
+    // Check if this is a meat vendor and has items
+    const isMeatVendor = meatVendors.some((vendor) => invoice.vendor.toLowerCase().includes(vendor.toLowerCase()));
+    if (isMeatVendor && invoice.items && invoice.items.length > 0) {
+      const monthName = getMonthName(invoice.date);
+      
+      // Add a row for each meat item
+      for (const item of invoice.items) {
+        meatDetailRows.push([
+          invoice.date,
+          invoice.vendor,
+          item.partName,
+          item.quantity.toFixed(2),
+          item.pricePerUnit.toFixed(2),
+          item.total.toFixed(2),
+          monthName,
+        ]);
+      }
+    }
+  }
+
+  if (meatDetailRows.length > 0) {
+    await appendToSheet(config.spreadsheetId, "Meat_Detail", config.accessToken, meatDetailRows);
+  }
+}
+
+/**
  * Main automation function - orchestrates all sheet creation
  */
 export async function automateGoogleSheets(
@@ -533,6 +581,10 @@ export async function automateGoogleSheets(
     // Create meat tracking sheets
     console.log("Creating meat tracking sheets...");
     await createMeatTrackingSheets(config, meatVendors);
+
+    // Create meat detail sheet with cut-level breakdown
+    console.log("Creating meat detail sheet...");
+    await createMeatDetailSheet(config, meatVendors);
 
     // Create dashboard sheet
     console.log("Creating dashboard sheet...");
