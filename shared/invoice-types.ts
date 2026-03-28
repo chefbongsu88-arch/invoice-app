@@ -1,15 +1,20 @@
 export type InvoiceSource = "camera" | "email";
 
 export type InvoiceCategory =
-  | "Office Supplies"
-  | "Travel & Transport"
-  | "Meals & Entertainment"
-  | "Utilities"
-  | "Professional Services"
-  | "Software & Subscriptions"
-  | "Equipment"
-  | "Marketing"
-  | "Other";
+  | "Meat"
+  | "Seafood"
+  | "Vegetables"
+  | "Restaurant"
+  | "Gas Station"
+  | "Water"
+  | "Other"
+  | "Asian Market"
+  | "Caviar"
+  | "Truffle"
+  | "Organic Farm"
+  | "Beverages"
+  | "Hardware Store"
+  | string; // Allow custom categories
 
 export interface MeatItem {
   partName: string; // e.g., "Quinta Costilla Angus"

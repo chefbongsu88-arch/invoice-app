@@ -28,29 +28,35 @@ const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 type ScanStep = "capture" | "preview" | "review" | "done" | "batch-review";
 
-const CATEGORIES: InvoiceCategory[] = [
-  "Office Supplies",
-  "Travel & Transport",
-  "Meals & Entertainment",
-  "Utilities",
-  "Professional Services",
-  "Software & Subscriptions",
-  "Equipment",
-  "Marketing",
+const PREDEFINED_CATEGORIES: InvoiceCategory[] = [
+  "Meat",
+  "Seafood",
+  "Vegetables",
+  "Restaurant",
+  "Gas Station",
+  "Water",
   "Other",
+  "Asian Market",
+  "Caviar",
+  "Truffle",
+  "Organic Farm",
+  "Beverages",
+  "Hardware Store",
 ];
 
 function CategoryPicker({
   value,
   onChange,
+  onCustomInput,
 }: {
   value: InvoiceCategory;
   onChange: (v: InvoiceCategory) => void;
+  onCustomInput?: () => void;
 }) {
   const colors = useColors();
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
-      {CATEGORIES.map((cat) => (
+      {PREDEFINED_CATEGORIES.map((cat: InvoiceCategory) => (
         <Pressable
           key={cat}
           onPress={() => onChange(cat)}
@@ -67,6 +73,14 @@ function CategoryPicker({
           </Text>
         </Pressable>
       ))}
+      {onCustomInput && (
+        <Pressable
+          onPress={onCustomInput}
+          style={[styles.catPill, { borderStyle: "dashed" }]}
+        >
+          <Text style={[styles.catPillText, { color: colors.muted }]}>+ Custom</Text>
+        </Pressable>
+      )}
     </ScrollView>
   );
 }
@@ -122,6 +136,8 @@ export default function ScanScreen() {
   const [notes, setNotes] = useState("");
   const [tip, setTip] = useState("");
   const [items, setItems] = useState<MeatItem[]>([]);
+  const [showCustomCategoryInput, setShowCustomCategoryInput] = useState(false);
+  const [customCategoryInput, setCustomCategoryInput] = useState("");
 
   // Batch upload state
   const [batchImages, setBatchImages] = useState<string[]>([]);
@@ -620,7 +636,46 @@ export default function ScanScreen() {
           </View>
 
           <Text style={[styles.fieldLabel, { color: colors.muted, marginBottom: 8 }]}>Category</Text>
-          <CategoryPicker value={category} onChange={setCategory} />
+          <CategoryPicker value={category} onChange={setCategory} onCustomInput={() => setShowCustomCategoryInput(true)} />
+          {showCustomCategoryInput && (
+            <View style={[styles.customCategoryBox, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 12 }]}>
+              <Text style={[styles.customCategoryLabel, { color: colors.foreground }]}>Enter Custom Category</Text>
+              <TextInput
+                style={[
+                  styles.customCategoryInput,
+                  { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background },
+                ]}
+                value={customCategoryInput}
+                onChangeText={setCustomCategoryInput}
+                placeholder="e.g., Bakery, Pharmacy"
+                placeholderTextColor={colors.muted}
+                returnKeyType="done"
+              />
+              <View style={styles.customCategoryActions}>
+                <Pressable
+                  onPress={() => {
+                    setShowCustomCategoryInput(false);
+                    setCustomCategoryInput("");
+                  }}
+                  style={[styles.customCategoryBtn, { borderColor: colors.border }]}
+                >
+                  <Text style={[styles.customCategoryBtnText, { color: colors.muted }]}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    if (customCategoryInput.trim()) {
+                      setCategory(customCategoryInput.trim() as InvoiceCategory);
+                      setShowCustomCategoryInput(false);
+                      setCustomCategoryInput("");
+                    }
+                  }}
+                  style={[styles.customCategoryBtn, { backgroundColor: colors.primary }]}
+                >
+                  <Text style={[styles.customCategoryBtnText, { color: "#fff" }]}>Save</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
 
           {items.length > 0 && (
             <View style={[styles.formCard, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 16 }]}>
@@ -845,6 +900,23 @@ const styles = StyleSheet.create({
   },
   meatItemText: { fontSize: 14, fontWeight: "600", marginBottom: 4 },
   meatItemSubtext: { fontSize: 12, lineHeight: 16 },
+  customCategoryBox: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+  },
+  customCategoryLabel: { fontSize: 13, fontWeight: "600" },
+  customCategoryInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  customCategoryActions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
+  customCategoryBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
+  customCategoryBtnText: { fontSize: 13, fontWeight: "600" },
   doneContainer: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
   doneIcon: { width: 100, height: 100, borderRadius: 28, alignItems: "center", justifyContent: "center" },
   doneTitle: { fontSize: 26, fontWeight: "700" },
