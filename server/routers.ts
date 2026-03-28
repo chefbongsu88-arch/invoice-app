@@ -302,8 +302,8 @@ export const appRouter = router({
                 if (base64Data && !imageUrl.startsWith("file://")) {
                   // Generate filename from invoice number or timestamp
                   // Sanitize invoice number: remove folder separators and special characters
-                  const sanitizedInvoiceNum = (r.invoiceNumber || "receipt")
-                    .split("/").pop()  // Extract only the last part (remove folder path)
+                  const sanitizedInvoiceNum = ((r.invoiceNumber || "receipt")
+                    .split("/").pop() || "receipt")  // Extract only the last part (remove folder path)
                     .replace(/[^a-zA-Z0-9-]/g, "")  // Remove special characters
                     .substring(0, 50);  // Limit length
                   const fileName = `${sanitizedInvoiceNum || "receipt"}-${Date.now()}.jpg`;
@@ -503,6 +503,25 @@ export const appRouter = router({
         };
       }),
   }),
+  
+  // Diagnostic endpoint to analyze Google Sheets
+  diagnoseSheetsIssues: publicProcedure
+    .input(
+      z.object({
+        spreadsheetId: z.string(),
+        accessToken: z.string(),
+      })
+    )
+    .query(async ({ input }) => {
+      try {
+        const { diagnoseSheetsComprehensive } = await import("./sheets-diagnostic");
+        const report = await diagnoseSheetsComprehensive(input.spreadsheetId, input.accessToken);
+        return report;
+      } catch (error) {
+        console.error("[Diagnostic] Error:", error);
+        throw new Error(`Failed to diagnose sheets: ${error instanceof Error ? error.message : "Unknown error"}`);
+      }
+    }),
 });
 
 export type AppRouter = typeof appRouter;
