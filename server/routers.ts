@@ -252,10 +252,36 @@ export const appRouter = router({
           }
         }
 
+        // Check for duplicates before appending
+        const existingUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!B:B`;
+        const existingRes = await fetch(existingUrl, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+        
+        const existingData = await existingRes.json() as { values?: string[][] };
+        const existingInvoiceNumbers = new Set(
+          existingData.values?.slice(1).map((row) => row[0]) || []
+        );
+        
+        // Filter out duplicates
+        const newRows = rows.filter((r) => {
+          if (existingInvoiceNumbers.has(r.invoiceNumber)) {
+            console.warn(`[Export] Skipping duplicate invoice: ${r.invoiceNumber}`);
+            return false;
+          }
+          return true;
+        });
+        
+        if (newRows.length === 0) {
+          return { success: true, rowsAdded: 0, message: "All invoices are duplicates. No new data added." };
+        }
+        
         // Append data rows with image upload
         const now = new Date().toISOString();
         const dataRows = await Promise.all(
-          rows.map(async (r) => {
+          newRows.map(async (r) => {
             let imageUrl = r.imageUrl ?? "";
             
             // If imageUrl is a base64 string or local file path, upload it to storage
@@ -277,12 +303,12 @@ export const appRouter = router({
                   // Generate filename from invoice number or timestamp
                   // Sanitize invoice number: remove folder separators and special characters
                   const sanitizedInvoiceNum = (r.invoiceNumber || "receipt")
-                    .replace(/\//g, "-")  // Replace folder separators with dash
+                    .split("/").pop()  // Extract only the last part (remove folder path)
                     .replace(/[^a-zA-Z0-9-]/g, "")  // Remove special characters
                     .substring(0, 50);  // Limit length
                   const fileName = `${sanitizedInvoiceNum || "receipt"}-${Date.now()}.jpg`;
                   imageUrl = await uploadImageToStorage(base64Data, fileName);
-                  console.log(`[Export] Image uploaded for ${r.vendor}: ${imageUrl}`);
+                  console.log(`[Export] Image uploaded for ${r.vendor}: fileName=${fileName}, url=${imageUrl}`);
                 }
               } catch (error) {
                 console.error(`[Export] Failed to upload image for ${r.vendor}:`, error);

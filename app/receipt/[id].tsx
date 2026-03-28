@@ -127,7 +127,7 @@ export default function ReceiptDetailScreen() {
         }
       }
 
-      await exportMutation.mutateAsync({
+      const result = await exportMutation.mutateAsync({
         spreadsheetId,
         sheetName,
         rows: [
@@ -149,6 +149,16 @@ export default function ReceiptDetailScreen() {
         automateSheets: true,
       });
 
+      // Check if this was a duplicate
+      if (result.rowsAdded === 0) {
+        Alert.alert(
+          "Duplicate Invoice",
+          `Invoice #${invoice.invoiceNumber} has already been exported to Google Sheets. No new data was added.`,
+          [{ text: "OK" }]
+        );
+        return;
+      }
+
       await updateInvoice(id, {
         exportedToSheets: true,
         exportedAt: new Date().toISOString(),
@@ -157,6 +167,7 @@ export default function ReceiptDetailScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert("Exported!", "Invoice has been added to your Google Spreadsheet.");
     } catch (err) {
+      console.error("[Export] Error:", err);
       Alert.alert("Export Failed", "Could not export to Google Sheets. Check your connection and spreadsheet ID.");
     } finally {
       setExporting(false);
