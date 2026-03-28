@@ -203,9 +203,10 @@ export async function createMonthlySheets(
 
       // Create row with SUMIF formulas for dynamic calculation
       // Format: Invoice # | Vendor | SUMIF formula for total | SUMIF formula for IVA | etc.
-      const invoiceNumber = vendorInvoices[0]?.invoiceNumber || "";
+      // Use INDEX/MATCH to get the first invoice number for this vendor from the main sheet
+      const invoiceNumberFormula = `=IFERROR(INDEX('2026 Invoice tracker'!B:B,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       const row = [
-        invoiceNumber,
+        invoiceNumberFormula,
         vendor,
         `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=2026-01-01",'2026 Invoice tracker'!D:D,"<2026-02-01")`,
         `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=2026-01-01",'2026 Invoice tracker'!D:D,"<2026-02-01")`,
@@ -295,9 +296,10 @@ export async function createQuarterlySummarySheets(
       const endDate = `2026-${String(monthEnd + 1).padStart(2, "0")}-01`;
 
       // Create row with SUMIF formulas for dynamic calculation
-      const invoiceNumber = vendorInvoices[0]?.invoiceNumber || "";
+      // Use INDEX/MATCH to get the first invoice number for this vendor from the main sheet
+      const invoiceNumberFormula = `=IFERROR(INDEX('2026 Invoice tracker'!B:B,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       const row = [
-        invoiceNumber,
+        invoiceNumberFormula,
         vendor,
         `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
         `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
