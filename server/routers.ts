@@ -504,6 +504,59 @@ export const appRouter = router({
       }),
   }),
   
+  // Apply fixes endpoint
+  applyMonthlySheetFixes: publicProcedure
+    .input(
+      z.object({
+        spreadsheetId: z.string(),
+        accessToken: z.string(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      try {
+        const { generateAutoFixReport } = await import("./sheets-auto-fix");
+        const { fixAllMonthlySheets } = await import("./sheets-apply-fixes");
+        
+        // First analyze
+        const analysis = await generateAutoFixReport(input.spreadsheetId, input.accessToken);
+        
+        // Then apply fixes
+        const fixResults = await fixAllMonthlySheets(
+          input.spreadsheetId,
+          input.accessToken,
+          analysis.template
+        );
+        
+        return {
+          analysis,
+          fixResults,
+          message: `Fixed ${fixResults.summary.successfulFixes}/${fixResults.summary.totalMonths} months`,
+        };
+      } catch (error) {
+        console.error("[ApplyFix] Error:", error);
+        throw new Error(`Failed to apply fixes: ${error instanceof Error ? error.message : "Unknown error"}`);
+      }
+    }),
+
+  // Auto-fix endpoint to analyze and fix monthly sheets
+  analyzeAndFixMonthlySheets: publicProcedure
+    .input(
+      z.object({
+        spreadsheetId: z.string(),
+        accessToken: z.string(),
+      })
+    )
+    .query(async ({ input }) => {
+      try {
+        const { generateAutoFixReport } = await import("./sheets-auto-fix");
+        const report = await generateAutoFixReport(input.spreadsheetId, input.accessToken);
+        return report;
+      } catch (error) {
+        console.error("[AutoFix] Error:", error);
+        throw new Error(`Failed to analyze sheets: ${error instanceof Error ? error.message : "Unknown error"}`);
+      }
+    }),
+
   // Diagnostic endpoint to analyze Google Sheets
   diagnoseSheetsIssues: publicProcedure
     .input(
