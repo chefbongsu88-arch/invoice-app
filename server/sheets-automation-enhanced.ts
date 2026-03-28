@@ -668,6 +668,81 @@ export async function createExecutiveSummarySheet(
 }
 
 /**
+ * Create vendor summary at the top of monthly sheets
+ */
+export async function createVendorSummaryForMonth(
+  config: SheetAutomationConfig,
+  month: string
+): Promise<void> {
+  // Filter invoices for this month
+  const monthInvoices = config.invoiceData.filter((inv) => {
+    const invMonth = getMonthName(inv.date);
+    return invMonth === month;
+  });
+
+  if (monthInvoices.length === 0) return;
+
+  const monthTotal = monthInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+
+  // Group by vendor for summary
+  const vendorSummaryMap: Record<string, {
+    total: number;
+    iva: number;
+    base: number;
+    count: number;
+  }> = {};
+
+  monthInvoices.forEach((inv) => {
+    if (!vendorSummaryMap[inv.vendor]) {
+      vendorSummaryMap[inv.vendor] = { total: 0, iva: 0, base: 0, count: 0 };
+    }
+    vendorSummaryMap[inv.vendor].total += inv.totalAmount;
+    vendorSummaryMap[inv.vendor].iva += inv.ivaAmount;
+    vendorSummaryMap[inv.vendor].base += inv.baseAmount;
+    vendorSummaryMap[inv.vendor].count += 1;
+  });
+
+  // Build vendor summary rows
+  const vendorSummaryRows: (string | number)[][] = [
+    ["VENDOR SUMMARY", "", "", "", "", "", "", "", "", "", ""],
+    ["Vendor", "Total (€)", "% of Month", "Count", "Avg Amount (€)", "", "", "", "", "", ""],
+  ];
+
+  // Add vendor summary rows sorted by total descending
+  Object.entries(vendorSummaryMap)
+    .sort((a, b) => b[1].total - a[1].total)
+    .forEach(([vendor, data]) => {
+      const percentage = ((data.total / monthTotal) * 100).toFixed(1);
+      vendorSummaryRows.push([
+        vendor,
+        data.total.toFixed(2),
+        `${percentage}%`,
+        data.count,
+        (data.total / data.count).toFixed(2),
+        "", "", "", "", "", ""
+      ]);
+    });
+
+  // Add total row
+  vendorSummaryRows.push([
+    "TOTAL",
+    monthTotal.toFixed(2),
+    "100%",
+    monthInvoices.length,
+    (monthTotal / monthInvoices.length).toFixed(2),
+    "", "", "", "", "", ""
+  ]);
+
+  // Add blank row separator
+  vendorSummaryRows.push(["", "", "", "", "", "", "", "", "", "", ""]);
+
+  // Add vendor summary to sheet first
+  if (vendorSummaryRows.length > 0) {
+    await appendToSheet(config.spreadsheetId, month, config.accessToken, vendorSummaryRows);
+  }
+}
+
+/**
  * Main function to orchestrate all sheet creation
  */
 export async function automateGoogleSheets(
@@ -680,6 +755,13 @@ export async function automateGoogleSheets(
     // Create monthly sheets with vendor aggregation
     console.log("Creating monthly sheets with vendor aggregation...");
     await createMonthlySheets(config);
+    
+    // Add vendor summaries to each month
+    console.log("Adding vendor summaries to monthly sheets...");
+    const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    for (const month of months) {
+      await createVendorSummaryForMonth(config, month);
+    }
 
     // Create quarterly summary sheets with percentages
     console.log("Creating quarterly summary sheets with percentages...");

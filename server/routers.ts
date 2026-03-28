@@ -277,11 +277,14 @@ export const appRouter = router({
               }
             }
             
+            // Format date as YYYY-MM-DD
+            const formattedDate = new Date(r.date).toISOString().split('T')[0];
+            
             return [
               r.source,
               r.invoiceNumber,
               r.vendor,
-              r.date,
+              formattedDate,
               r.totalAmount,
               r.ivaAmount,
               r.baseAmount,
