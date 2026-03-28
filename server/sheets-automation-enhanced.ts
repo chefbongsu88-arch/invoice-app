@@ -165,9 +165,9 @@ export async function createMonthlySheets(
     "July", "August", "September", "October", "November", "December"
   ];
 
-  const headers = [
-    "Vendor", "Total (€)", "IVA (€)", "Base (€)", "Count", "Avg Amount (€)", "% of Month"
-  ];
+    const headers = [
+      "Invoice #", "Vendor", "Total (€)", "IVA (€)", "Base (€)", "Count", "Avg Amount (€)", "% of Month"
+    ];
 
   for (const month of months) {
     await ensureSheetExists(config.spreadsheetId, month, config.accessToken, headers);
@@ -202,8 +202,10 @@ export async function createMonthlySheets(
       const percentage = ((vendorTotal / monthTotal) * 100).toFixed(1);
 
       // Create row with SUMIF formulas for dynamic calculation
-      // Format: Vendor | SUMIF formula for total | SUMIF formula for IVA | etc.
+      // Format: Invoice # | Vendor | SUMIF formula for total | SUMIF formula for IVA | etc.
+      const invoiceNumber = vendorInvoices[0]?.invoiceNumber || "";
       const row = [
+        invoiceNumber,
         vendor,
         `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=2026-01-01",'2026 Invoice tracker'!D:D,"<2026-02-01")`,
         `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=2026-01-01",'2026 Invoice tracker'!D:D,"<2026-02-01")`,
@@ -218,10 +220,11 @@ export async function createMonthlySheets(
 
     // Add total row
     summaryRows.push([
+      "",  // No Invoice # for total row
       `${month} TOTAL`,
-      `=SUM(B2:B${summaryRows.length + 1})`,
       `=SUM(C2:C${summaryRows.length + 1})`,
       `=SUM(D2:D${summaryRows.length + 1})`,
+      `=SUM(E2:E${summaryRows.length + 1})`,
       monthInvoices.length,
       (monthTotal / monthInvoices.length).toFixed(2),
       "100%",
@@ -249,7 +252,7 @@ export async function createQuarterlySummarySheets(
   };
 
   const headers = [
-    "Vendor", "Total (€)", "IVA (€)", "Base (€)", "% of Quarter", "Count", "Avg Amount (€)"
+    "Invoice #", "Vendor", "Total (€)", "IVA (€)", "Base (€)", "% of Quarter", "Count", "Avg Amount (€)"
   ];
 
   for (const quarter of quarters) {
@@ -292,7 +295,9 @@ export async function createQuarterlySummarySheets(
       const endDate = `2026-${String(monthEnd + 1).padStart(2, "0")}-01`;
 
       // Create row with SUMIF formulas for dynamic calculation
+      const invoiceNumber = vendorInvoices[0]?.invoiceNumber || "";
       const row = [
+        invoiceNumber,
         vendor,
         `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
         `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
@@ -307,10 +312,11 @@ export async function createQuarterlySummarySheets(
 
     // Add total row (only one total row at the end)
     summaryRows.push([
+      "",  // No Invoice # for total row
       `${quarter} TOTAL`,
-      `=SUM(B2:B${summaryRows.length + 1})`,
       `=SUM(C2:C${summaryRows.length + 1})`,
       `=SUM(D2:D${summaryRows.length + 1})`,
+      `=SUM(E2:E${summaryRows.length + 1})`,
       "100%",
       quarterInvoices.length,
       (quarterTotal / quarterInvoices.length).toFixed(2),
