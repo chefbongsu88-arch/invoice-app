@@ -333,7 +333,7 @@ export const appRouter = router({
         // If automateSheets is true, trigger the full automation
         if (input.automateSheets) {
           try {
-            const { automateGoogleSheets, addChartsToQuarterlySheets } = await import("./sheets-automation-enhanced");
+            const { automateGoogleSheets } = await import("./sheets-automation-enhanced");
             
             // Fetch ALL data from 2026 Invoice tracker sheet for complete monthly/quarterly aggregation
             const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("2026 Invoice tracker")}!A2:L`;
@@ -381,27 +381,7 @@ export const appRouter = router({
                 tip: r.tip,
               })),
             }, ["La portenia", "es cuco"]);
-            
-            // After automation completes, add charts to quarterly sheets
-            await addChartsToQuarterlySheets(
-              spreadsheetId,
-              accessToken,
-              rows.map((r) => ({
-                source: r.source,
-                invoiceNumber: r.invoiceNumber,
-                vendor: r.vendor,
-                date: r.date,
-                totalAmount: r.totalAmount,
-                ivaAmount: r.ivaAmount,
-                baseAmount: r.baseAmount,
-                category: r.category,
-                currency: r.currency,
-                notes: r.notes,
-                imageUrl: r.imageUrl,
-                tip: r.tip,
-              }))
-            );
-            console.log("Automation and chart creation completed successfully");
+            console.log("Automation completed successfully");
           } catch (error) {
             console.error("Error starting automation:", error);
           }

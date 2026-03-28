@@ -160,9 +160,20 @@ export async function appendToSheet(
 /**
  * Create monthly sheets with SUMIF formulas for vendor aggregation
  * 
- * Structure:
- * 1. Vendor Summary Section (unique vendors with SUMIF formulas)
- * 2. Individual Transaction Rows (all transactions from main tracker)
+ * Column Structure (matches main "2026 Invoice tracker" sheet):
+ * A: Source
+ * B: Invoice #
+ * C: Vendor
+ * D: Date
+ * E: Total (€)
+ * F: IVA (€)
+ * G: Base (€)
+ * H: Tip (€)
+ * I: Category
+ * J: Currency
+ * K: Notes
+ * L: Image URL
+ * M: Exported At
  */
 export async function createMonthlySheets(
   config: SheetAutomationConfig
@@ -172,9 +183,9 @@ export async function createMonthlySheets(
     "July", "August", "September", "October", "November", "December"
   ];
 
-    const headers = [
-      "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Category", "Currency", "Tip (€)", "Notes", "Image URL", "Exported At"
-    ];
+  const headers = [
+    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
+  ];
 
   for (let monthIndex = 0; monthIndex < months.length; monthIndex++) {
     const month = months[monthIndex];
@@ -195,45 +206,38 @@ export async function createMonthlySheets(
     // Get unique vendors for this month
     const uniqueVendors = Array.from(new Set(monthInvoices.map((inv) => inv.vendor)));
     
-    // Calculate month total for percentage calculation
-    const monthTotal = monthInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-
     // Create vendor summary rows with SUMIF formulas
     const summaryRows: (string | number)[][] = [];
     
     for (const vendor of uniqueVendors) {
-      // Count invoices for this vendor in this month
-      const vendorInvoices = monthInvoices.filter((inv) => inv.vendor === vendor);
-      const count = vendorInvoices.length;
-      
-      // Calculate totals from actual data (for reference)
-      const vendorTotal = vendorInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-      const vendorIva = vendorInvoices.reduce((sum, inv) => sum + inv.ivaAmount, 0);
-      const vendorBase = vendorInvoices.reduce((sum, inv) => sum + inv.baseAmount, 0);
-      const avgAmount = vendorTotal / count;
-      const percentage = ((vendorTotal / monthTotal) * 100).toFixed(1);
-
       // Create row with SUMIF formulas for dynamic calculation
-      // Use INDEX/MATCH to get the first invoice number for this vendor from the main sheet
+      // Use INDEX/MATCH to get the first matching value for this vendor from the main sheet
+      const sourceFormula = `=IFERROR(INDEX('2026 Invoice tracker'!A:A,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       const invoiceNumberFormula = `=IFERROR(INDEX('2026 Invoice tracker'!B:B,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       const dateFormula = `=IFERROR(INDEX('2026 Invoice tracker'!D:D,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
-      const categoryFormula = `=IFERROR(INDEX('2026 Invoice tracker'!H:H,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
-      const currencyFormula = `=IFERROR(INDEX('2026 Invoice tracker'!I:I,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
-      const tipFormula = `=IFERROR(INDEX('2026 Invoice tracker'!J:J,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const categoryFormula = `=IFERROR(INDEX('2026 Invoice tracker'!I:I,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const currencyFormula = `=IFERROR(INDEX('2026 Invoice tracker'!J:J,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       const notesFormula = `=IFERROR(INDEX('2026 Invoice tracker'!K:K,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       const imageUrlFormula = `=IFERROR(INDEX('2026 Invoice tracker'!L:L,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       const exportedAtFormula = `=IFERROR(INDEX('2026 Invoice tracker'!M:M,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       
+      // SUMIF formulas for aggregation
+      const totalFormula = `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const ivaFormula = `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const baseFormula = `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const tipFormula = `=SUMIFS('2026 Invoice tracker'!H:H,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      
       const row = [
+        sourceFormula,
         invoiceNumberFormula,
         vendor,
         dateFormula,
-        `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
-        `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
-        `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
+        totalFormula,
+        ivaFormula,
+        baseFormula,
+        tipFormula,
         categoryFormula,
         currencyFormula,
-        tipFormula,
         notesFormula,
         imageUrlFormula,
         exportedAtFormula,
@@ -243,16 +247,18 @@ export async function createMonthlySheets(
     }
 
     // Add total row
+    const totalRowNum = summaryRows.length + 2; // +2 because row 1 is headers, row 2 starts data
     summaryRows.push([
+      "",  // No Source for total row
       "",  // No Invoice # for total row
       `${month} TOTAL`,
       "",  // No Date for total row
-      `=SUM(D2:D${summaryRows.length + 1})`,
-      `=SUM(E2:E${summaryRows.length + 1})`,
-      `=SUM(F2:F${summaryRows.length + 1})`,
+      `=SUM(E2:E${totalRowNum - 1})`,
+      `=SUM(F2:F${totalRowNum - 1})`,
+      `=SUM(G2:G${totalRowNum - 1})`,
+      `=SUM(H2:H${totalRowNum - 1})`,
       "",  // No Category for total row
       "",  // No Currency for total row
-      "",  // No Tip for total row
       "",  // No Notes for total row
       "",  // No Image URL for total row
       "",  // No Exported At for total row
@@ -280,75 +286,80 @@ export async function createQuarterlySummarySheets(
   };
 
   const headers = [
-    "Invoice #", "Vendor", "Total (€)", "IVA (€)", "Base (€)", "% of Quarter", "Count", "Avg Amount (€)"
+    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
   ];
 
   for (const quarter of quarters) {
+    const monthNums = quarterMonths[quarter];
+    const startDate = `2026-${String(monthNums[0]).padStart(2, "0")}-01`;
+    const endDate = `2026-${String(monthNums[2] + 1).padStart(2, "0")}-01`;
+
     await ensureSheetExists(config.spreadsheetId, quarter, config.accessToken, headers);
 
-    // Filter invoices for this quarter (3 months)
+    // Filter invoices for this quarter
     const quarterInvoices = config.invoiceData.filter((inv) => {
-      const date = new Date(inv.date);
-      const month = date.getMonth() + 1;
-      return quarterMonths[quarter].includes(month);
+      const invMonth = new Date(inv.date).getMonth() + 1;
+      return monthNums.includes(invMonth);
     });
 
     if (quarterInvoices.length === 0) continue;
 
     // Get unique vendors for this quarter
     const uniqueVendors = Array.from(new Set(quarterInvoices.map((inv) => inv.vendor)));
-    
-    // Calculate quarter total for percentage calculation
-    const quarterTotal = quarterInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
 
     // Create vendor summary rows with SUMIF formulas
     const summaryRows: (string | number)[][] = [];
-    
+
     for (const vendor of uniqueVendors) {
-      // Count invoices for this vendor in this quarter
-      const vendorInvoices = quarterInvoices.filter((inv) => inv.vendor === vendor);
-      const count = vendorInvoices.length;
-      
-      // Calculate totals from actual data (for reference)
-      const vendorTotal = vendorInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-      const vendorIva = vendorInvoices.reduce((sum, inv) => sum + inv.ivaAmount, 0);
-      const vendorBase = vendorInvoices.reduce((sum, inv) => sum + inv.baseAmount, 0);
-      const avgAmount = vendorTotal / count;
-      const percentage = ((vendorTotal / quarterTotal) * 100).toFixed(1);
-
-      // Get date range for this quarter
-      const monthStart = quarterMonths[quarter][0];
-      const monthEnd = quarterMonths[quarter][2];
-      const startDate = `2026-${String(monthStart).padStart(2, "0")}-01`;
-      const endDate = `2026-${String(monthEnd + 1).padStart(2, "0")}-01`;
-
-      // Create row with SUMIF formulas for dynamic calculation
-      // Use INDEX/MATCH to get the first invoice number for this vendor from the main sheet
+      const sourceFormula = `=IFERROR(INDEX('2026 Invoice tracker'!A:A,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       const invoiceNumberFormula = `=IFERROR(INDEX('2026 Invoice tracker'!B:B,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const dateFormula = `=IFERROR(INDEX('2026 Invoice tracker'!D:D,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const categoryFormula = `=IFERROR(INDEX('2026 Invoice tracker'!I:I,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const currencyFormula = `=IFERROR(INDEX('2026 Invoice tracker'!J:J,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const notesFormula = `=IFERROR(INDEX('2026 Invoice tracker'!K:K,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const imageUrlFormula = `=IFERROR(INDEX('2026 Invoice tracker'!L:L,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+      const exportedAtFormula = `=IFERROR(INDEX('2026 Invoice tracker'!M:M,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
+
+      const totalFormula = `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const ivaFormula = `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const baseFormula = `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const tipFormula = `=SUMIFS('2026 Invoice tracker'!H:H,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+
       const row = [
+        sourceFormula,
         invoiceNumberFormula,
         vendor,
-        `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
-        `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
-        `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
-        `${percentage}%`,
-        count,
-        avgAmount.toFixed(2),
+        dateFormula,
+        totalFormula,
+        ivaFormula,
+        baseFormula,
+        tipFormula,
+        categoryFormula,
+        currencyFormula,
+        notesFormula,
+        imageUrlFormula,
+        exportedAtFormula,
       ];
-      
+
       summaryRows.push(row);
     }
 
-    // Add total row (only one total row at the end)
+    // Add total row
+    const totalRowNum = summaryRows.length + 2;
     summaryRows.push([
-      "",  // No Invoice # for total row
+      "",
+      "",
       `${quarter} TOTAL`,
-      `=SUM(C2:C${summaryRows.length + 1})`,
-      `=SUM(D2:D${summaryRows.length + 1})`,
-      `=SUM(E2:E${summaryRows.length + 1})`,
-      "100%",
-      quarterInvoices.length,
-      (quarterTotal / quarterInvoices.length).toFixed(2),
+      "",
+      `=SUM(E2:E${totalRowNum - 1})`,
+      `=SUM(F2:F${totalRowNum - 1})`,
+      `=SUM(G2:G${totalRowNum - 1})`,
+      `=SUM(H2:H${totalRowNum - 1})`,
+      "",
+      "",
+      "",
+      "",
+      "",
     ]);
 
     if (summaryRows.length > 0) {
@@ -389,33 +400,30 @@ export async function createMeatTrackingSheets(
 
     if (monthInvoices.length === 0) continue;
 
-    const monthTotal = monthInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-
-    // Get unique meat vendors for this month
-    const uniqueVendors = Array.from(new Set(
+    const uniqueMeatVendors = Array.from(new Set(
       monthInvoices.map((inv) => inv.vendor)
     ));
 
-    // Create rows for each vendor with SUMIF formulas
-    for (const vendor of uniqueVendors) {
+    const monthTotal = monthInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+
+    for (const vendor of uniqueMeatVendors) {
       const vendorInvoices = monthInvoices.filter((inv) => inv.vendor === vendor);
       const count = vendorInvoices.length;
       const vendorTotal = vendorInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+      const vendorIva = vendorInvoices.reduce((sum, inv) => sum + inv.ivaAmount, 0);
+      const vendorBase = vendorInvoices.reduce((sum, inv) => sum + inv.baseAmount, 0);
+      const avgAmount = vendorTotal / count;
       const percentage = ((vendorTotal / monthTotal) * 100).toFixed(1);
-      
-      const startDate = `2026-${String(monthNum).padStart(2, "0")}-01`;
-      const nextMonth = monthNum === 12 ? 1 : monthNum + 1;
-      const endDate = `2026-${String(nextMonth).padStart(2, "0")}-01`;
 
       meatMonthlyRows.push([
         month,
         vendor,
-        `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
+        vendorTotal.toFixed(2),
         `${percentage}%`,
-        `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
-        `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`,
+        vendorIva.toFixed(2),
+        vendorBase.toFixed(2),
         count,
-        (vendorTotal / count).toFixed(2),
+        avgAmount.toFixed(2),
       ]);
     }
   }
@@ -435,85 +443,35 @@ export async function createMeatTrackingSheets(
     meatVendors.some((vendor) => inv.vendor.toLowerCase().includes(vendor.toLowerCase()))
   );
 
-  if (allMeatInvoices.length === 0) {
-    return;
-  }
+  if (allMeatInvoices.length === 0) return;
 
-  const meatTotal = allMeatInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
   const uniqueMeatVendors = Array.from(new Set(allMeatInvoices.map((inv) => inv.vendor)));
+  const totalSpending = allMeatInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
 
   const meatAnalysisRows: (string | number)[][] = [];
 
-  // Create one row per meat vendor with SUMIF formulas
   for (const vendor of uniqueMeatVendors) {
     const vendorInvoices = allMeatInvoices.filter((inv) => inv.vendor === vendor);
     const count = vendorInvoices.length;
     const vendorTotal = vendorInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
     const vendorIva = vendorInvoices.reduce((sum, inv) => sum + inv.ivaAmount, 0);
     const vendorBase = vendorInvoices.reduce((sum, inv) => sum + inv.baseAmount, 0);
-    const percentage = ((vendorTotal / meatTotal) * 100).toFixed(1);
+    const avgAmount = vendorTotal / count;
+    const percentage = ((vendorTotal / totalSpending) * 100).toFixed(1);
 
     meatAnalysisRows.push([
       vendor,
-      `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!E:E)`,
-      `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!F:F)`,
-      `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!G:G)`,
+      vendorTotal.toFixed(2),
+      vendorIva.toFixed(2),
+      vendorBase.toFixed(2),
       count,
-      (vendorTotal / count).toFixed(2),
+      avgAmount.toFixed(2),
       `${percentage}%`,
     ]);
   }
 
-  // Add total row
-  meatAnalysisRows.push([
-    "MEAT TOTAL",
-    `=SUM(B2:B${meatAnalysisRows.length + 1})`,
-    `=SUM(C2:C${meatAnalysisRows.length + 1})`,
-    `=SUM(D2:D${meatAnalysisRows.length + 1})`,
-    allMeatInvoices.length,
-    (meatTotal / allMeatInvoices.length).toFixed(2),
-    "100%",
-  ]);
-
   if (meatAnalysisRows.length > 0) {
     await appendToSheet(config.spreadsheetId, "Meat_Analysis", config.accessToken, meatAnalysisRows);
-  }
-}
-
-/**
- * Create dashboard sheet with key metrics and summaries
- */
-export async function createDashboardSheet(
-  config: SheetAutomationConfig,
-  meatVendors: string[] = ["La portenia", "es cuco"]
-): Promise<void> {
-  const dashboardHeaders = [
-    "Metric", "Value"
-  ];
-  
-  await ensureSheetExists(config.spreadsheetId, "Dashboard", config.accessToken, dashboardHeaders);
-
-  const totalInvoices = config.invoiceData.length;
-  const totalSpending = config.invoiceData.reduce((sum, inv) => sum + inv.totalAmount, 0);
-  const totalIva = config.invoiceData.reduce((sum, inv) => sum + inv.ivaAmount, 0);
-  const totalBase = config.invoiceData.reduce((sum, inv) => sum + inv.baseAmount, 0);
-  const meatSpending = config.invoiceData
-    .filter((inv) => meatVendors.some((vendor) => inv.vendor.toLowerCase().includes(vendor.toLowerCase())))
-    .reduce((sum, inv) => sum + inv.totalAmount, 0);
-  const meatPercentage = ((meatSpending / totalSpending) * 100).toFixed(1);
-
-  const dashboardRows = [
-    ["Total Invoices", totalInvoices],
-    ["Total Spending (€)", totalSpending.toFixed(2)],
-    ["Total IVA (€)", totalIva.toFixed(2)],
-    ["Total Base (€)", totalBase.toFixed(2)],
-    ["Average per Invoice (€)", (totalSpending / totalInvoices).toFixed(2)],
-    ["Meat Spending (€)", meatSpending.toFixed(2)],
-    ["Meat % of Total", `${meatPercentage}%`],
-  ];
-
-  if (dashboardRows.length > 0) {
-    await appendToSheet(config.spreadsheetId, "Dashboard", config.accessToken, dashboardRows);
   }
 }
 
@@ -559,6 +517,43 @@ export async function createMeatDetailSheet(
 }
 
 /**
+ * Create dashboard sheet with key metrics and summaries
+ */
+export async function createDashboardSheet(
+  config: SheetAutomationConfig,
+  meatVendors: string[] = ["La portenia", "es cuco"]
+): Promise<void> {
+  const dashboardHeaders = [
+    "Metric", "Value"
+  ];
+  
+  await ensureSheetExists(config.spreadsheetId, "Dashboard", config.accessToken, dashboardHeaders);
+
+  const totalInvoices = config.invoiceData.length;
+  const totalSpending = config.invoiceData.reduce((sum, inv) => sum + inv.totalAmount, 0);
+  const totalIva = config.invoiceData.reduce((sum, inv) => sum + inv.ivaAmount, 0);
+  const totalBase = config.invoiceData.reduce((sum, inv) => sum + inv.baseAmount, 0);
+  const meatSpending = config.invoiceData
+    .filter((inv) => meatVendors.some((vendor) => inv.vendor.toLowerCase().includes(vendor.toLowerCase())))
+    .reduce((sum, inv) => sum + inv.totalAmount, 0);
+  const meatPercentage = ((meatSpending / totalSpending) * 100).toFixed(1);
+
+  const dashboardRows = [
+    ["Total Invoices", totalInvoices],
+    ["Total Spending (€)", totalSpending.toFixed(2)],
+    ["Total IVA (€)", totalIva.toFixed(2)],
+    ["Total Base (€)", totalBase.toFixed(2)],
+    ["Average per Invoice (€)", (totalSpending / totalInvoices).toFixed(2)],
+    ["Meat Spending (€)", meatSpending.toFixed(2)],
+    ["Meat % of Total", `${meatPercentage}%`],
+  ];
+
+  if (dashboardRows.length > 0) {
+    await appendToSheet(config.spreadsheetId, "Dashboard", config.accessToken, dashboardRows);
+  }
+}
+
+/**
  * Main automation function - orchestrates all sheet creation
  */
 export async function automateGoogleSheets(
@@ -596,99 +591,5 @@ export async function automateGoogleSheets(
   } catch (error) {
     console.error("Error during Google Sheets automation:", error);
     throw error;
-  }
-}
-
-
-/**
- * Add charts to quarterly sheets for visual representation
- * Creates pie charts showing vendor distribution for each quarter
- */
-export async function addChartsToQuarterlySheets(
-  spreadsheetId: string,
-  accessToken: string,
-  invoiceData: InvoiceRecord[]
-): Promise<void> {
-  const quarters = ["Q1", "Q2", "Q3", "Q4"];
-  const quarterMonths: Record<string, number[]> = {
-    Q1: [1, 2, 3],
-    Q2: [4, 5, 6],
-    Q3: [7, 8, 9],
-    Q4: [10, 11, 12],
-  };
-
-  for (const quarter of quarters) {
-    try {
-      // Get sheet ID for the quarter
-      const sheetsUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`;
-      const sheetsRes = await fetch(sheetsUrl, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-
-      if (!sheetsRes.ok) {
-        console.warn(`Failed to get sheet info for ${quarter}`);
-        continue;
-      }
-
-      const sheetsData = await sheetsRes.json() as { sheets?: Array<{ properties: { sheetId: number; title: string } }> };
-      const quarterSheet = sheetsData.sheets?.find((s) => s.properties.title === quarter);
-
-      if (!quarterSheet) {
-        console.warn(`Sheet ${quarter} not found`);
-        continue;
-      }
-
-      const sheetId = quarterSheet.properties.sheetId;
-
-      // Create pie chart request
-      const batchUpdateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`;
-
-      const chartRequest = {
-        requests: [
-          {
-            addChart: {
-              chart: {
-                chartType: "PIE_CHART",
-                legendPosition: "BOTTOM_LEGEND",
-                title: `${quarter} - Vendor Distribution by Spending`,
-                pieChart: {
-                  dataRange: {
-                    sheetId: sheetId,
-                    range: `${quarter}!A1:B100`,
-                  },
-                  series: [
-                    {
-                      dataRange: {
-                        range: `${quarter}!B2:B100`,
-                      },
-                    },
-                  ],
-                  pieHole: 0.4, // Donut chart
-                },
-              },
-            },
-          },
-        ],
-      };
-
-      const chartRes = await fetch(batchUpdateUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify(chartRequest),
-      });
-
-      if (!chartRes.ok) {
-        console.warn(`Failed to add chart to ${quarter}:`, await chartRes.text());
-      } else {
-        console.log(`Pie chart added to ${quarter} sheet`);
-      }
-    } catch (error) {
-      console.warn(`Error adding chart to ${quarter}:`, error);
-    }
   }
 }
