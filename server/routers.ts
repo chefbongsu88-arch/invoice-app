@@ -400,8 +400,9 @@ export const appRouter = router({
           throw new Error(`Failed to export to Google Sheets. Please try again.`);
         }
 
-        // If automateSheets is true, trigger the full automation
-        if (input.automateSheets) {
+        // Automatically trigger sheet automation on every upload
+        // Always run automation to keep monthly/quarterly sheets in sync
+        if (true) {
           try {
             const { automateGoogleSheets } = await import("./sheets-automation-vendor-aggregated");
             
