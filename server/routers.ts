@@ -39,6 +39,7 @@ Return ONLY a valid JSON object with these exact keys:
 - date: string (ISO format YYYY-MM-DD, today's date if not found)
 - totalAmount: number (total amount including IVA, in EUR)
 - ivaAmount: number (IVA/tax amount in EUR, 0 if not found)
+- tipAmount: number (tip/gratuity amount in EUR, 0 if not found)
 - category: string (one of: "Office Supplies", "Travel & Transport", "Meals & Entertainment", "Utilities", "Professional Services", "Software & Subscriptions", "Equipment", "Marketing", "Other")
 - items: array (ONLY for La Portenia or Es Cuco vendors - extract line items with: partName, quantity (in kg), unit ("kg"), pricePerUnit, total. For other vendors, return empty array [])
 
@@ -59,6 +60,7 @@ Return ONLY a valid JSON object with these exact keys:
 - date: string (ISO format YYYY-MM-DD)
 - totalAmount: number (total amount in EUR)
 - ivaAmount: number (IVA/VAT amount in EUR, 0 if not found)
+- tipAmount: number (tip/gratuity amount in EUR, 0 if not found)
 - category: string (one of: "Office Supplies", "Travel & Transport", "Meals & Entertainment", "Utilities", "Professional Services", "Software & Subscriptions", "Equipment", "Marketing", "Other")
 - subject: string (email subject line)
 - items: array (return empty array [] for email invoices)
@@ -113,6 +115,7 @@ export const appRouter = router({
             date: new Date().toISOString().split("T")[0],
             totalAmount: 0,
             ivaAmount: 0,
+            tipAmount: 0,
             category: "Other",
           };
         }
@@ -144,8 +147,35 @@ export const appRouter = router({
             date: new Date().toISOString().split("T")[0],
             totalAmount: 0,
             ivaAmount: 0,
+            tipAmount: 0,
             category: "Other",
             subject: input.subject ?? "",
+          };
+        }
+      }),
+
+    // Fix all sheets (V3)
+    fixAllSheetsV3: publicProcedure
+      .input(
+        z.object({
+          spreadsheetId: z.string(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+        if (!serviceAccountJson) {
+          throw new Error("Service Account credentials not configured");
+        }
+
+        try {
+          const serviceAccount = JSON.parse(serviceAccountJson);
+          const { fixAllSheets } = await import("./sheets-complete-fixer-v3");
+          return await fixAllSheets(serviceAccount);
+        } catch (error) {
+          console.error("[fixAllSheetsV3] Error:", error);
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
           };
         }
       }),
@@ -288,11 +318,16 @@ export const appRouter = router({
             if (imageUrl && (imageUrl.startsWith("data:") || imageUrl.startsWith("file://"))) {
               try {
                 // Extract base64 if it's a data URL
-                let base64Data = imageUrl;
+                let base64Data = "";
                 if (imageUrl.startsWith("data:")) {
                   // Format: data:image/jpeg;base64,{base64data}
                   const match = imageUrl.match(/base64,(.+)$/);
-                  base64Data = match ? match[1] : imageUrl;
+                  if (match && match[1]) {
+                    base64Data = match[1].trim();
+                  } else {
+                    console.warn("[Export] Failed to extract base64 from data URL");
+                    imageUrl = "";
+                  }
                 } else if (imageUrl.startsWith("file://")) {
                   // For local file paths, we'll skip upload (client should send base64)
                   console.warn("[Export] Skipping local file path upload:", imageUrl);
@@ -328,9 +363,9 @@ export const appRouter = router({
               r.totalAmount,
               r.ivaAmount,
               r.baseAmount,
+              r.tip ?? 0,
               r.category,
               r.currency,
-              r.tip ?? 0,
               r.notes ?? "",
               imageUrl,
               now,
@@ -359,7 +394,7 @@ export const appRouter = router({
         // If automateSheets is true, trigger the full automation
         if (input.automateSheets) {
           try {
-            const { automateGoogleSheets } = await import("./sheets-automation-enhanced");
+            const { automateGoogleSheets } = await import("./sheets-automation-fixed");
             
             // Fetch ALL data from 2026 Invoice tracker sheet for complete monthly/quarterly aggregation
             const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("2026 Invoice tracker")}!A2:L`;

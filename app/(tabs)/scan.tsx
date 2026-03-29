@@ -343,6 +343,20 @@ export default function ScanScreen() {
     const total = parseFloat(totalAmount) || 0;
     const iva = parseFloat(ivaAmount) || 0;
     const tipAmount = parseFloat(tip) || 0;
+    
+    // Convert image to base64 if present
+    let imageUrl: string | undefined = undefined;
+    if (imageUri) {
+      try {
+        const base64 = await FileSystem.readAsStringAsync(imageUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        imageUrl = `data:image/jpeg;base64,${base64}`;
+      } catch (err) {
+        console.warn("Failed to convert image to base64:", err);
+      }
+    }
+    
     const invoice: Invoice = {
       id: `cam_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       source: "camera",
@@ -356,7 +370,7 @@ export default function ScanScreen() {
       category,
       notes: notes.trim(),
       tip: tipAmount > 0 ? tipAmount : undefined,
-      imageUri: imageUri ?? undefined,
+      imageUri: imageUrl ?? undefined,
       items: items.length > 0 ? items : undefined,
       exportedToSheets: false,
       createdAt: new Date().toISOString(),
