@@ -352,8 +352,8 @@ export const appRouter = router({
               }
             }
             
-            // Format date as YYYY-MM-DD
-            const formattedDate = new Date(r.date).toISOString().split('T')[0];
+            // Format date as YYYY-MM-DD (with leading apostrophe to prevent Google Sheets auto-formatting)
+            const formattedDate = `'${new Date(r.date).toISOString().split('T')[0]}'`;
             
             return [
               r.source,
@@ -394,7 +394,7 @@ export const appRouter = router({
         // If automateSheets is true, trigger the full automation
         if (input.automateSheets) {
           try {
-            const { automateGoogleSheets } = await import("./sheets-automation-fixed");
+            const { automateGoogleSheets } = await import("./sheets-automation-with-formatting");
             
             // Fetch ALL data from 2026 Invoice tracker sheet for complete monthly/quarterly aggregation
             const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("2026 Invoice tracker")}!A2:L`;
