@@ -63,6 +63,8 @@ function aggregateByVendor(invoices: any[]) {
   for (const invoice of invoices) {
     const vendor = invoice.vendor || "Unknown";
     
+    console.log(`Processing invoice: ${vendor}, totalAmount=${invoice.totalAmount} (type: ${typeof invoice.totalAmount})`);
+    
     if (!vendorMap.has(vendor)) {
       vendorMap.set(vendor, {
         source: invoice.source,
@@ -85,6 +87,8 @@ function aggregateByVendor(invoices: any[]) {
     vendorData.ivaAmount += invoice.ivaAmount;
     vendorData.baseAmount += invoice.baseAmount;
     vendorData.tip += invoice.tip;
+    
+    console.log(`After aggregation: ${vendor} total=${vendorData.totalAmount}`);
   }
 
   return Array.from(vendorMap.values());

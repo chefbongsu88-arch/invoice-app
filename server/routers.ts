@@ -433,28 +433,22 @@ export const appRouter = router({
               }
             }
             
-            // Use all data for automation (includes current + previous invoices)
+            // Use all data for automation (includes all rows from main sheet)
+            console.log(`📊 Automation: Processing ${allInvoiceData.length} invoices from main sheet`);
+            
+            if (allInvoiceData.length === 0) {
+              console.warn("⚠️  No invoice data found in main sheet");
+            }
+            
             await automateGoogleSheets({
               spreadsheetId,
               accessToken,
-              invoiceData: allInvoiceData.length > 0 ? allInvoiceData : rows.map((r) => ({
-                source: r.source,
-                invoiceNumber: r.invoiceNumber,
-                vendor: r.vendor,
-                date: r.date,
-                totalAmount: r.totalAmount,
-                ivaAmount: r.ivaAmount,
-                baseAmount: r.baseAmount,
-                category: r.category,
-                currency: r.currency,
-                notes: r.notes,
-                imageUrl: r.imageUrl,
-                tip: r.tip,
-              })),
+              invoiceData: allInvoiceData,
             }, ["La portenia", "es cuco"]);
-            console.log("Automation completed successfully");
+            console.log("✅ Automation completed successfully");
           } catch (error) {
-            console.error("Error starting automation:", error);
+            console.error("❌ Automation failed:", error);
+            throw error;
           }
         }
 
