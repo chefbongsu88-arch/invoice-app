@@ -283,7 +283,8 @@ export const appRouter = router({
         }
 
         // Check for duplicates before appending
-        const existingUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!B:B`;
+        // Read all data from the sheet to check for duplicates
+        const existingUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:L`;
         const existingRes = await fetch(existingUrl, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -291,14 +292,22 @@ export const appRouter = router({
         });
         
         const existingData = await existingRes.json() as { values?: string[][] };
-        const existingInvoiceNumbers = new Set(
-          existingData.values?.slice(1).map((row) => row[0]) || []
+        // Create a set of existing invoices using Vendor + Date + Amount (more reliable than Invoice #)
+        const existingInvoices = new Set(
+          existingData.values?.slice(1).map((row) => {
+            // row[2] = Vendor, row[3] = Date, row[4] = Total (€)
+            const vendor = row[2] || "";
+            const date = row[3] || "";
+            const amount = row[4] || "";
+            return `${vendor}|${date}|${amount}`;
+          }) || []
         );
         
-        // Filter out duplicates
+        // Filter out duplicates based on Vendor + Date + Amount
         const newRows = rows.filter((r) => {
-          if (existingInvoiceNumbers.has(r.invoiceNumber)) {
-            console.warn(`[Export] Skipping duplicate invoice: ${r.invoiceNumber}`);
+          const key = `${r.vendor}|${r.date}|€${r.totalAmount.toFixed(2)}`;
+          if (existingInvoices.has(key)) {
+            console.warn(`[Export] Skipping duplicate invoice: ${r.vendor} | ${r.date} | €${r.totalAmount.toFixed(2)}`);
             return false;
           }
           return true;
