@@ -217,40 +217,21 @@ export async function createMonthlySheets(
     // Get unique vendors for this month
     const uniqueVendors = Array.from(new Set(monthInvoices.map((inv) => inv.vendor)));
 
-    // Build new sheet content
+    // Build new sheet content with TOTAL at Row 2
     const sheetRows: (string | number)[][] = [headers];
 
-    // Add vendor summary rows with SIMPLE SUMIF formulas
-    for (const vendor of uniqueVendors) {
-      const row = [
-        "",  // Source
-        "",  // Invoice #
-        vendor,
-        "",  // Date
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!E:E)`,  // Total
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!F:F)`,  // IVA
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!G:G)`,  // Base
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!H:H)`,  // Tip
-        "",  // Category
-        "",  // Currency
-        "",  // Notes
-        "",  // Image URL
-        "",  // Exported At
-      ];
-      sheetRows.push(row);
-    }
-
-    // Add total row
-    const totalRowNum = sheetRows.length + 1;
+    // Add TOTAL row at Row 2 (before data rows)
+    // This will be updated with SUM formula after we add data rows
+    const totalRowIndex = 1;  // Row 2 (0-indexed)
     sheetRows.push([
       "",  // Source
       "",  // Invoice #
       `${month} TOTAL`,
       "",  // Date
-      `=SUM(E2:E${totalRowNum - 1})`,  // Total
-      `=SUM(F2:F${totalRowNum - 1})`,  // IVA
-      `=SUM(G2:G${totalRowNum - 1})`,  // Base
-      `=SUM(H2:H${totalRowNum - 1})`,  // Tip
+      "=SUM(E3:E1000)",  // Total - will sum all data rows
+      "=SUM(F3:F1000)",  // IVA
+      "=SUM(G3:G1000)",  // Base
+      "=SUM(H3:H1000)",  // Tip
       "",  // Category
       "",  // Currency
       "",  // Notes
@@ -258,14 +239,36 @@ export async function createMonthlySheets(
       "",  // Exported At
     ]);
 
+    // Add all invoice data rows (not just vendor summaries)
+    for (const invoice of monthInvoices) {
+      const row = [
+        invoice.source || "",
+        invoice.invoiceNumber || "",
+        invoice.vendor,
+        invoice.date,
+        invoice.totalAmount,
+        invoice.ivaAmount,
+        invoice.baseAmount,
+        invoice.tip || 0,
+        invoice.category || "",
+        invoice.currency || "EUR",
+        invoice.notes || "",
+        invoice.imageUrl || "",
+        "",  // Exported At
+      ];
+      sheetRows.push(row);
+    }
+
     // Clear and replace sheet content
     await clearSheet(config.spreadsheetId, month, config.accessToken);
     await updateSheet(config.spreadsheetId, month, config.accessToken, sheetRows);
     
+    console.log(`✅ Updated ${month} sheet: Header + TOTAL + ${monthInvoices.length} invoices`);
+    
     // Apply currency formatting
     await applyCurrencyFormatting(config.spreadsheetId, month, config.accessToken, sheetRows.length);
     
-    console.log(`✅ Updated ${month} sheet with ${uniqueVendors.length} vendors + formatting`);
+
   }
 }
 
@@ -297,49 +300,45 @@ export async function createQuarterlySummarySheets(
       return monthNumbers.includes(month);
     });
 
-    // Get unique vendors for this quarter
-    const uniqueVendors = Array.from(new Set(quarterInvoices.map((inv) => inv.vendor)));
-
-    // Build new sheet content
+    // Build new sheet content with TOTAL at Row 2
     const sheetRows: (string | number)[][] = [headers];
 
-    // Add vendor summary rows with SIMPLE SUMIF formulas
-    for (const vendor of uniqueVendors) {
-      const row = [
-        "",  // Source
-        "",  // Invoice #
-        vendor,
-        "",  // Date
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!E:E)`,  // Total
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!F:F)`,  // IVA
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!G:G)`,  // Base
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!H:H)`,  // Tip
-        "",  // Category
-        "",  // Currency
-        "",  // Notes
-        "",  // Image URL
-        "",  // Exported At
-      ];
-      sheetRows.push(row);
-    }
-
-    // Add total row
-    const totalRowNum = sheetRows.length + 1;
+    // Add TOTAL row at Row 2 (before data rows)
     sheetRows.push([
       "",  // Source
       "",  // Invoice #
       `${quarter} TOTAL`,
       "",  // Date
-      `=SUM(E2:E${totalRowNum - 1})`,  // Total
-      `=SUM(F2:F${totalRowNum - 1})`,  // IVA
-      `=SUM(G2:G${totalRowNum - 1})`,  // Base
-      `=SUM(H2:H${totalRowNum - 1})`,  // Tip
+      "=SUM(E3:E1000)",  // Total - will sum all data rows
+      "=SUM(F3:F1000)",  // IVA
+      "=SUM(G3:G1000)",  // Base
+      "=SUM(H3:H1000)",  // Tip
       "",  // Category
       "",  // Currency
       "",  // Notes
       "",  // Image URL
       "",  // Exported At
     ]);
+
+    // Add all invoice data rows
+    for (const invoice of quarterInvoices) {
+      const row = [
+        invoice.source || "",
+        invoice.invoiceNumber || "",
+        invoice.vendor,
+        invoice.date,
+        invoice.totalAmount,
+        invoice.ivaAmount,
+        invoice.baseAmount,
+        invoice.tip || 0,
+        invoice.category || "",
+        invoice.currency || "EUR",
+        invoice.notes || "",
+        invoice.imageUrl || "",
+        "",  // Exported At
+      ];
+      sheetRows.push(row);
+    }
 
     // Clear and replace sheet content
     await clearSheet(config.spreadsheetId, quarter, config.accessToken);
@@ -348,7 +347,7 @@ export async function createQuarterlySummarySheets(
     // Apply currency formatting
     await applyCurrencyFormatting(config.spreadsheetId, quarter, config.accessToken, sheetRows.length);
     
-    console.log(`✅ Updated ${quarter} sheet with ${uniqueVendors.length} vendors + formatting`);
+    console.log(`✅ Updated ${quarter} sheet: Header + TOTAL + ${quarterInvoices.length} invoices`);
   }
 }
 
