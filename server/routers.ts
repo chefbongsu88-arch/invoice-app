@@ -394,7 +394,7 @@ export const appRouter = router({
         // If automateSheets is true, trigger the full automation
         if (input.automateSheets) {
           try {
-            const { automateGoogleSheets } = await import("./sheets-automation-with-formatting");
+            const { automateGoogleSheets } = await import("./sheets-automation-vendor-aggregated");
             
             // Fetch ALL data from 2026 Invoice tracker sheet for complete monthly/quarterly aggregation
             const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("2026 Invoice tracker")}!A2:L`;
@@ -406,20 +406,30 @@ export const appRouter = router({
             if (trackerRes.ok) {
               const trackerData = await trackerRes.json() as { values?: any[][] };
               if (trackerData.values) {
-                allInvoiceData = trackerData.values.map((row: any[]) => ({
-                  source: row[0] || "",          // A: Source
-                  invoiceNumber: row[1] || "",   // B: Invoice #
-                  vendor: row[2] || "",          // C: Vendor
-                  date: row[3] || "",            // D: Date
-                  totalAmount: parseFloat(row[4]) || 0,   // E: Total (€)
-                  ivaAmount: parseFloat(row[5]) || 0,     // F: IVA (€)
-                  baseAmount: parseFloat(row[6]) || 0,    // G: Base (€)
-                  category: row[7] || "",        // H: Category
-                  currency: row[8] || "EUR",     // I: Currency
-                  tip: parseFloat(row[9]) || 0,  // J: Tip (€)
-                  notes: row[10] || "",          // K: Notes
-                  imageUrl: row[11] || "",       // L: Image URL
-                }));
+                allInvoiceData = trackerData.values.map((row: any[]) => {
+                  // Helper function to parse currency strings (e.g., "€133.18" -> 133.18)
+                  const parseCurrency = (val: any) => {
+                    if (!val) return 0;
+                    const numStr = String(val).replace(/[€,\s]/g, '').trim();
+                    const num = parseFloat(numStr);
+                    return isNaN(num) ? 0 : num;
+                  };
+                  
+                  return {
+                    source: row[0] || "",
+                    invoiceNumber: row[1] || "",
+                    vendor: row[2] || "",
+                    date: row[3] || "",
+                    totalAmount: parseCurrency(row[4]),
+                    ivaAmount: parseCurrency(row[5]),
+                    baseAmount: parseCurrency(row[6]),
+                    category: row[7] || "",
+                    currency: row[8] || "EUR",
+                    tip: parseCurrency(row[9]),
+                    notes: row[10] || "",
+                    imageUrl: row[11] || "",
+                  };
+                });
               }
             }
             
