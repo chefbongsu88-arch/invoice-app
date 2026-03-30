@@ -681,26 +681,40 @@ export const appRouter = router({
           console.log(`Cleared main sheet: ${mainSheetName}`);
         }
 
-        // Clear data from all monthly sheets (keep headers)
+        // Clear data from all monthly sheets (keep headers, but clear TOTAL row amounts)
         const monthlySheets = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
         for (const month of monthlySheets) {
           if (sheetNames.includes(month)) {
+            // Clear TOTAL row amounts (E2:L2)
             await sheets.spreadsheets.values.clear({
               spreadsheetId,
-              range: `'${month}'!A2:L`,
+              range: `'${month}'!E2:L2`,
+              auth,
+            });
+            // Clear data rows (A3:L)
+            await sheets.spreadsheets.values.clear({
+              spreadsheetId,
+              range: `'${month}'!A3:L`,
               auth,
             });
             console.log(`Cleared monthly sheet: ${month}`);
           }
         }
 
-        // Clear data from quarterly sheets (keep headers)
+        // Clear data from quarterly sheets (keep headers, but clear TOTAL row amounts)
         const quarterlySheets = ["Q1", "Q2", "Q3", "Q4"];
         for (const quarter of quarterlySheets) {
           if (sheetNames.includes(quarter)) {
+            // Clear TOTAL row amounts (E2:L2)
             await sheets.spreadsheets.values.clear({
               spreadsheetId,
-              range: `'${quarter}'!A2:L`,
+              range: `'${quarter}'!E2:L2`,
+              auth,
+            });
+            // Clear data rows (A3:L)
+            await sheets.spreadsheets.values.clear({
+              spreadsheetId,
+              range: `'${quarter}'!A3:L`,
               auth,
             });
             console.log(`Cleared quarterly sheet: ${quarter}`);
