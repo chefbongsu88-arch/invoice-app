@@ -187,26 +187,41 @@ export default function SettingsScreen() {
 
   const handleClearCache = async () => {
     Alert.alert(
-      "Clear Cache",
-      "This will clear all local cached data (exported invoice records). You can re-upload invoices after this.",
+      "Clear All Data",
+      "This will delete:\n- All invoices from Receipts\n- All data from Google Sheets\n- All local cache\n\nYou can start fresh after this.",
       [
         { text: "Cancel", onPress: () => {}, style: "cancel" },
         {
-          text: "Clear",
+          text: "Clear All",
           onPress: async () => {
             try {
-              // Get all keys from AsyncStorage
+              // 1. Clear local AsyncStorage (invoices, cache)
               const allKeys = await AsyncStorage.getAllKeys();
-              // Filter out settings key - only delete invoice-related cache
               const keysToDelete = allKeys.filter(
                 (key) => key.startsWith("invoice_") || key.startsWith("exported_") || key === "exported_invoices"
               );
               if (keysToDelete.length > 0) {
                 await AsyncStorage.multiRemove(keysToDelete);
               }
-              Alert.alert("Success", "Cache cleared! You can now re-upload invoices.");
+              
+              // 2. Clear Google Sheets data via server endpoint
+              try {
+                const response = await fetch("http://localhost:3000/trpc/invoices.resetAllData", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({})
+                });
+                
+                if (!response.ok) {
+                  console.warn("Failed to clear Google Sheets data");
+                }
+              } catch (err) {
+                console.warn("Could not connect to server for Google Sheets clear:", err);
+              }
+              
+              Alert.alert("Success", "All data cleared! You can now start fresh.");
             } catch (error) {
-              Alert.alert("Error", "Failed to clear cache: " + String(error));
+              Alert.alert("Error", "Failed to clear data: " + String(error));
             }
           },
           style: "destructive",
