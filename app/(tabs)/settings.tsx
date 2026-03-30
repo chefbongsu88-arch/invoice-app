@@ -195,10 +195,10 @@ export default function SettingsScreen() {
           text: "Clear All",
           onPress: async () => {
             try {
-              // 1. Clear local AsyncStorage (invoices, cache)
+              // 1. Clear ALL local AsyncStorage invoice-related keys
               const allKeys = await AsyncStorage.getAllKeys();
               const keysToDelete = allKeys.filter(
-                (key) => key.startsWith("invoice_") || key.startsWith("exported_") || key === "exported_invoices"
+                (key) => key.startsWith("invoice_") || key.startsWith("exported_") || key === "exported_invoices" || key === "invoices_v1"
               );
               if (keysToDelete.length > 0) {
                 await AsyncStorage.multiRemove(keysToDelete);
