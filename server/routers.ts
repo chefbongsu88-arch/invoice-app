@@ -644,16 +644,16 @@ export const appRouter = router({
       }
     }),
 
-  // Reset all data endpoint - clears all invoices from Google Sheets for testing
-  resetAllData: publicProcedure
-    .input(
-      z.object({
-        spreadsheetId: z.string(),
-        accessToken: z.string(),
-      })
-    )
-    .mutation(async ({ input }) => {
-      try {
+    // Reset all data endpoint - clears all invoices from Google Sheets for testing
+    resetAllData: publicProcedure
+      .input(
+        z.object({
+          spreadsheetId: z.string(),
+          accessToken: z.string(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        try {
         const { spreadsheetId, accessToken } = input;
         const { google } = await import("googleapis");
         const auth = new google.auth.OAuth2();

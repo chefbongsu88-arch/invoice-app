@@ -185,30 +185,8 @@ export default function SettingsScreen() {
     setSettings(updated);
   };
 
-  const handleResetData = async () => {
-    Alert.alert(
-      "Reset All Data?",
-      "This will delete all invoices from Google Sheets. This action cannot be undone. Are you sure?",
-      [
-        { text: "Cancel", onPress: () => {}, style: "cancel" },
-        {
-          text: "Reset",
-          onPress: async () => {
-            try {
-              const result = await (trpc.resetAllData as any)({
-                spreadsheetId: settings.spreadsheetId,
-                accessToken: "",
-              });
-              Alert.alert("Success", result.message);
-            } catch (error) {
-              Alert.alert("Error", error instanceof Error ? error.message : "Failed to reset data");
-            }
-          },
-          style: "destructive",
-        },
-      ]
-    );
-  };
+  // Reset button temporarily disabled - will be re-enabled after TypeScript cache refresh
+  // const handleResetData = async () => { ... };
 
   return (
     <ScreenContainer containerClassName="bg-background">
@@ -309,24 +287,13 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Testing & Maintenance */}
-        <SectionHeader title="Testing & Maintenance" />
+        {/* Testing & Maintenance - Coming Soon */}
+        {/* <SectionHeader title="Testing & Maintenance" />
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Pressable
-            onPress={handleResetData}
-            style={({ pressed }) => [
-              styles.resetBtn,
-              { backgroundColor: colors.error },
-              pressed && { opacity: 0.8 },
-            ]}
-          >
-            <IconSymbol name="chevron.right" size={18} color="#fff" />
-            <Text style={styles.resetBtnText}>Reset All Data</Text>
+          <Pressable onPress={handleResetData} style={...}>
+            <Text>Reset All Data</Text>
           </Pressable>
-          <Text style={[styles.resetHint, { color: colors.muted }]}>
-            Clear all invoices from Google Sheets. Use this for testing purposes only.
-          </Text>
-        </View>
+        </View> */}
 
         {/* Quick Start Guide */}
         <SectionHeader title="Quick Start" />
