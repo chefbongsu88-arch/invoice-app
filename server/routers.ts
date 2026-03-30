@@ -433,9 +433,9 @@ export const appRouter = router({
                     totalAmount: parseCurrency(row[4]),
                     ivaAmount: parseCurrency(row[5]),
                     baseAmount: parseCurrency(row[6]),
-                    category: row[7] || "",
-                    currency: row[8] || "EUR",
-                    tip: parseCurrency(row[9]),
+                    tip: parseCurrency(row[7]),
+                    category: row[8] || "",
+                    currency: row[9] || "EUR",
                     notes: row[10] || "",
                     imageUrl: row[11] || "",
                   };
