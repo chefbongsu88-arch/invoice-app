@@ -146,15 +146,18 @@ async function createMonthlySheets(
     const totalBase = aggregated.reduce((sum, v) => sum + v.baseAmount, 0);
     const totalTip = aggregated.reduce((sum, v) => sum + v.tip, 0);
 
-    const totalRow = [
-      "", "", `${month} TOTAL`, "",
-      formatCurrency(totalAmount),
-      formatCurrency(totalIva),
-      formatCurrency(totalBase),
-      formatCurrency(totalTip),
-      "", "", "", "", ""
-    ];
-    sheetRows.push(totalRow);
+    // Only add TOTAL row if there is data
+    if (aggregated.length > 0) {
+      const totalRow = [
+        "", "", `${month} TOTAL`, "",
+        formatCurrency(totalAmount),
+        formatCurrency(totalIva),
+        formatCurrency(totalBase),
+        formatCurrency(totalTip),
+        "", "", "", "", ""
+      ];
+      sheetRows.push(totalRow);
+    }
 
     // Add vendor rows (aggregated)
     for (const vendor of aggregated) {
@@ -240,15 +243,18 @@ async function createQuarterlySheets(
     const totalBase = aggregated.reduce((sum, v) => sum + v.baseAmount, 0);
     const totalTip = aggregated.reduce((sum, v) => sum + v.tip, 0);
 
-    const totalRow = [
-      "", "", `${quarter} TOTAL`, "",
-      formatCurrency(totalAmount),
-      formatCurrency(totalIva),
-      formatCurrency(totalBase),
-      formatCurrency(totalTip),
-      "", "", "", "", ""
-    ];
-    sheetRows.push(totalRow);
+    // Only add TOTAL row if there is data
+    if (aggregated.length > 0) {
+      const totalRow = [
+        "", "", `${quarter} TOTAL`, "",
+        formatCurrency(totalAmount),
+        formatCurrency(totalIva),
+        formatCurrency(totalBase),
+        formatCurrency(totalTip),
+        "", "", "", "", ""
+      ];
+      sheetRows.push(totalRow);
+    }
 
     // Add vendor rows (aggregated)
     for (const vendor of aggregated) {

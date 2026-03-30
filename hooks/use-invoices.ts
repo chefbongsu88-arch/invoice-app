@@ -73,7 +73,12 @@ export function useInvoices() {
         setInvoices(updatedWithExport);
       } catch (error) {
         console.error('[Export] Failed to export to Google Sheets:', error);
-        // Continue anyway - local storage is still updated
+        // Rollback local storage if export fails
+        const rolledBack = updated.filter(inv => inv.id !== invoice.id);
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(rolledBack));
+        setInvoices(rolledBack);
+        // Re-throw error so user knows it failed
+        throw new Error('Failed to export invoice to Google Sheets. Invoice was not saved.');
       }
     },
     [invoices]

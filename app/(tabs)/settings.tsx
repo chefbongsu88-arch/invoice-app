@@ -15,6 +15,7 @@ import { trpc } from "@/lib/trpc";
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
+import { useInvoices } from "@/hooks/use-invoices";
 
 const SETTINGS_KEY = "app_settings_v1";
 
@@ -173,6 +174,7 @@ function EditableField({
 export default function SettingsScreen() {
   const colors = useColors();
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const { reload: reloadInvoices } = useInvoices();
 
   useEffect(() => {
     AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
@@ -218,6 +220,9 @@ export default function SettingsScreen() {
               } catch (err) {
                 console.warn("Could not connect to server for Google Sheets clear:", err);
               }
+              
+              // 3. Reload app state to clear memory cache
+              await reloadInvoices();
               
               Alert.alert("Success", "All data cleared! You can now start fresh.");
             } catch (error) {
