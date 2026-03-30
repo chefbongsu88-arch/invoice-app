@@ -1,5 +1,5 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Pressable,
   ScrollView,
@@ -8,7 +8,9 @@ import {
   TextInput,
   View,
   Linking,
+  Alert,
 } from "react-native";
+import { trpc } from "@/lib/trpc";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -183,6 +185,31 @@ export default function SettingsScreen() {
     setSettings(updated);
   };
 
+  const handleResetData = async () => {
+    Alert.alert(
+      "Reset All Data?",
+      "This will delete all invoices from Google Sheets. This action cannot be undone. Are you sure?",
+      [
+        { text: "Cancel", onPress: () => {}, style: "cancel" },
+        {
+          text: "Reset",
+          onPress: async () => {
+            try {
+              const result = await (trpc.resetAllData as any)({
+                spreadsheetId: settings.spreadsheetId,
+                accessToken: "",
+              });
+              Alert.alert("Success", result.message);
+            } catch (error) {
+              Alert.alert("Error", error instanceof Error ? error.message : "Failed to reset data");
+            }
+          },
+          style: "destructive",
+        },
+      ]
+    );
+  };
+
   return (
     <ScreenContainer containerClassName="bg-background">
       <ScrollView contentContainerStyle={styles.content}>
@@ -280,6 +307,25 @@ export default function SettingsScreen() {
             <Text style={[styles.settingLabel, { color: colors.foreground }]}>Region</Text>
             <Text style={[styles.settingValue, { color: colors.muted }]}>Spain (EUR / IVA)</Text>
           </View>
+        </View>
+
+        {/* Testing & Maintenance */}
+        <SectionHeader title="Testing & Maintenance" />
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Pressable
+            onPress={handleResetData}
+            style={({ pressed }) => [
+              styles.resetBtn,
+              { backgroundColor: colors.error },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <IconSymbol name="chevron.right" size={18} color="#fff" />
+            <Text style={styles.resetBtnText}>Reset All Data</Text>
+          </Pressable>
+          <Text style={[styles.resetHint, { color: colors.muted }]}>
+            Clear all invoices from Google Sheets. Use this for testing purposes only.
+          </Text>
         </View>
 
         {/* Quick Start Guide */}
@@ -413,5 +459,27 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 15,
     fontWeight: "600",
+  },
+  resetBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginHorizontal: 14,
+    marginVertical: 14,
+  },
+  resetBtnText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  resetHint: {
+    fontSize: 12,
+    textAlign: "center",
+    marginHorizontal: 14,
+    marginBottom: 14,
   },
 });

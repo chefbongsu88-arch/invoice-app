@@ -643,7 +643,86 @@ export const appRouter = router({
         throw new Error(`Failed to diagnose sheets: ${error instanceof Error ? error.message : "Unknown error"}`);
       }
     }),
+
+  // Reset all data endpoint - clears all invoices from Google Sheets for testing
+  resetAllData: publicProcedure
+    .input(
+      z.object({
+        spreadsheetId: z.string(),
+        accessToken: z.string(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      try {
+        const { spreadsheetId, accessToken } = input;
+        const { google } = await import("googleapis");
+        const sheets = google.sheets({ version: "v4", auth: new google.auth.OAuth2() });
+        sheets.auth.setCredentials({ access_token: accessToken });
+
+        // Get all sheet names
+        const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+        const sheetNames = spreadsheet.data.sheets?.map((s) => s.properties?.title).filter(Boolean) as string[];
+
+        if (!sheetNames || sheetNames.length === 0) {
+          throw new Error("No sheets found in spreadsheet");
+        }
+
+        // Clear data from main sheet (keep headers)
+        const mainSheetName = "2026 Invoice tracker";
+        if (sheetNames.includes(mainSheetName)) {
+          await sheets.spreadsheets.values.clear({
+            spreadsheetId,
+            range: `'${mainSheetName}'!A2:M`,
+          });
+          console.log(`Cleared main sheet: ${mainSheetName}`);
+        }
+
+        // Clear data from all monthly sheets (keep headers)
+        const monthlySheets = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        for (const month of monthlySheets) {
+          if (sheetNames.includes(month)) {
+            await sheets.spreadsheets.values.clear({
+              spreadsheetId,
+              range: `'${month}'!A2:L`,
+            });
+            console.log(`Cleared monthly sheet: ${month}`);
+          }
+        }
+
+        // Clear data from quarterly sheets (keep headers)
+        const quarterlySheets = ["Q1", "Q2", "Q3", "Q4"];
+        for (const quarter of quarterlySheets) {
+          if (sheetNames.includes(quarter)) {
+            await sheets.spreadsheets.values.clear({
+              spreadsheetId,
+              range: `'${quarter}'!A2:L`,
+            });
+            console.log(`Cleared quarterly sheet: ${quarter}`);
+          }
+        }
+
+        // Clear data from meat tracking sheets
+        const meatSheets = ["Meat_Monthly", "Meat_Quarterly", "Meat_Analysis", "Meat_Detail"];
+        for (const meatSheet of meatSheets) {
+          if (sheetNames.includes(meatSheet)) {
+            await sheets.spreadsheets.values.clear({
+              spreadsheetId,
+              range: `'${meatSheet}'!A2:L`,
+            });
+            console.log(`Cleared meat sheet: ${meatSheet}`);
+          }
+        }
+
+        return {
+          success: true,
+          message: "All invoice data has been cleared successfully. Ready for fresh testing.",
+          clearedSheets: [...[mainSheetName], ...monthlySheets, ...quarterlySheets, ...meatSheets].filter((s) => sheetNames.includes(s)),
+        };
+      } catch (error) {
+        console.error("[Reset] Error:", error);
+        throw new Error(`Failed to reset data: ${error instanceof Error ? error.message : "Unknown error"}`);
+      }
+    }),
 });
 
 export type AppRouter = typeof appRouter;
-
