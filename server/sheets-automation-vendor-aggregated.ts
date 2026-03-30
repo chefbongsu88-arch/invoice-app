@@ -159,19 +159,19 @@ async function createMonthlySheets(
     // Add vendor rows (aggregated)
     for (const vendor of aggregated) {
       const row = [
-        vendor.source,
-        vendor.invoiceNumber,
-        vendor.vendor,
-        vendor.date,
-        formatCurrency(vendor.totalAmount),
-        formatCurrency(vendor.ivaAmount),
-        formatCurrency(vendor.baseAmount),
-        formatCurrency(vendor.tip),
-        vendor.category,
-        vendor.currency,
-        vendor.notes,
-        vendor.imageUrl,
-        ""
+        vendor.source,           // A: Source
+        vendor.invoiceNumber,    // B: Invoice #
+        vendor.vendor,           // C: Vendor
+        vendor.date,             // D: Date
+        formatCurrency(vendor.totalAmount),  // E: Total (€)
+        formatCurrency(vendor.ivaAmount),    // F: IVA (€)
+        formatCurrency(vendor.baseAmount),   // G: Base (€)
+        formatCurrency(vendor.tip),          // H: Tip (€)
+        vendor.category,         // I: Category
+        vendor.currency,         // J: Currency
+        vendor.notes,            // K: Notes
+        vendor.imageUrl,         // L: Image URL
+        ""                       // M: Exported At
       ];
       sheetRows.push(row);
     }
@@ -253,19 +253,19 @@ async function createQuarterlySheets(
     // Add vendor rows (aggregated)
     for (const vendor of aggregated) {
       const row = [
-        vendor.source,
-        vendor.invoiceNumber,
-        vendor.vendor,
-        vendor.date,
-        formatCurrency(vendor.totalAmount),
-        formatCurrency(vendor.ivaAmount),
-        formatCurrency(vendor.baseAmount),
-        formatCurrency(vendor.tip),
-        vendor.category,
-        vendor.currency,
-        vendor.notes,
-        vendor.imageUrl,
-        ""
+        vendor.source,           // A: Source
+        vendor.invoiceNumber,    // B: Invoice #
+        vendor.vendor,           // C: Vendor
+        vendor.date,             // D: Date
+        formatCurrency(vendor.totalAmount),  // E: Total (€)
+        formatCurrency(vendor.ivaAmount),    // F: IVA (€)
+        formatCurrency(vendor.baseAmount),   // G: Base (€)
+        formatCurrency(vendor.tip),          // H: Tip (€)
+        vendor.category,         // I: Category
+        vendor.currency,         // J: Currency
+        vendor.notes,            // K: Notes
+        vendor.imageUrl,         // L: Image URL
+        ""                       // M: Exported At
       ];
       sheetRows.push(row);
     }
