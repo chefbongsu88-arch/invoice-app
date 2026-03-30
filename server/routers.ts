@@ -458,7 +458,9 @@ export const appRouter = router({
             console.log("✅ Automation completed successfully");
           } catch (error) {
             console.error("❌ Automation failed:", error);
-            throw error;
+            // Continue anyway - local storage is still updated
+            // Don't throw raw error object as it may contain non-serializable types
+            console.warn("⚠️  Automation failed but invoice was saved to main sheet. Monthly/quarterly sheets may not be updated.");
           }
         }
 
