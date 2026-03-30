@@ -189,12 +189,6 @@ export default function HomeScreen() {
                 onPress={() => router.push("/(tabs)/scan" as never)}
               />
               <QuickAction
-                icon="envelope.fill"
-                label="Sync Gmail"
-                color={colors.email}
-                onPress={() => router.push("/(tabs)/gmail" as never)}
-              />
-              <QuickAction
                 icon="tablecells"
                 label="View Sheets"
                 color={colors.success}
@@ -229,7 +223,7 @@ export default function HomeScreen() {
               <IconSymbol name="doc.text.fill" size={48} color={colors.border} />
               <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No invoices yet</Text>
               <Text style={[styles.emptyDesc, { color: colors.muted }]}>
-                Scan a receipt or sync your Gmail to get started
+                Scan a receipt to get started
               </Text>
             </View>
           )

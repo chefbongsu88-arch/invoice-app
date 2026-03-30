@@ -199,12 +199,6 @@ export default function ReceiptsScreen() {
                 color={colors.camera}
                 onPress={() => setFilter("camera")}
               />
-              <FilterPill
-                label="Email"
-                active={filter === "email"}
-                color={colors.email}
-                onPress={() => setFilter("email")}
-              />
             </View>
 
             {/* Add Manual Invoice Button */}
@@ -233,7 +227,7 @@ export default function ReceiptsScreen() {
               <Text style={[styles.emptyDesc, { color: colors.muted }]}>
                 {search || filter !== "all"
                   ? "Try adjusting your search or filter"
-                  : "Scan a receipt or sync Gmail to add invoices"}
+                  : "Scan a receipt to add invoices"}
               </Text>
               {filter === "all" && !search && (
                 <Pressable
