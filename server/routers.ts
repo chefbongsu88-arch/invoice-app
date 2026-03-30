@@ -656,8 +656,9 @@ export const appRouter = router({
       try {
         const { spreadsheetId, accessToken } = input;
         const { google } = await import("googleapis");
-        const sheets = google.sheets({ version: "v4", auth: new google.auth.OAuth2() });
-        sheets.auth.setCredentials({ access_token: accessToken });
+        const auth = new google.auth.OAuth2();
+        auth.setCredentials({ access_token: accessToken });
+        const sheets = google.sheets({ version: "v4", auth });
 
         // Get all sheet names
         const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
@@ -673,6 +674,7 @@ export const appRouter = router({
           await sheets.spreadsheets.values.clear({
             spreadsheetId,
             range: `'${mainSheetName}'!A2:M`,
+            auth,
           });
           console.log(`Cleared main sheet: ${mainSheetName}`);
         }
@@ -684,6 +686,7 @@ export const appRouter = router({
             await sheets.spreadsheets.values.clear({
               spreadsheetId,
               range: `'${month}'!A2:L`,
+              auth,
             });
             console.log(`Cleared monthly sheet: ${month}`);
           }
@@ -696,6 +699,7 @@ export const appRouter = router({
             await sheets.spreadsheets.values.clear({
               spreadsheetId,
               range: `'${quarter}'!A2:L`,
+              auth,
             });
             console.log(`Cleared quarterly sheet: ${quarter}`);
           }
@@ -708,6 +712,7 @@ export const appRouter = router({
             await sheets.spreadsheets.values.clear({
               spreadsheetId,
               range: `'${meatSheet}'!A2:L`,
+              auth,
             });
             console.log(`Cleared meat sheet: ${meatSheet}`);
           }
