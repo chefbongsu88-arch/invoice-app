@@ -185,8 +185,35 @@ export default function SettingsScreen() {
     setSettings(updated);
   };
 
-  // Reset button temporarily disabled - will be re-enabled after TypeScript cache refresh
-  // const handleResetData = async () => { ... };
+  const handleClearCache = async () => {
+    Alert.alert(
+      "Clear Cache",
+      "This will clear all local cached data (exported invoice records). You can re-upload invoices after this.",
+      [
+        { text: "Cancel", onPress: () => {}, style: "cancel" },
+        {
+          text: "Clear",
+          onPress: async () => {
+            try {
+              // Get all keys from AsyncStorage
+              const allKeys = await AsyncStorage.getAllKeys();
+              // Filter out settings key - only delete invoice-related cache
+              const keysToDelete = allKeys.filter(
+                (key) => key.startsWith("invoice_") || key.startsWith("exported_") || key === "exported_invoices"
+              );
+              if (keysToDelete.length > 0) {
+                await AsyncStorage.multiRemove(keysToDelete);
+              }
+              Alert.alert("Success", "Cache cleared! You can now re-upload invoices.");
+            } catch (error) {
+              Alert.alert("Error", "Failed to clear cache: " + String(error));
+            }
+          },
+          style: "destructive",
+        },
+      ]
+    );
+  };
 
   return (
     <ScreenContainer containerClassName="bg-background">
@@ -287,13 +314,23 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Testing & Maintenance - Coming Soon */}
-        {/* <SectionHeader title="Testing & Maintenance" />
+        {/* Testing & Maintenance */}
+        <SectionHeader title="Testing & Maintenance" />
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Pressable onPress={handleResetData} style={...}>
-            <Text>Reset All Data</Text>
+          <Pressable
+            onPress={handleClearCache}
+            style={({ pressed }) => [
+              styles.clearCacheBtn,
+              { backgroundColor: colors.error },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Text style={styles.clearCacheBtnText}>Clear Cache</Text>
           </Pressable>
-        </View> */}
+          <Text style={[styles.clearCacheHint, { color: colors.muted }]}>
+            Clears local exported invoice records. Use this if you cleared Google Sheets data and want to re-upload invoices.
+          </Text>
+        </View>
 
         {/* Quick Start Guide */}
         <SectionHeader title="Quick Start" />
@@ -448,5 +485,28 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginHorizontal: 14,
     marginBottom: 14,
+  },
+  clearCacheBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginHorizontal: 14,
+    marginVertical: 14,
+  },
+  clearCacheBtnText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  clearCacheHint: {
+    fontSize: 12,
+    textAlign: "center",
+    marginHorizontal: 14,
+    marginBottom: 14,
+    lineHeight: 16,
   },
 });
