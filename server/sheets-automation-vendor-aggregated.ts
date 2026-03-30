@@ -146,18 +146,16 @@ async function createMonthlySheets(
     const totalBase = aggregated.reduce((sum, v) => sum + v.baseAmount, 0);
     const totalTip = aggregated.reduce((sum, v) => sum + v.tip, 0);
 
-    // Only add TOTAL row if there is data
-    if (aggregated.length > 0) {
-      const totalRow = [
-        "", "", `${month} TOTAL`, "",
-        formatCurrency(totalAmount),
-        formatCurrency(totalIva),
-        formatCurrency(totalBase),
-        formatCurrency(totalTip),
-        "", "", "", "", ""
-      ];
-      sheetRows.push(totalRow);
-    }
+    // Always add TOTAL row with SUM formulas for automatic calculation
+    const totalRow = [
+      "", "", `${month} TOTAL`, "",
+      "=SUM(E3:E)",      // E: Total (€) - auto sum
+      "=SUM(F3:F)",      // F: IVA (€) - auto sum
+      "=SUM(G3:G)",      // G: Base (€) - auto sum
+      "=SUM(H3:H)",      // H: Tip (€) - auto sum
+      "", "", "", "", ""
+    ];
+    sheetRows.push(totalRow);
 
     // Add vendor rows (aggregated)
     for (const vendor of aggregated) {
@@ -243,18 +241,16 @@ async function createQuarterlySheets(
     const totalBase = aggregated.reduce((sum, v) => sum + v.baseAmount, 0);
     const totalTip = aggregated.reduce((sum, v) => sum + v.tip, 0);
 
-    // Only add TOTAL row if there is data
-    if (aggregated.length > 0) {
-      const totalRow = [
-        "", "", `${quarter} TOTAL`, "",
-        formatCurrency(totalAmount),
-        formatCurrency(totalIva),
-        formatCurrency(totalBase),
-        formatCurrency(totalTip),
-        "", "", "", "", ""
-      ];
-      sheetRows.push(totalRow);
-    }
+    // Always add TOTAL row with SUM formulas for automatic calculation
+    const totalRow = [
+      "", "", `${quarter} TOTAL`, "",
+      "=SUM(E3:E)",      // E: Total (€) - auto sum
+      "=SUM(F3:F)",      // F: IVA (€) - auto sum
+      "=SUM(G3:G)",      // G: Base (€) - auto sum
+      "=SUM(H3:H)",      // H: Tip (€) - auto sum
+      "", "", "", "", ""
+    ];
+    sheetRows.push(totalRow);
 
     // Add vendor rows (aggregated)
     for (const vendor of aggregated) {
