@@ -303,7 +303,7 @@ export default function ReceiptDetailScreen() {
 
         {/* Export Button */}
         <Pressable
-          onPress={handleExport}
+          onPress={() => handleExport()}
           disabled={exporting || invoice.exportedToSheets}
           style={({ pressed }) => [
             styles.exportBtn,
