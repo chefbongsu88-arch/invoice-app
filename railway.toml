@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "npm install -g pnpm@9.12.0 && pnpm install --frozen-lockfile && npx expo export --platform web && pnpm build"
+buildCommand = "pnpm install --frozen-lockfile && pnpm build"
 
 [deploy]
 startCommand = "pnpm start"
