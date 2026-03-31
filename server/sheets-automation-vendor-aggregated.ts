@@ -5,39 +5,25 @@ export interface SheetAutomationConfig {
 }
 
 /**
- * Get month name from date string (supports DD/MM/YYYY, YYYY-MM-DD, and "2026. 3. 25" formats)
+ * Get month name from date string (supports DD/MM/YYYY, YYYY-MM-DD formats)
  */
-function getMonthFromDate(dateStr: string): string {
-  try {
-    let date: Date;
-    const cleanStr = String(dateStr).replace(/'/g, "").trim();
-    
-    // Try DD/MM/YYYY format first
-    const ddmmyyyyMatch = cleanStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (ddmmyyyyMatch) {
-      const day = parseInt(ddmmyyyyMatch[1], 10);
-      const month = parseInt(ddmmyyyyMatch[2], 10) - 1; // 0-indexed
-      const year = parseInt(ddmmyyyyMatch[3], 10);
-      date = new Date(year, month, day);
-    }
-    // Try "2026. 3. 25" format
-    else if (cleanStr.includes(".")) {
-      const parts = cleanStr.replace(/\./g, "").split(/\s+/);
-      if (parts.length >= 3) {
-        date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-      } else {
-        return "";
-      }
-    }
-    // Try YYYY-MM-DD format
-    else {
-      date = new Date(cleanStr);
-    }
-    
-    return date.toLocaleString("en-US", { month: "long" });
-  } catch {
-    return "";
-  }
+function getMonthFromDate(dateStr: string): string | null {
+  if (!dateStr) return null;
+  const s = String(dateStr).trim().replace(/^'/, "");
+  const months = ["January","February","March","April","May","June",
+                  "July","August","September","October","November","December"];
+  
+  // DD/MM/YYYY
+  const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m1) return months[parseInt(m1[2]) - 1] || null;
+  
+  // YYYY-MM-DD
+  const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m2) return months[parseInt(m2[2]) - 1] || null;
+  
+  const d = new Date(dateStr);
+  if (!isNaN(d.getTime())) return months[d.getMonth()] || null;
+  return null;
 }
 
 /**
@@ -188,10 +174,10 @@ async function createMonthlySheets(
         vendor.invoiceNumber,    // B: Invoice #
         vendor.vendor,           // C: Vendor
         vendor.date,             // D: Date
-        formatCurrency(vendor.totalAmount),  // E: Total (€)
-        formatCurrency(vendor.ivaAmount),    // F: IVA (€)
-        formatCurrency(vendor.baseAmount),   // G: Base (€)
-        formatCurrency(vendor.tip),          // H: Tip (€)
+        vendor.totalAmount,      // E: Total (€) - as number, not string!
+        vendor.ivaAmount,        // F: IVA (€) - as number, not string!
+        vendor.baseAmount,       // G: Base (€) - as number, not string!
+        vendor.tip ?? 0,         // H: Tip (€) - as number, not string!
         vendor.category,         // I: Category
         vendor.currency,         // J: Currency
         vendor.notes,            // K: Notes
@@ -283,10 +269,10 @@ async function createQuarterlySheets(
         vendor.invoiceNumber,    // B: Invoice #
         vendor.vendor,           // C: Vendor
         vendor.date,             // D: Date
-        formatCurrency(vendor.totalAmount),  // E: Total (€)
-        formatCurrency(vendor.ivaAmount),    // F: IVA (€)
-        formatCurrency(vendor.baseAmount),   // G: Base (€)
-        formatCurrency(vendor.tip),          // H: Tip (€)
+        vendor.totalAmount,      // E: Total (€) - as number, not string!
+        vendor.ivaAmount,        // F: IVA (€) - as number, not string!
+        vendor.baseAmount,       // G: Base (€) - as number, not string!
+        vendor.tip ?? 0,         // H: Tip (€) - as number, not string!
         vendor.category,         // I: Category
         vendor.currency,         // J: Currency
         vendor.notes,            // K: Notes
