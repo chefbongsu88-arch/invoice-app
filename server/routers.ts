@@ -6,6 +6,34 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { uploadImageToStorage } from "./image-upload-storage";
 
+// Helper function to parse DD/MM/YYYY date format correctly
+function parseInvoiceDateDDMMYYYY(dateStr: string): Date {
+  if (!dateStr) return new Date();
+  const s = String(dateStr).trim().replace(/^'/, "");
+  
+  // Try DD/MM/YYYY format first
+  const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m1) {
+    const day = parseInt(m1[1], 10);
+    const month = parseInt(m1[2], 10) - 1; // 0-indexed
+    const year = parseInt(m1[3], 10);
+    return new Date(year, month, day);
+  }
+  
+  // Try YYYY-MM-DD format
+  const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m2) {
+    const year = parseInt(m2[1], 10);
+    const month = parseInt(m2[2], 10) - 1;
+    const day = parseInt(m2[3], 10);
+    return new Date(year, month, day);
+  }
+  
+  // Fallback to native parsing
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+
 // Helper function to generate JWT for Google Service Account
 async function generateJWT(serviceAccount: any): Promise<string> {
   const { createSign } = await import("crypto");
@@ -252,8 +280,9 @@ export const appRouter = router({
         const accessToken = tokenData.access_token;
 
         // First, ensure header row exists
+        // ✅ Correct column order: Source, Invoice#, Vendor, Date, Total, IVA, Base, Tip, Category, Currency, Notes, ImageURL, ExportedAt
         const headerValues = [
-          ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Category", "Currency", "Tip (€)", "Notes", "Image URL", "Exported At"],
+          ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"],
         ];
 
         // Check if sheet exists and has headers
@@ -380,23 +409,29 @@ export const appRouter = router({
               }
             }
             
-            // Format date as YYYY-MM-DD (with leading apostrophe to prevent Google Sheets auto-formatting)
-            const formattedDate = `'${new Date(r.date).toISOString().split('T')[0]}'`;
+            // Format date as DD/MM/YYYY (with leading apostrophe to prevent Google Sheets auto-formatting)
+            // Parse DD/MM/YYYY correctly
+            const parsedDate = parseInvoiceDateDDMMYYYY(r.date);
+            const dd = String(parsedDate.getDate()).padStart(2, '0');
+            const mm = String(parsedDate.getMonth() + 1).padStart(2, '0');
+            const yyyy = parsedDate.getFullYear();
+            const formattedDate = `'${dd}/${mm}/${yyyy}'`;
             
+            // ✅ Correct column order: Source, Invoice#, Vendor, Date, Total, IVA, Base, Tip, Category, Currency, Notes, ImageURL, ExportedAt
             return [
-              r.source,
-              r.invoiceNumber,
-              r.vendor,
-              formattedDate,
-              r.totalAmount,
-              r.ivaAmount,
-              r.baseAmount,
-              r.tip ?? 0,
-              r.category,
-              r.currency,
-              r.notes ?? "",
-              imageUrl,
-              now,
+              r.source,              // A - Source
+              r.invoiceNumber,       // B - Invoice #
+              r.vendor,              // C - Vendor
+              formattedDate,         // D - Date (DD/MM/YYYY)
+              r.totalAmount,         // E - Total (€)
+              r.ivaAmount,           // F - IVA (€)
+              r.baseAmount,          // G - Base (€)
+              r.tip ?? 0,            // H - Tip (€)
+              r.category,            // I - Category
+              r.currency,            // J - Currency
+              r.notes ?? "",         // K - Notes
+              imageUrl,              // L - Image URL
+              now,                   // M - Exported At
             ];
           })
         );
