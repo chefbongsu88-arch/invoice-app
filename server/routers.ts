@@ -415,11 +415,11 @@ export const appRouter = router({
             const dd = String(parsedDate.getDate()).padStart(2, '0');
             const mm = String(parsedDate.getMonth() + 1).padStart(2, '0');
             const yyyy = parsedDate.getFullYear();
-            const formattedDate = `'${dd}/${mm}/${yyyy}'`;
+            const formattedDate = `'${dd}/${mm}/${yyyy}`;
             
             // ✅ Correct column order: Source, Invoice#, Vendor, Date, Total, IVA, Base, Tip, Category, Currency, Notes, ImageURL, ExportedAt
             return [
-              r.source,              // A - Source
+              r.source?.toLowerCase() === "camera" ? "Camera" : "Email", // A - Source
               r.invoiceNumber,       // B - Invoice #
               r.vendor,              // C - Vendor
               formattedDate,         // D - Date (DD/MM/YYYY)
@@ -461,7 +461,7 @@ export const appRouter = router({
             const { automateGoogleSheets } = await import("./sheets-automation-vendor-aggregated");
             
             // Fetch ALL data from 2026 Invoice tracker sheet for complete monthly/quarterly aggregation
-            const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("2026 Invoice tracker")}!A2:L`;
+            const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("2026 Invoice tracker")}!A2:M`;
             const trackerRes = await fetch(trackerSheetUrl, {
               headers: { Authorization: `Bearer ${accessToken}` },
             });
@@ -471,19 +471,28 @@ export const appRouter = router({
               const trackerData = await trackerRes.json() as { values?: any[][] };
               if (trackerData.values) {
                 allInvoiceData = trackerData.values.map((row: any[]) => {
-                  // Helper function to parse currency strings (e.g., "€133.18" -> 133.18)
+                  // Parse currency strings (e.g., "€133.18" -> 133.18)
                   const parseCurrency = (val: any) => {
                     if (!val) return 0;
                     const numStr = String(val).replace(/[€,\s]/g, '').trim();
                     const num = parseFloat(numStr);
                     return isNaN(num) ? 0 : num;
                   };
-                  
+
+                  // Strip apostrophes and convert DD/MM/YYYY → YYYY-MM-DD
+                  const parseDate = (val: any): string => {
+                    if (!val) return "";
+                    const s = String(val).replace(/^'+|'+$/g, "").trim();
+                    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+                    if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+                    return s;
+                  };
+
                   return {
                     source: row[0] || "",
                     invoiceNumber: row[1] || "",
                     vendor: row[2] || "",
-                    date: row[3] || "",
+                    date: parseDate(row[3]),
                     totalAmount: parseCurrency(row[4]),
                     ivaAmount: parseCurrency(row[5]),
                     baseAmount: parseCurrency(row[6]),

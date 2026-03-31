@@ -266,7 +266,7 @@ async function createQuarterlySheets(
 
     // Always add TOTAL row with SUM formulas for automatic calculation
     const totalRow = [
-      "", "", `${quarter} TOTAL`, "",
+      "", "", "QUARTERLY TOTAL", "",
       "=SUM(E3:E1000)",      // E: Total (€) - auto sum
       "=SUM(F3:F1000)",      // F: IVA (€) - auto sum
       "=SUM(G3:G1000)",      // G: Base (€) - auto sum
