@@ -59,7 +59,7 @@ Thumbs.db
 # Build files
 *.tgz
 *.tar.gz
-.cache/
+/.cache/
 
 # Webdev artifacts (checkpoint zips, migrations, etc.)
 .webdev/
