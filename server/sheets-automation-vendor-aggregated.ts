@@ -317,6 +317,174 @@ async function createQuarterlySheets(
   }
 }
 
+// ─── Meat Monthly Sheet ───────────────────────────────────────────────────────
+
+const MEAT_VENDORS = ["La Portenia", "Es Cuco"];
+const MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function isMeatVendor(vendor: string): boolean {
+  const lv = vendor.toLowerCase();
+  return lv.includes("porteni") || lv.includes("cuco");
+}
+
+function normalizeMeatVendor(vendor: string): string {
+  const lv = vendor.toLowerCase();
+  if (lv.includes("porteni")) return "La Portenia";
+  if (lv.includes("cuco"))    return "Es Cuco";
+  return vendor;
+}
+
+function getMonthIndexFromDate(dateStr: string): number {
+  if (!dateStr) return -1;
+  const s = String(dateStr).trim().replace(/^'+|'+$/g, "");
+  const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m1) return parseInt(m1[2], 10) - 1;
+  const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m2) return parseInt(m2[2], 10) - 1;
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d.getMonth();
+  return -1;
+}
+
+/**
+ * Build the Meat_Monthly pivot table header row
+ * Vendor | Cut Name | Jan(kg) | Jan(€) | Feb(kg) | Feb(€) | ... | Total(kg) | Total(€)
+ */
+function buildMeatHeader(): string[] {
+  const cols: string[] = ["Vendor", "Cut Name"];
+  for (const abbr of MONTH_ABBR) {
+    cols.push(`${abbr}(kg)`, `${abbr}(€)`);
+  }
+  cols.push("Total(kg)", "Total(€)");
+  return cols;
+}
+
+interface MeatAggKey { vendor: string; cutName: string }
+interface MeatMonthData { kg: number; eur: number }
+
+/**
+ * Update (incremental) the Meat_Monthly sheet with new invoice items.
+ * Reads the existing sheet, merges new data, and rewrites.
+ */
+export async function updateMeatMonthlySheet(
+  accessToken: string,
+  spreadsheetId: string,
+  newInvoices: any[]  // invoices that may have items[]
+): Promise<void> {
+  const SHEET = "Meat_Monthly";
+
+  // Filter to only meat vendor invoices with items
+  const meatInvoices = newInvoices.filter(
+    inv => inv.items && inv.items.length > 0 && isMeatVendor(inv.vendor || "")
+  );
+  if (meatInvoices.length === 0) {
+    console.log("ℹ️  No meat invoices with items — Meat_Monthly not updated");
+    return;
+  }
+
+  // ── 1. Read existing sheet data ────────────────────────────────────────────
+  const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(SHEET + "!A:AZ")}`;
+  const readRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+  let existingRows: any[][] = [];
+  if (readRes.ok) {
+    const data = await readRes.json() as { values?: any[][] };
+    existingRows = data.values ?? [];
+  }
+
+  // ── 2. Build aggregation map from existing data ────────────────────────────
+  // map key: `${vendor}|||${cutName}` → monthData[0..11]
+  const aggMap = new Map<string, MeatMonthData[]>();
+
+  const existingHeader = existingRows[0] ?? [];
+  const isValidHeader = existingHeader[0] === "Vendor" && existingHeader[1] === "Cut Name";
+
+  if (isValidHeader && existingRows.length > 1) {
+    for (let r = 1; r < existingRows.length; r++) {
+      const row = existingRows[r];
+      const vendor  = String(row[0] ?? "").trim();
+      const cutName = String(row[1] ?? "").trim();
+      if (!vendor || !cutName) continue;
+
+      const key = `${vendor}|||${cutName}`;
+      const months: MeatMonthData[] = [];
+      for (let m = 0; m < 12; m++) {
+        const kg  = parseFloat(String(row[2 + m * 2] ?? "0")) || 0;
+        const eur = parseFloat(String(row[3 + m * 2] ?? "0")) || 0;
+        months.push({ kg, eur });
+      }
+      aggMap.set(key, months);
+    }
+  }
+
+  // ── 3. Merge new invoice items into aggMap ─────────────────────────────────
+  for (const inv of meatInvoices) {
+    const vendor   = normalizeMeatVendor(inv.vendor || "");
+    const monthIdx = getMonthIndexFromDate(inv.date || "");
+    if (monthIdx < 0 || monthIdx > 11) continue;
+
+    for (const item of (inv.items || [])) {
+      const cutName = String(item.partName || "").trim();
+      if (!cutName) continue;
+
+      const key = `${vendor}|||${cutName}`;
+      if (!aggMap.has(key)) {
+        aggMap.set(key, Array.from({ length: 12 }, () => ({ kg: 0, eur: 0 })));
+      }
+      const months = aggMap.get(key)!;
+      months[monthIdx].kg  += parseAmount(item.quantity);
+      months[monthIdx].eur += parseAmount(item.total);
+    }
+  }
+
+  // ── 4. Build sheet rows ────────────────────────────────────────────────────
+  const headerRow = buildMeatHeader();
+  const dataRows: any[][] = [];
+
+  // Sort: La Portenia first, then Es Cuco; alphabetical within vendor
+  const sortedKeys = Array.from(aggMap.keys()).sort((a, b) => {
+    const [vA, cA] = a.split("|||");
+    const [vB, cB] = b.split("|||");
+    const vendorOrder = (v: string) => v === "La Portenia" ? 0 : 1;
+    if (vendorOrder(vA) !== vendorOrder(vB)) return vendorOrder(vA) - vendorOrder(vB);
+    return cA.localeCompare(cB);
+  });
+
+  for (const key of sortedKeys) {
+    const [vendor, cutName] = key.split("|||");
+    const months = aggMap.get(key)!;
+    const row: any[] = [vendor, cutName];
+    let totalKg = 0, totalEur = 0;
+    for (const m of months) {
+      row.push(Math.round(m.kg * 1000) / 1000);
+      row.push(Math.round(m.eur * 100) / 100);
+      totalKg  += m.kg;
+      totalEur += m.eur;
+    }
+    row.push(Math.round(totalKg * 1000) / 1000);
+    row.push(Math.round(totalEur * 100) / 100);
+    dataRows.push(row);
+  }
+
+  const sheetData = [headerRow, ...dataRows];
+
+  // ── 5. Clear and rewrite sheet ─────────────────────────────────────────────
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(SHEET + "!A:AZ")}:clear`;
+  await fetch(clearUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+  });
+
+  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(SHEET + "!A1")}?valueInputOption=USER_ENTERED`;
+  const writeRes = await fetch(writeUrl, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ values: sheetData }),
+  });
+  if (!writeRes.ok) throw new Error(`Meat_Monthly write error: ${await writeRes.text()}`);
+
+  console.log(`✅ Meat_Monthly updated: ${dataRows.length} cut rows across ${meatInvoices.length} invoices`);
+}
+
 /**
  * Main automation function
  */

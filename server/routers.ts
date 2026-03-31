@@ -458,7 +458,7 @@ export const appRouter = router({
         // Always run automation to keep monthly/quarterly sheets in sync
         if (true) {
           try {
-            const { automateGoogleSheets } = await import("./sheets-automation-vendor-aggregated");
+            const { automateGoogleSheets, updateMeatMonthlySheet } = await import("./sheets-automation-vendor-aggregated");
             
             // Fetch ALL data from 2026 Invoice tracker sheet for complete monthly/quarterly aggregation
             const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("2026 Invoice tracker")}!A2:M`;
@@ -518,6 +518,13 @@ export const appRouter = router({
               accessToken,
               invoiceData: allInvoiceData,
             }, ["La Portenia", "Es Cuco"]);
+
+            // Update Meat_Monthly pivot table for invoices with items[]
+            const meatRows = rows.filter(r => r.items && r.items.length > 0);
+            if (meatRows.length > 0) {
+              await updateMeatMonthlySheet(accessToken, spreadsheetId, meatRows);
+            }
+
             console.log("✅ Automation completed successfully");
           } catch (error) {
             console.error("❌ Automation failed:", error);
