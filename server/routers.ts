@@ -286,7 +286,7 @@ export const appRouter = router({
         ];
 
         // Check if sheet exists and has headers
-        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:K1`;
+        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:M1`;
         const checkRes = await fetch(checkUrl, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -298,7 +298,7 @@ export const appRouter = router({
           if (!checkData.values || checkData.values.length === 0) {
             // Add headers
             await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:K1?valueInputOption=RAW`,
+              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:M1?valueInputOption=RAW`,
               {
                 method: "PUT",
                 headers: {
@@ -423,9 +423,9 @@ export const appRouter = router({
               r.invoiceNumber,       // B - Invoice #
               r.vendor,              // C - Vendor
               formattedDate,         // D - Date (DD/MM/YYYY)
-              r.totalAmount,         // E - Total (€)
-              r.ivaAmount,           // F - IVA (€)
-              r.baseAmount,          // G - Base (€)
+              r.totalAmount,                                                           // E - Total (€)
+              r.ivaAmount ?? 0,                                                        // F - IVA (€)
+              r.baseAmount != null ? r.baseAmount : r.totalAmount - (r.ivaAmount ?? 0), // G - Base (€) fallback for old invoices
               r.tip ?? 0,            // H - Tip (€)
               r.category,            // I - Category
               r.currency,            // J - Currency
