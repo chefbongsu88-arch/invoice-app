@@ -489,7 +489,7 @@ export const appRouter = router({
                   };
 
                   return {
-                    source: row[0] || "",
+                    source: row[0]?.toLowerCase() === "camera" ? "Camera" : "Email",
                     invoiceNumber: row[1] || "",
                     vendor: row[2] || "",
                     date: parseDate(row[3]),

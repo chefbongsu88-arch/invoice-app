@@ -183,7 +183,7 @@ async function createMonthlySheets(
     // Add vendor rows (aggregated)
     for (const vendor of aggregated) {
       const row = [
-        vendor.source,           // A: Source
+        vendor.source?.toLowerCase() === "camera" ? "Camera" : "Email", // A: Source
         vendor.invoiceNumber,    // B: Invoice #
         vendor.vendor,           // C: Vendor
         vendor.date,             // D: Date
@@ -278,7 +278,7 @@ async function createQuarterlySheets(
     // Add vendor rows (aggregated)
     for (const vendor of aggregated) {
       const row = [
-        vendor.source,           // A: Source
+        vendor.source?.toLowerCase() === "camera" ? "Camera" : "Email", // A: Source
         vendor.invoiceNumber,    // B: Invoice #
         vendor.vendor,           // C: Vendor
         vendor.date,             // D: Date
