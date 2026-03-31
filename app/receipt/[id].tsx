@@ -93,14 +93,13 @@ export default function ReceiptDetailScreen() {
     ]);
   }, [id, deleteInvoice, router]);
 
-  const handleExport = useCallback(async () => {
+  const handleExport = useCallback(async (skipDuplicateCheck = false) => {
     if (!invoice) return;
 
     const settings = await AsyncStorage.getItem(SETTINGS_KEY);
     const parsed = settings ? JSON.parse(settings) : {};
     const spreadsheetId = parsed.spreadsheetId;
     const sheetName = parsed.sheetName ?? "Invoices";
-    const apiKey = parsed.googleApiKey;
 
     if (!spreadsheetId) {
       Alert.alert(
@@ -111,8 +110,6 @@ export default function ReceiptDetailScreen() {
       return;
     }
 
-    // API Key is no longer required - using Service Account authentication
-
     setExporting(true);
     try {
       // Convert image to base64 if it exists
@@ -120,10 +117,8 @@ export default function ReceiptDetailScreen() {
       if (invoice.imageUri) {
         try {
           imageBase64 = await convertImageToBase64(invoice.imageUri);
-          console.log("[Export] Image converted to base64, length:", imageBase64.length);
         } catch (imgError) {
           console.warn("[Export] Failed to convert image to base64:", imgError);
-          // Continue without image if conversion fails
         }
       }
 
@@ -147,14 +142,21 @@ export default function ReceiptDetailScreen() {
           },
         ],
         automateSheets: true,
+        skipDuplicateCheck,
       });
 
-      // Check if this was a duplicate
+      // Duplicate detected — show warning with option to force upload
       if (result.rowsAdded === 0) {
         Alert.alert(
-          "Duplicate Invoice",
-          `Invoice #${invoice.invoiceNumber} has already been exported to Google Sheets. No new data was added.`,
-          [{ text: "OK" }]
+          "중복 인보이스",
+          `이미 존재하는 인보이스입니다:\n${invoice.invoiceNumber || "번호 없음"} / ${invoice.vendor}`,
+          [
+            { text: "취소", style: "cancel" },
+            {
+              text: "확인 (강제 업로드)",
+              onPress: () => handleExport(true),
+            },
+          ]
         );
         return;
       }

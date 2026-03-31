@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
+import { FlatList, Linking, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -192,7 +192,7 @@ export default function HomeScreen() {
                 icon="tablecells"
                 label="View Sheets"
                 color={colors.success}
-                onPress={() => router.push("/(tabs)/settings" as never)}
+                onPress={() => Linking.openURL("https://docs.google.com/spreadsheets/d/1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E")}
               />
               <QuickAction
                 icon="doc.text.fill"

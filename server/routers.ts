@@ -249,10 +249,11 @@ export const appRouter = router({
             })
           ),
           automateSheets: z.boolean().optional().default(false),
+          skipDuplicateCheck: z.boolean().optional().default(false),
         })
       )
       .mutation(async ({ input }) => {
-        const { spreadsheetId, sheetName, rows } = input;
+        const { spreadsheetId, sheetName, rows, skipDuplicateCheck } = input;
         
         // Get access token using OAuth Refresh Token
         const accessToken = await getGoogleAccessToken();
@@ -289,8 +290,9 @@ export const appRouter = router({
           }
         }
 
-        // Check for duplicates before appending
-        // Read all data from the sheet to check for duplicates
+        // Check for duplicates before appending (skip if skipDuplicateCheck is true)
+        let newRows = rows;
+        if (!skipDuplicateCheck) {
         const existingUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:L`;
         const existingRes = await fetch(existingUrl, {
           headers: {
@@ -321,7 +323,7 @@ export const appRouter = router({
         );
         
         // Filter out duplicates using both checks
-        const newRows = rows.filter((r) => {
+        newRows = rows.filter((r) => {
           // Check 1: If invoice number exists and matches, it's a duplicate
           if (r.invoiceNumber && r.invoiceNumber.trim().length > 0) {
             if (existingInvoicesByNumber.has(r.invoiceNumber.trim())) {
@@ -342,7 +344,8 @@ export const appRouter = router({
         if (newRows.length === 0) {
           return { success: true, rowsAdded: 0, message: "All invoices are duplicates. No new data added." };
         }
-        
+        } // end of !skipDuplicateCheck block
+
         // Append data rows with image upload
         const now = new Date().toISOString();
         const dataRows = await Promise.all(
@@ -699,12 +702,12 @@ export const appRouter = router({
       .input(
         z.object({
           spreadsheetId: z.string(),
-          accessToken: z.string(),
         })
       )
       .mutation(async ({ input }) => {
         try {
-        const { spreadsheetId, accessToken } = input;
+        const { spreadsheetId } = input;
+        const accessToken = await getGoogleAccessToken();
         const { google } = await import("googleapis");
         const auth = new google.auth.OAuth2();
         auth.setCredentials({ access_token: accessToken });

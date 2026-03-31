@@ -175,6 +175,7 @@ export default function SettingsScreen() {
   const colors = useColors();
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const { reload: reloadInvoices } = useInvoices();
+  const resetAllDataMutation = trpc.invoices.resetAllData.useMutation();
 
   useEffect(() => {
     AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
@@ -337,18 +338,56 @@ export default function SettingsScreen() {
         {/* Testing & Maintenance */}
         <SectionHeader title="Testing & Maintenance" />
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          {/* Reset All Data */}
           <Pressable
-            onPress={handleClearCache}
+            onPress={() => {
+              Alert.alert(
+                "모든 데이터 초기화",
+                "Google Sheets의 모든 시트(메인, 월별, 분기별, Meat_Monthly)에서 데이터를 삭제합니다. 헤더는 유지됩니다.\n\n계속하시겠습니까?",
+                [
+                  { text: "취소", style: "cancel" },
+                  {
+                    text: "초기화",
+                    style: "destructive",
+                    onPress: async () => {
+                      const spreadsheetId = settings.spreadsheetId || "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
+                      try {
+                        await resetAllDataMutation.mutateAsync({ spreadsheetId });
+                        await reloadInvoices();
+                        Alert.alert("완료", "모든 시트 데이터가 초기화되었습니다.");
+                      } catch (err) {
+                        Alert.alert("오류", "초기화에 실패했습니다: " + String(err));
+                      }
+                    },
+                  },
+                ]
+              );
+            }}
             style={({ pressed }) => [
-              styles.clearCacheBtn,
+              styles.resetBtn,
               { backgroundColor: colors.error },
               pressed && { opacity: 0.8 },
             ]}
           >
-            <Text style={styles.clearCacheBtnText}>Clear Cache</Text>
+            <Text style={styles.resetBtnText}>모든 데이터 초기화</Text>
+          </Pressable>
+          <Text style={[styles.resetHint, { color: colors.muted }]}>
+            Google Sheets의 모든 데이터를 삭제합니다. 헤더(1행)는 유지됩니다.
+          </Text>
+
+          {/* Clear Local Cache */}
+          <Pressable
+            onPress={handleClearCache}
+            style={({ pressed }) => [
+              styles.clearCacheBtn,
+              { backgroundColor: colors.border },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Text style={[styles.clearCacheBtnText, { color: colors.foreground }]}>로컬 캐시 초기화</Text>
           </Pressable>
           <Text style={[styles.clearCacheHint, { color: colors.muted }]}>
-            Clears local exported invoice records. Use this if you cleared Google Sheets data and want to re-upload invoices.
+            앱의 로컬 인보이스 기록만 삭제합니다. Google Sheets는 변경되지 않습니다.
           </Text>
         </View>
 
