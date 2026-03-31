@@ -517,7 +517,7 @@ export const appRouter = router({
               spreadsheetId,
               accessToken,
               invoiceData: allInvoiceData,
-            }, ["La portenia", "es cuco"]);
+            }, ["La Portenia", "Es Cuco"]);
             console.log("✅ Automation completed successfully");
           } catch (error) {
             console.error("❌ Automation failed:", error);
