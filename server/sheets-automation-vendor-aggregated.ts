@@ -9,19 +9,22 @@ export interface SheetAutomationConfig {
  */
 function getMonthFromDate(dateStr: string): string | null {
   if (!dateStr) return null;
-  const s = String(dateStr).trim().replace(/^'/, "");
+  const s = String(dateStr).trim().replace(/^'+/, "");
   const months = ["January","February","March","April","May","June",
                   "July","August","September","October","November","December"];
-  
-  // DD/MM/YYYY
+
+  // DD/MM/YYYY — group 1=day, group 2=month, group 3=year
   const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m1) return months[parseInt(m1[2]) - 1] || null;
-  
+  if (m1) {
+    const monthIndex = parseInt(m1[2], 10) - 1;
+    return months[monthIndex] || null;
+  }
+
   // YYYY-MM-DD
   const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m2) return months[parseInt(m2[2]) - 1] || null;
-  
-  const d = new Date(dateStr);
+  if (m2) return months[parseInt(m2[2], 10) - 1] || null;
+
+  const d = new Date(s);
   if (!isNaN(d.getTime())) return months[d.getMonth()] || null;
   return null;
 }
@@ -32,7 +35,7 @@ function getMonthFromDate(dateStr: string): string | null {
 function getQuarterFromDate(dateStr: string): string {
   try {
     let date: Date;
-    const cleanStr = String(dateStr).replace(/'/g, "").trim();
+    const cleanStr = String(dateStr).trim().replace(/^'+/, "");
     
     // Try DD/MM/YYYY format first
     const ddmmyyyyMatch = cleanStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
@@ -93,10 +96,10 @@ function aggregateByVendor(invoices: any[]) {
     }
 
     const vendorData = vendorMap.get(vendor)!;
-    vendorData.totalAmount += invoice.totalAmount;
-    vendorData.ivaAmount += invoice.ivaAmount;
-    vendorData.baseAmount += invoice.baseAmount;
-    vendorData.tip += invoice.tip;
+    vendorData.totalAmount += parseAmount(invoice.totalAmount);
+    vendorData.ivaAmount += parseAmount(invoice.ivaAmount);
+    vendorData.baseAmount += parseAmount(invoice.baseAmount);
+    vendorData.tip += parseAmount(invoice.tip);
     
     console.log(`After aggregation: ${vendor} total=${vendorData.totalAmount}`);
   }
@@ -105,10 +108,20 @@ function aggregateByVendor(invoices: any[]) {
 }
 
 /**
- * Format currency for Google Sheets
+ * Parse any amount value to a plain number (strips currency symbols, handles strings)
  */
-function formatCurrency(amount: number): string {
-  return `€${amount.toFixed(2)}`;
+function parseAmount(value: any): number {
+  if (typeof value === "number") return isNaN(value) ? 0 : value;
+  if (!value) return 0;
+  const cleaned = String(value).replace(/[€$£¥₩,\s]/g, "");
+  return parseFloat(cleaned) || 0;
+}
+
+/**
+ * Format currency for Google Sheets — returns plain number, not a string
+ */
+function formatCurrency(amount: number): number {
+  return Math.round(amount * 100) / 100;
 }
 
 /**
@@ -159,10 +172,10 @@ async function createMonthlySheets(
     // Always add TOTAL row with SUM formulas for automatic calculation
     const totalRow = [
       "", "", `${month} TOTAL`, "",
-      "=SUM(E3:E)",      // E: Total (€) - auto sum
-      "=SUM(F3:F)",      // F: IVA (€) - auto sum
-      "=SUM(G3:G)",      // G: Base (€) - auto sum
-      "=SUM(H3:H)",      // H: Tip (€) - auto sum
+      "=SUM(E3:E1000)",      // E: Total (€) - auto sum
+      "=SUM(F3:F1000)",      // F: IVA (€) - auto sum
+      "=SUM(G3:G1000)",      // G: Base (€) - auto sum
+      "=SUM(H3:H1000)",      // H: Tip (€) - auto sum
       "", "", "", "", ""
     ];
     sheetRows.push(totalRow);
@@ -187,11 +200,11 @@ async function createMonthlySheets(
       sheetRows.push(row);
     }
 
-    // Clear sheet
-    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(month + "!A:M")}`;
+    // Clear sheet (POST :clear is the correct Sheets API v4 method)
+    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(month + "!A:M")}:clear`;
     await fetch(clearUrl, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${accessToken}` }
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }
     });
 
     // Update sheet
@@ -254,10 +267,10 @@ async function createQuarterlySheets(
     // Always add TOTAL row with SUM formulas for automatic calculation
     const totalRow = [
       "", "", `${quarter} TOTAL`, "",
-      "=SUM(E3:E)",      // E: Total (€) - auto sum
-      "=SUM(F3:F)",      // F: IVA (€) - auto sum
-      "=SUM(G3:G)",      // G: Base (€) - auto sum
-      "=SUM(H3:H)",      // H: Tip (€) - auto sum
+      "=SUM(E3:E1000)",      // E: Total (€) - auto sum
+      "=SUM(F3:F1000)",      // F: IVA (€) - auto sum
+      "=SUM(G3:G1000)",      // G: Base (€) - auto sum
+      "=SUM(H3:H1000)",      // H: Tip (€) - auto sum
       "", "", "", "", ""
     ];
     sheetRows.push(totalRow);
@@ -282,11 +295,11 @@ async function createQuarterlySheets(
       sheetRows.push(row);
     }
 
-    // Clear sheet
-    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(quarter + "!A:M")}`;
+    // Clear sheet (POST :clear is the correct Sheets API v4 method)
+    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(quarter + "!A:M")}:clear`;
     await fetch(clearUrl, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${accessToken}` }
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }
     });
 
     // Update sheet
