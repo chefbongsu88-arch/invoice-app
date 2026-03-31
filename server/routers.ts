@@ -697,6 +697,145 @@ export const appRouter = router({
       }
     }),
 
+    // Delete a single invoice row from the main tracker sheet
+    deleteInvoiceFromSheets: publicProcedure
+      .input(
+        z.object({
+          spreadsheetId: z.string(),
+          invoiceNumber: z.string().optional(),
+          vendor: z.string(),
+          date: z.string(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const { spreadsheetId, invoiceNumber, vendor } = input;
+        const accessToken = await getGoogleAccessToken();
+        const TRACKER = "2026 Invoice tracker";
+
+        // Read all rows to find the matching row
+        const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(TRACKER + "!A:M")}`;
+        const readRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!readRes.ok) throw new Error(`Read failed: ${await readRes.text()}`);
+        const readData = await readRes.json() as { values?: string[][] };
+        const rows = readData.values ?? [];
+
+        // Find matching row index (1-indexed, row 1 = header)
+        let foundRowIndex = -1;
+        for (let i = 1; i < rows.length; i++) {
+          const rowInvNum = rows[i][1]?.trim() ?? "";
+          const rowVendor  = rows[i][2]?.trim() ?? "";
+          if (invoiceNumber?.trim() && rowInvNum && rowInvNum === invoiceNumber.trim()) {
+            foundRowIndex = i + 1; break;
+          }
+          if (!invoiceNumber?.trim() && rowVendor.toLowerCase() === vendor.toLowerCase()) {
+            foundRowIndex = i + 1; break;
+          }
+        }
+        if (foundRowIndex === -1) return { success: false, message: "Row not found" };
+
+        // Get numeric sheetId
+        const infoUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`;
+        const infoRes = await fetch(infoUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+        const info = await infoRes.json() as { sheets?: Array<{ properties: { title: string; sheetId: number } }> };
+        const sheetId = info.sheets?.find(s => s.properties.title === TRACKER)?.properties.sheetId;
+        if (sheetId === undefined) throw new Error("Sheet not found");
+
+        // Delete the row via batchUpdate
+        const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`;
+        const batchRes = await fetch(batchUrl, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requests: [{
+              deleteDimension: {
+                range: { sheetId, dimension: "ROWS", startIndex: foundRowIndex - 1, endIndex: foundRowIndex },
+              },
+            }],
+          }),
+        });
+        if (!batchRes.ok) throw new Error(`Delete failed: ${await batchRes.text()}`);
+        return { success: true };
+      }),
+
+    // Update a single invoice row in the main tracker sheet
+    updateInvoiceInSheets: publicProcedure
+      .input(
+        z.object({
+          spreadsheetId: z.string(),
+          originalInvoiceNumber: z.string().optional(),
+          originalVendor: z.string(),
+          source: z.string(),
+          invoiceNumber: z.string(),
+          vendor: z.string(),
+          date: z.string(),
+          totalAmount: z.number(),
+          ivaAmount: z.number(),
+          baseAmount: z.number(),
+          tip: z.number().optional(),
+          category: z.string(),
+          currency: z.string().default("EUR"),
+          notes: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const { spreadsheetId, originalInvoiceNumber, originalVendor, ...data } = input;
+        const accessToken = await getGoogleAccessToken();
+        const TRACKER = "2026 Invoice tracker";
+
+        // Read all rows to find the matching row
+        const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(TRACKER + "!A:M")}`;
+        const readRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!readRes.ok) throw new Error(`Read failed: ${await readRes.text()}`);
+        const readData = await readRes.json() as { values?: string[][] };
+        const rows = readData.values ?? [];
+
+        let foundRowIndex = -1;
+        let existingImageUrl = "";
+        for (let i = 1; i < rows.length; i++) {
+          const rowInvNum = rows[i][1]?.trim() ?? "";
+          const rowVendor  = rows[i][2]?.trim() ?? "";
+          if (originalInvoiceNumber?.trim() && rowInvNum && rowInvNum === originalInvoiceNumber.trim()) {
+            foundRowIndex = i + 1; existingImageUrl = rows[i][11] ?? ""; break;
+          }
+          if (!originalInvoiceNumber?.trim() && rowVendor.toLowerCase() === originalVendor.toLowerCase()) {
+            foundRowIndex = i + 1; existingImageUrl = rows[i][11] ?? ""; break;
+          }
+        }
+        if (foundRowIndex === -1) return { success: false, message: "Row not found" };
+
+        // Format date as DD/MM/YYYY with leading apostrophe
+        const formatDate = (d: string) => {
+          const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+          return m ? `'${m[3]}/${m[2]}/${m[1]}` : d;
+        };
+
+        const updatedRow = [
+          data.source?.toLowerCase() === "camera" ? "Camera" : "Email",
+          data.invoiceNumber,
+          data.vendor,
+          formatDate(data.date),
+          data.totalAmount,
+          data.ivaAmount,
+          data.baseAmount,
+          data.tip ?? 0,
+          data.category,
+          data.currency,
+          data.notes ?? "",
+          existingImageUrl,
+          new Date().toISOString(),
+        ];
+
+        const range = `${TRACKER}!A${foundRowIndex}:M${foundRowIndex}`;
+        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+        const updateRes = await fetch(updateUrl, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ values: [updatedRow] }),
+        });
+        if (!updateRes.ok) throw new Error(`Update failed: ${await updateRes.text()}`);
+        return { success: true };
+      }),
+
     // Reset all data endpoint - clears all invoices from Google Sheets for testing
     resetAllData: publicProcedure
       .input(

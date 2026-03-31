@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useState } from "react";
 import type { DashboardStats, Invoice } from "@/shared/invoice-types";
 import { trpc } from "@/lib/trpc";
+import { OFFLINE_INVOICES_KEY, type OfflineInvoiceEntry } from "@/hooks/use-offline-sync";
 
 const STORAGE_KEY = "invoices_v1";
 
@@ -72,13 +73,31 @@ export function useInvoices() {
         await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedWithExport));
         setInvoices(updatedWithExport);
       } catch (error) {
-        console.error('[Export] Failed to export to Google Sheets:', error);
-        // Rollback local storage if export fails
-        const rolledBack = updated.filter(inv => inv.id !== invoice.id);
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(rolledBack));
-        setInvoices(rolledBack);
-        // Re-throw error so user knows it failed
-        throw new Error('Failed to export invoice to Google Sheets. Invoice was not saved.');
+        console.error('[Export] Failed to export to Google Sheets, saving offline:', error);
+        // Keep invoice in local state — save to offline queue for auto-upload later
+        const sheetName = new Date(invoice.date).toLocaleString('en-US', { month: 'long' });
+        const offlineRaw = await AsyncStorage.getItem(OFFLINE_INVOICES_KEY);
+        const offlineEntries: OfflineInvoiceEntry[] = offlineRaw ? JSON.parse(offlineRaw) : [];
+        offlineEntries.push({
+          sheetName,
+          row: {
+            source: invoice.source || 'camera',
+            invoiceNumber: invoice.invoiceNumber,
+            vendor: invoice.vendor,
+            date: invoice.date,
+            totalAmount: invoice.totalAmount,
+            ivaAmount: invoice.ivaAmount,
+            baseAmount: invoice.baseAmount,
+            tip: invoice.tip || 0,
+            category: invoice.category,
+            currency: invoice.currency || 'EUR',
+            notes: invoice.notes,
+            imageUrl: invoice.imageUri || '',
+            items: invoice.items || [],
+          },
+        });
+        await AsyncStorage.setItem(OFFLINE_INVOICES_KEY, JSON.stringify(offlineEntries));
+        // Do not throw — invoice is saved locally and will be synced when online
       }
     },
     [invoices]

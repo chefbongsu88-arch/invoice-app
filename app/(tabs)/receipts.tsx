@@ -1,10 +1,11 @@
 import { useRouter } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useState } from "react";
 import {
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -15,39 +16,35 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
-import type { Invoice, InvoiceSource } from "@/shared/invoice-types";
+import { trpc } from "@/lib/trpc";
+import type { Invoice } from "@/shared/invoice-types";
 
-type FilterSource = "all" | InvoiceSource;
+const SPREADSHEET_ID = "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
 
-function FilterPill({
-  label,
-  active,
-  color,
-  onPress,
+const CATEGORIES = [
+  "All",
+  "Meat",
+  "Seafood",
+  "Vegetables",
+  "Restaurant",
+  "Gas Station",
+  "Water",
+  "Other",
+  "Asian Market",
+  "Caviar",
+  "Truffle",
+  "Organic Farm",
+  "Beverages",
+  "Hardware Store",
+];
+
+function InvoiceCard({
+  invoice,
+  onLongPress,
 }: {
-  label: string;
-  active: boolean;
-  color: string;
-  onPress: () => void;
+  invoice: Invoice;
+  onLongPress: (invoice: Invoice) => void;
 }) {
-  const colors = useColors();
-  return (
-    <Pressable
-      onPress={onPress}
-      style={[
-        styles.pill,
-        {
-          backgroundColor: active ? color : colors.surface,
-          borderColor: active ? color : colors.border,
-        },
-      ]}
-    >
-      <Text style={[styles.pillText, { color: active ? "#fff" : colors.muted }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function InvoiceCard({ invoice }: { invoice: Invoice }) {
   const colors = useColors();
   const router = useRouter();
   const sourceColor = invoice.source === "camera" ? colors.camera : colors.email;
@@ -56,6 +53,8 @@ function InvoiceCard({ invoice }: { invoice: Invoice }) {
   return (
     <Pressable
       onPress={() => router.push(`/receipt/${invoice.id}` as never)}
+      onLongPress={() => onLongPress(invoice)}
+      delayLongPress={400}
       style={({ pressed }) => [
         styles.card,
         { backgroundColor: colors.surface, borderColor: colors.border },
@@ -71,7 +70,7 @@ function InvoiceCard({ invoice }: { invoice: Invoice }) {
               color={sourceColor}
             />
           </View>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={[styles.cardVendor, { color: colors.foreground }]} numberOfLines={1}>
               {invoice.vendor || "Unknown Vendor"}
             </Text>
@@ -132,9 +131,14 @@ function InvoiceCard({ invoice }: { invoice: Invoice }) {
 export default function ReceiptsScreen() {
   const colors = useColors();
   const router = useRouter();
-  const { invoices, loading, reload } = useInvoices();
-  const [filter, setFilter] = useState<FilterSource>("all");
+  const { invoices, loading, deleteInvoice, reload } = useInvoices();
+  const deleteFromSheetsMutation = trpc.invoices.deleteInvoiceFromSheets.useMutation();
+
   const [search, setSearch] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("All");
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = useCallback(async () => {
@@ -144,13 +148,65 @@ export default function ReceiptsScreen() {
   }, [reload]);
 
   const filtered = invoices.filter((inv) => {
-    const matchSource = filter === "all" || inv.source === filter;
     const matchSearch =
-      search === "" ||
-      inv.vendor.toLowerCase().includes(search.toLowerCase()) ||
-      inv.invoiceNumber.toLowerCase().includes(search.toLowerCase());
-    return matchSource && matchSearch;
+      search === "" || inv.vendor.toLowerCase().includes(search.toLowerCase());
+    const matchFrom = fromDate === "" || inv.date >= fromDate;
+    const matchTo = toDate === "" || inv.date <= toDate;
+    const matchCategory = categoryFilter === "All" || inv.category === categoryFilter;
+    return matchSearch && matchFrom && matchTo && matchCategory;
   });
+
+  const hasActiveFilters =
+    search !== "" || fromDate !== "" || toDate !== "" || categoryFilter !== "All";
+
+  function clearFilters() {
+    setSearch("");
+    setFromDate("");
+    setToDate("");
+    setCategoryFilter("All");
+    setShowCategoryDropdown(false);
+  }
+
+  function confirmDelete(invoice: Invoice) {
+    Alert.alert(
+      "Delete Invoice",
+      "Are you sure you want to delete this invoice? This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            await deleteInvoice(invoice.id);
+            try {
+              await deleteFromSheetsMutation.mutateAsync({
+                spreadsheetId: SPREADSHEET_ID,
+                invoiceNumber: invoice.invoiceNumber,
+                vendor: invoice.vendor,
+              });
+            } catch {
+              // Sheets deletion failure is non-blocking
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  function handleLongPress(invoice: Invoice) {
+    Alert.alert(invoice.vendor || "Invoice", "Choose an action", [
+      {
+        text: "Edit",
+        onPress: () => router.push(`/edit-invoice/${invoice.id}` as never),
+      },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => confirmDelete(invoice),
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  }
 
   return (
     <ScreenContainer containerClassName="bg-background">
@@ -163,16 +219,18 @@ export default function ReceiptsScreen() {
         ListHeaderComponent={
           <View style={styles.header}>
             <Text style={[styles.title, { color: colors.foreground }]}>Receipts</Text>
-            <Text style={[styles.subtitle, { color: colors.muted }]}>
-              {filtered.length} invoice{filtered.length !== 1 ? "s" : ""}
-            </Text>
 
-            {/* Search */}
-            <View style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            {/* Search bar */}
+            <View
+              style={[
+                styles.searchBar,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
               <IconSymbol name="magnifyingglass" size={18} color={colors.muted} />
               <TextInput
                 style={[styles.searchInput, { color: colors.foreground }]}
-                placeholder="Search vendor or invoice #"
+                placeholder="Search by vendor..."
                 placeholderTextColor={colors.muted}
                 value={search}
                 onChangeText={setSearch}
@@ -185,20 +243,107 @@ export default function ReceiptsScreen() {
               )}
             </View>
 
-            {/* Filter Pills */}
-            <View style={styles.filters}>
-              <FilterPill
-                label="All"
-                active={filter === "all"}
-                color={colors.primary}
-                onPress={() => setFilter("all")}
-              />
-              <FilterPill
-                label="Camera"
-                active={filter === "camera"}
-                color={colors.camera}
-                onPress={() => setFilter("camera")}
-              />
+            {/* Date range filters */}
+            <View style={styles.dateRow}>
+              <View style={styles.dateField}>
+                <Text style={[styles.dateLabel, { color: colors.muted }]}>From</Text>
+                <TextInput
+                  style={[
+                    styles.dateInput,
+                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.surface },
+                  ]}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.muted}
+                  value={fromDate}
+                  onChangeText={setFromDate}
+                  returnKeyType="done"
+                />
+              </View>
+              <View style={styles.dateField}>
+                <Text style={[styles.dateLabel, { color: colors.muted }]}>To</Text>
+                <TextInput
+                  style={[
+                    styles.dateInput,
+                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.surface },
+                  ]}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.muted}
+                  value={toDate}
+                  onChangeText={setToDate}
+                  returnKeyType="done"
+                />
+              </View>
+            </View>
+
+            {/* Category dropdown */}
+            <View style={styles.categoryRow}>
+              <Text style={[styles.dateLabel, { color: colors.muted }]}>Category</Text>
+              <Pressable
+                onPress={() => setShowCategoryDropdown((v) => !v)}
+                style={[
+                  styles.categoryBtn,
+                  { borderColor: colors.border, backgroundColor: colors.surface },
+                ]}
+              >
+                <Text style={[styles.categoryBtnText, { color: colors.foreground }]}>
+                  {categoryFilter}
+                </Text>
+                <IconSymbol
+                  name={showCategoryDropdown ? "chevron.up" : "chevron.down"}
+                  size={14}
+                  color={colors.muted}
+                />
+              </Pressable>
+            </View>
+
+            {showCategoryDropdown && (
+              <View
+                style={[
+                  styles.dropdown,
+                  { backgroundColor: colors.surface, borderColor: colors.border },
+                ]}
+              >
+                <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled>
+                  {CATEGORIES.map((cat) => (
+                    <Pressable
+                      key={cat}
+                      onPress={() => {
+                        setCategoryFilter(cat);
+                        setShowCategoryDropdown(false);
+                      }}
+                      style={[
+                        styles.dropdownItem,
+                        categoryFilter === cat && { backgroundColor: colors.primary + "15" },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.dropdownItemText,
+                          {
+                            color: categoryFilter === cat ? colors.primary : colors.foreground,
+                            fontWeight: categoryFilter === cat ? "600" : "400",
+                          },
+                        ]}
+                      >
+                        {cat}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* Clear Filters + count row */}
+            <View style={styles.filterFooter}>
+              <Text style={[styles.countText, { color: colors.muted }]}>
+                Showing {filtered.length} of {invoices.length} invoice
+                {invoices.length !== 1 ? "s" : ""}
+              </Text>
+              {hasActiveFilters && (
+                <Pressable onPress={clearFilters}>
+                  <Text style={[styles.clearText, { color: colors.primary }]}>Clear Filters</Text>
+                </Pressable>
+              )}
             </View>
 
             {/* Add Manual Invoice Button */}
@@ -215,21 +360,23 @@ export default function ReceiptsScreen() {
             </Pressable>
           </View>
         }
-        renderItem={({ item }) => <InvoiceCard invoice={item} />}
+        renderItem={({ item }) => (
+          <InvoiceCard invoice={item} onLongPress={handleLongPress} />
+        )}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           loading ? null : (
             <View style={styles.emptyState}>
               <IconSymbol name="doc.text.fill" size={48} color={colors.border} />
               <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-                {search || filter !== "all" ? "No matching invoices" : "No invoices yet"}
+                {hasActiveFilters ? "No matching invoices" : "No invoices yet"}
               </Text>
               <Text style={[styles.emptyDesc, { color: colors.muted }]}>
-                {search || filter !== "all"
-                  ? "Try adjusting your search or filter"
+                {hasActiveFilters
+                  ? "Try adjusting your search or filters"
                   : "Scan a receipt to add invoices"}
               </Text>
-              {filter === "all" && !search && (
+              {!hasActiveFilters && (
                 <Pressable
                   onPress={() => router.push("/(tabs)/scan" as never)}
                   style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
@@ -247,8 +394,7 @@ export default function ReceiptsScreen() {
 
 const styles = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 },
-  title: { fontSize: 28, fontWeight: "700" },
-  subtitle: { fontSize: 14, marginTop: 2, marginBottom: 16 },
+  title: { fontSize: 28, fontWeight: "700", marginBottom: 14 },
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -257,10 +403,48 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   searchInput: { flex: 1, fontSize: 15 },
-  filters: { flexDirection: "row", gap: 8, marginBottom: 12 },
+  dateRow: { flexDirection: "row", gap: 10, marginBottom: 10 },
+  dateField: { flex: 1, gap: 4 },
+  dateLabel: { fontSize: 12, fontWeight: "500" },
+  dateInput: {
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+  },
+  categoryRow: { gap: 4, marginBottom: 4 },
+  categoryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  categoryBtnText: { fontSize: 14, fontWeight: "500" },
+  dropdown: {
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 2,
+    overflow: "hidden",
+    marginBottom: 4,
+  },
+  dropdownItem: { paddingHorizontal: 14, paddingVertical: 10 },
+  dropdownItemText: { fontSize: 14 },
+  filterFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  countText: { fontSize: 13 },
+  clearText: { fontSize: 13, fontWeight: "600" },
   addBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -271,13 +455,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   addBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  pill: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  pillText: { fontSize: 13, fontWeight: "600" },
   listContent: { paddingBottom: 32 },
   card: {
     marginHorizontal: 20,
