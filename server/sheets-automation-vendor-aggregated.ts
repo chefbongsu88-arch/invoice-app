@@ -5,24 +5,35 @@ export interface SheetAutomationConfig {
 }
 
 /**
- * Get month name from date string
+ * Get month name from date string (supports DD/MM/YYYY, YYYY-MM-DD, and "2026. 3. 25" formats)
  */
 function getMonthFromDate(dateStr: string): string {
   try {
     let date: Date;
-    if (dateStr.includes(".")) {
-      // Format: "2026. 3. 25"
-      const parts = dateStr.replace(/\./g, "").split(/\s+/);
+    const cleanStr = String(dateStr).replace(/'/g, "").trim();
+    
+    // Try DD/MM/YYYY format first
+    const ddmmyyyyMatch = cleanStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (ddmmyyyyMatch) {
+      const day = parseInt(ddmmyyyyMatch[1], 10);
+      const month = parseInt(ddmmyyyyMatch[2], 10) - 1; // 0-indexed
+      const year = parseInt(ddmmyyyyMatch[3], 10);
+      date = new Date(year, month, day);
+    }
+    // Try "2026. 3. 25" format
+    else if (cleanStr.includes(".")) {
+      const parts = cleanStr.replace(/\./g, "").split(/\s+/);
       if (parts.length >= 3) {
         date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
       } else {
         return "";
       }
-    } else {
-      // Format: "2026-03-25" or "'2026-03-25"
-      const cleanDate = dateStr.replace(/'/g, "").trim();
-      date = new Date(cleanDate);
     }
+    // Try YYYY-MM-DD format
+    else {
+      date = new Date(cleanStr);
+    }
+    
     return date.toLocaleString("en-US", { month: "long" });
   } catch {
     return "";
@@ -30,22 +41,35 @@ function getMonthFromDate(dateStr: string): string {
 }
 
 /**
- * Get quarter from date string
+ * Get quarter from date string (supports DD/MM/YYYY, YYYY-MM-DD, and "2026. 3. 25" formats)
  */
 function getQuarterFromDate(dateStr: string): string {
   try {
     let date: Date;
-    if (dateStr.includes(".")) {
-      const parts = dateStr.replace(/\./g, "").split(/\s+/);
+    const cleanStr = String(dateStr).replace(/'/g, "").trim();
+    
+    // Try DD/MM/YYYY format first
+    const ddmmyyyyMatch = cleanStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (ddmmyyyyMatch) {
+      const day = parseInt(ddmmyyyyMatch[1], 10);
+      const month = parseInt(ddmmyyyyMatch[2], 10) - 1; // 0-indexed
+      const year = parseInt(ddmmyyyyMatch[3], 10);
+      date = new Date(year, month, day);
+    }
+    // Try "2026. 3. 25" format
+    else if (cleanStr.includes(".")) {
+      const parts = cleanStr.replace(/\./g, "").split(/\s+/);
       if (parts.length >= 3) {
         date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
       } else {
         return "";
       }
-    } else {
-      const cleanDate = dateStr.replace(/'/g, "").trim();
-      date = new Date(cleanDate);
     }
+    // Try YYYY-MM-DD format
+    else {
+      date = new Date(cleanStr);
+    }
+    
     const month = date.getMonth() + 1;
     const quarter = Math.ceil(month / 3);
     return `Q${quarter}`;
