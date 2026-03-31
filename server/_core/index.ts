@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
+import path from "path";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
@@ -67,6 +68,17 @@ async function startServer() {
       createContext,
     }),
   );
+
+  // Serve Expo web app static files from dist/
+  const webDist = path.join(process.cwd(), "dist");
+  app.use(express.static(webDist));
+
+  // SPA fallback — return index.html for any non-API route
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(webDist, "index.html"), (err) => {
+      if (err) res.status(404).send("Not found");
+    });
+  });
 
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);
