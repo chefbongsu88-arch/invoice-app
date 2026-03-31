@@ -34,28 +34,37 @@ function parseInvoiceDateDDMMYYYY(dateStr: string): Date {
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
-// Helper function to generate JWT for Google Service Account
-async function generateJWT(serviceAccount: any): Promise<string> {
-  const { createSign } = await import("crypto");
-  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
-  
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    iss: serviceAccount.client_email,
-    scope: "https://www.googleapis.com/auth/spreadsheets",
-    aud: "https://oauth2.googleapis.com/token",
-    exp: now + 3600,
-    iat: now,
-  };
-  
-  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const signatureInput = `${header}.${encodedPayload}`;
-  
-  const sign = createSign("RSA-SHA256");
-  sign.update(signatureInput);
-  const signature = sign.sign(serviceAccount.private_key, "base64url");
-  
-  return `${signatureInput}.${signature}`;
+// Get Google OAuth access token using Refresh Token
+async function getGoogleAccessToken(): Promise<string> {
+  const clientId     = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error(
+      "Missing Google OAuth credentials. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN."
+    );
+  }
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type:    "refresh_token",
+      client_id:     clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error("OAuth token error:", err);
+    throw new Error("Failed to authenticate with Google Sheets.");
+  }
+
+  const data = await res.json() as { access_token: string };
+  return data.access_token;
 }
 
 
@@ -245,39 +254,8 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const { spreadsheetId, sheetName, rows } = input;
         
-        // Get Service Account credentials from environment
-        const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-        if (!serviceAccountJson) {
-          throw new Error("Service Account credentials not configured. Please contact support.");
-        }
-
-        let serviceAccount: any;
-        try {
-          serviceAccount = JSON.parse(serviceAccountJson);
-        } catch (e) {
-          throw new Error("Invalid Service Account credentials configuration.");
-        }
-
-        // Get access token using Service Account
-        const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: new URLSearchParams({
-            grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            assertion: await generateJWT(serviceAccount),
-          }),
-        });
-
-        if (!tokenRes.ok) {
-          const errText = await tokenRes.text();
-          console.error("Token error:", errText);
-          throw new Error("Failed to authenticate with Google Sheets.");
-        }
-
-        const tokenData = await tokenRes.json() as { access_token: string };
-        const accessToken = tokenData.access_token;
+        // Get access token using OAuth Refresh Token
+        const accessToken = await getGoogleAccessToken();
 
         // First, ensure header row exists
         // ✅ Correct column order: Source, Invoice#, Vendor, Date, Total, IVA, Base, Tip, Category, Currency, Notes, ImageURL, ExportedAt
