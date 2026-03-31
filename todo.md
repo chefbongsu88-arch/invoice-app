@@ -174,3 +174,14 @@
 - [ ] Update scan screen UI to capture: Region, Who, Supplier Category
 - [ ] Test complete automation with new structure
 - [ ] Verify all sheets generate correctly with sample data
+
+
+## Duplicate Detection & Automation Enhancement (Current Session)
+- [x] Enhance duplicate detection to include Invoice Number check
+- [x] Add fallback check for Vendor + Date + Amount
+- [x] Verify monthly sheet automation with SUM formulas
+- [x] Verify quarterly sheet automation with SUM formulas
+- [ ] Test duplicate detection with email + app invoices
+- [ ] Test monthly aggregation with multiple invoices
+- [ ] Test quarterly aggregation with multiple invoices
+- [ ] Verify all TOTAL rows calculate correctly

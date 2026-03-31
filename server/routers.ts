@@ -292,8 +292,18 @@ export const appRouter = router({
         });
         
         const existingData = await existingRes.json() as { values?: string[][] };
-        // Create a set of existing invoices using Vendor + Date + Amount (more reliable than Invoice #)
-        const existingInvoices = new Set(
+        // Create a set of existing invoices using multiple checks for accuracy
+        // Check 1: Invoice Number (if available)
+        // Check 2: Vendor + Date + Amount (fallback for missing invoice numbers)
+        const existingInvoicesByNumber = new Set(
+          existingData.values?.slice(1).map((row) => {
+            // row[1] = Invoice #
+            const invoiceNum = row[1]?.trim() || "";
+            return invoiceNum;
+          }).filter(num => num.length > 0) || []
+        );
+        
+        const existingInvoicesByVendorDateAmount = new Set(
           existingData.values?.slice(1).map((row) => {
             // row[2] = Vendor, row[3] = Date, row[4] = Total (€)
             const vendor = row[2] || "";
@@ -303,11 +313,20 @@ export const appRouter = router({
           }) || []
         );
         
-        // Filter out duplicates based on Vendor + Date + Amount
+        // Filter out duplicates using both checks
         const newRows = rows.filter((r) => {
+          // Check 1: If invoice number exists and matches, it's a duplicate
+          if (r.invoiceNumber && r.invoiceNumber.trim().length > 0) {
+            if (existingInvoicesByNumber.has(r.invoiceNumber.trim())) {
+              console.warn(`[Export] Skipping duplicate invoice (by Invoice #): ${r.invoiceNumber}`);
+              return false;
+            }
+          }
+          
+          // Check 2: Vendor + Date + Amount (for invoices without number or as additional check)
           const key = `${r.vendor}|${r.date}|€${r.totalAmount.toFixed(2)}`;
-          if (existingInvoices.has(key)) {
-            console.warn(`[Export] Skipping duplicate invoice: ${r.vendor} | ${r.date} | €${r.totalAmount.toFixed(2)}`);
+          if (existingInvoicesByVendorDateAmount.has(key)) {
+            console.warn(`[Export] Skipping duplicate invoice (by Vendor+Date+Amount): ${r.vendor} | ${r.date} | €${r.totalAmount.toFixed(2)}`);
             return false;
           }
           return true;
