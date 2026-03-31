@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "pnpm install --frozen-lockfile --node-linker=hoisted && pnpm build"
+buildCommand = "pnpm install --frozen-lockfile --node-linker=hoisted && pnpm build:web && pnpm build:server"
 
 [deploy]
 startCommand = "pnpm start"
