@@ -1,18 +1,36 @@
 {
   "cli": {
-    "version": ">= 5.0.0",
-    "appVersionSource": "local"
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://invoice-app-production-18c0.up.railway.app"
+      }
+    },
     "preview": {
+      "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://invoice-app-production-18c0.up.railway.app"
       }
     },
     "production": {
+      "autoIncrement": true,
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://invoice-app-production-18c0.up.railway.app"
       }
     }
+  },
+  "submit": {
+    "production": {}
   }
 }

@@ -42,7 +42,16 @@ const config: ExpoConfig = {
   name: env.appName,
   slug: env.appSlug,
   version: "1.0.0",
-  extra: {},
+  extra: {
+    eas: {
+      // Run `eas init` once to populate this with your real project ID.
+      // EAS CLI will update this file automatically.
+      projectId: process.env.EAS_PROJECT_ID ?? "",
+    },
+  },
+  updates: {
+    url: "https://u.expo.dev/" + (process.env.EAS_PROJECT_ID ?? ""),
+  },
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: env.scheme,
