@@ -267,7 +267,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   } = params;
 
   const payload: Record<string, unknown> = {
-    model: "gemini-2.5-flash",
+    model: "claude-sonnet-4-5",
     messages: messages.map(normalizeMessage),
   };
 
@@ -297,7 +297,8 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${ENV.forgeApiKey}`,
+      "x-api-key": process.env.ANTHROPIC_API_KEY!,
+"anthropic-version": "2023-06-01",
     },
     body: JSON.stringify(payload),
   });
