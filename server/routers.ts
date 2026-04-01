@@ -68,26 +68,39 @@ async function getGoogleAccessToken(): Promise<string> {
 }
 
 
-const RECEIPT_PARSE_PROMPT = `You are an expert at extracting data from Spanish receipts and invoices.
-Analyze the provided receipt image and extract the following fields.
-Return ONLY a valid JSON object with these exact keys:
-- invoiceNumber: string (factura/invoice number, or empty string if not found)
-- vendor: string (business/company name)
-- date: string (ISO format YYYY-MM-DD, today's date if not found)
-- totalAmount: number (total amount including IVA, in EUR)
-- ivaAmount: number (IVA/tax amount in EUR, 0 if not found)
-- tipAmount: number (tip/gratuity amount in EUR, 0 if not found)
-- category: string (one of: "Office Supplies", "Travel & Transport", "Meals & Entertainment", "Utilities", "Professional Services", "Software & Subscriptions", "Equipment", "Marketing", "Other")
-- items: array (ONLY for La Portenia or Es Cuco vendors - extract line items with: partName, quantity (in kg), unit ("kg"), pricePerUnit, total. For other vendors, return empty array [])
+const RECEIPT_PARSE_PROMPT = `You are an expert OCR assistant specialising in Spanish receipts and invoices (tickets de compra, facturas).
+Extract data from the provided receipt image and return a single JSON object with exactly these keys:
 
-Important notes:
-- In Spain, IVA is the VAT tax (usually 21%, 10%, or 4%)
-- Look for "TOTAL", "IMPORTE TOTAL", or similar for total amount
-- Look for "IVA", "I.V.A.", "CUOTA IVA" for tax amount
-- Dates may be in DD/MM/YYYY format in Spain
-- For meat vendors (La Portenia, Es Cuco): Extract from table columns PRODUCTO (part name), CANT. (quantity in kg), TARIFA (price per unit), IMPORTE (total)
-- For non-meat vendors: Return empty items array []
-- Return only the JSON, no markdown, no explanation`;
+{
+  "invoiceNumber": string,   // Nº factura / ticket number, or "" if not found
+  "vendor": string,          // Business name printed on the receipt (e.g. "Mercadona", "Repsol")
+  "date": string,            // ISO format YYYY-MM-DD. Spanish receipts use DD/MM/YYYY — convert correctly
+  "totalAmount": number,     // Final amount paid INCLUDING IVA (look for TOTAL, IMPORTE TOTAL, TOTAL A PAGAR)
+  "ivaAmount": number,       // IVA / VAT amount in EUR (look for CUOTA IVA, I.V.A., IVA 21%, IVA 10%, IVA 4%). 0 if not shown
+  "tipAmount": number,       // Tip/propina in EUR, 0 if none
+  "category": string,        // Pick the BEST match from this exact list:
+                             //   "Meat" — butcher, carnicería, La Portenia, Es Cuco
+                             //   "Seafood" — fish, pescadería
+                             //   "Vegetables" — supermarket (Mercadona, Lidl, Carrefour, Aldi, Día), frutas y verduras
+                             //   "Restaurant" — bar, cafetería, restaurante, meals
+                             //   "Gas Station" — Repsol, BP, Cepsa, gasolinera, combustible
+                             //   "Water" — agua, fontanería
+                             //   "Beverages" — wine, beer, spirits, bebidas
+                             //   "Asian Market" — bazar, productos asiáticos
+                             //   "Caviar" — caviar
+                             //   "Truffle" — truffle, trufa
+                             //   "Organic Farm" — organic, ecológico, granja
+                             //   "Hardware Store" — ferretería, bricolaje
+                             //   "Other" — anything else
+  "items": array             // ONLY for La Portenia or Es Cuco: extract [{partName, quantity, unit:"kg", pricePerUnit, total}]
+                             // For ALL other vendors return []
+}
+
+Rules:
+- Output ONLY the JSON object. No markdown, no explanation, no extra text.
+- totalAmount must be a number (e.g. 12.50), never a string.
+- If a field is not found use "" for strings, 0 for numbers, [] for arrays.
+- Mercadona receipts show "TOTAL" at the bottom; IVA breakdown is shown per tax rate.`;
 
 const EMAIL_PARSE_PROMPT = `You are an expert at extracting invoice data from email content.
 Analyze the provided email text and extract invoice information.
@@ -120,6 +133,13 @@ export const appRouter = router({
     parseReceipt: publicProcedure
       .input(z.object({ imageBase64: z.string() }))
       .mutation(async ({ input }) => {
+        // Detect MIME type from base64 magic bytes instead of hardcoding jpeg
+        const header = Buffer.from(input.imageBase64.slice(0, 16), "base64");
+        let mimeType = "image/jpeg";
+        if (header[0] === 0x89 && header[1] === 0x50) mimeType = "image/png";
+        else if (header[0] === 0x47 && header[1] === 0x49) mimeType = "image/gif";
+        else if (header[0] === 0x52 && header[1] === 0x49) mimeType = "image/webp";
+
         try {
           const response = await invokeLLM({
             messages: [
@@ -130,20 +150,29 @@ export const appRouter = router({
                   {
                     type: "image_url",
                     image_url: {
-                      url: `data:image/jpeg;base64,${input.imageBase64}`,
+                      url: `data:${mimeType};base64,${input.imageBase64}`,
                       detail: "high",
                     },
                   },
                 ],
               },
             ],
+            responseFormat: { type: "json_object" },
           });
 
           const rawContent = response.choices?.[0]?.message?.content;
+          console.log("[OCR] Raw LLM response:", typeof rawContent === "string" ? rawContent.slice(0, 200) : rawContent);
           const text = typeof rawContent === "string" ? rawContent : "{}";
-          // Strip markdown code blocks if present
-          const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-          return JSON.parse(cleaned);
+          // Strip thinking blocks, markdown fences, and leading/trailing whitespace
+          const cleaned = text
+            .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+            .replace(/```json\n?/g, "")
+            .replace(/```\n?/g, "")
+            .trim();
+          // Extract first JSON object if there's surrounding text
+          const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+          const jsonStr = jsonMatch ? jsonMatch[0] : cleaned;
+          return JSON.parse(jsonStr);
         } catch (err) {
           console.error("[OCR] Parse error:", err);
           return {
