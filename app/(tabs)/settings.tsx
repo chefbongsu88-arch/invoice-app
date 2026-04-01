@@ -342,21 +342,21 @@ export default function SettingsScreen() {
           <Pressable
             onPress={() => {
               Alert.alert(
-                "모든 데이터 초기화",
-                "Google Sheets의 모든 시트(메인, 월별, 분기별, Meat_Monthly)에서 데이터를 삭제합니다. 헤더는 유지됩니다.\n\n계속하시겠습니까?",
+                "Reset All Data",
+                "This will delete all data from Google Sheets (main sheet, monthly, quarterly, Meat_Monthly). Headers will be preserved.\n\nAre you sure?",
                 [
-                  { text: "취소", style: "cancel" },
+                  { text: "Cancel", style: "cancel" },
                   {
-                    text: "초기화",
+                    text: "Reset",
                     style: "destructive",
                     onPress: async () => {
                       const spreadsheetId = settings.spreadsheetId || "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
                       try {
                         await resetAllDataMutation.mutateAsync({ spreadsheetId });
                         await reloadInvoices();
-                        Alert.alert("완료", "모든 시트 데이터가 초기화되었습니다.");
+                        Alert.alert("Done", "All sheet data has been reset.");
                       } catch (err) {
-                        Alert.alert("오류", "초기화에 실패했습니다: " + String(err));
+                        Alert.alert("Error", "Reset failed: " + String(err));
                       }
                     },
                   },
@@ -369,10 +369,10 @@ export default function SettingsScreen() {
               pressed && { opacity: 0.8 },
             ]}
           >
-            <Text style={styles.resetBtnText}>모든 데이터 초기화</Text>
+            <Text style={styles.resetBtnText}>Reset All Data</Text>
           </Pressable>
           <Text style={[styles.resetHint, { color: colors.muted }]}>
-            Google Sheets의 모든 데이터를 삭제합니다. 헤더(1행)는 유지됩니다.
+            Deletes all data from Google Sheets. Headers (row 1) are preserved.
           </Text>
 
           {/* Clear Local Cache */}
@@ -384,10 +384,10 @@ export default function SettingsScreen() {
               pressed && { opacity: 0.8 },
             ]}
           >
-            <Text style={[styles.clearCacheBtnText, { color: colors.foreground }]}>로컬 캐시 초기화</Text>
+            <Text style={[styles.clearCacheBtnText, { color: colors.foreground }]}>Clear Local Cache</Text>
           </Pressable>
           <Text style={[styles.clearCacheHint, { color: colors.muted }]}>
-            앱의 로컬 인보이스 기록만 삭제합니다. Google Sheets는 변경되지 않습니다.
+            Deletes local invoice records only. Google Sheets will not be affected.
           </Text>
         </View>
 

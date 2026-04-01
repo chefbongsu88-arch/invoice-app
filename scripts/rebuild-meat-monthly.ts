@@ -1,18 +1,18 @@
 /**
  * rebuild-meat-monthly.ts
  *
- * Meat_Monthly 시트를 영어 피벗 테이블 형식으로 재구성합니다.
+ * Rebuilds the Meat_Monthly sheet as an English pivot table.
  *
- * 레이아웃:
- *   행1: "Meat Monthly Purchase — La Portenia / Es Cuco"
- *   행2: Vendor | January | February | ... | December | Annual Total
- *   행3: La Portenia (€)
- *   행4: La Portenia (Count)
- *   행5: Es Cuco (€)
- *   행6: Es Cuco (Count)
- *   행7: Meat Total (€)
+ * Layout:
+ *   Row 1: "Meat Monthly Purchase — La Portenia / Es Cuco"
+ *   Row 2: Vendor | January | February | ... | December | Annual Total
+ *   Row 3: La Portenia (€)
+ *   Row 4: La Portenia (Count)
+ *   Row 5: Es Cuco (€)
+ *   Row 6: Es Cuco (Count)
+ *   Row 7: Meat Total (€)
  *
- * 실행: GOOGLE_SERVICE_ACCOUNT_JSON='...' npx ts-node scripts/rebuild-meat-monthly.ts
+ * Usage: GOOGLE_SERVICE_ACCOUNT_JSON='...' npx ts-node scripts/rebuild-meat-monthly.ts
  */
 
 import { createSign } from "crypto";
@@ -30,7 +30,7 @@ const MONTHS = [
 
 const SERVICE_ACCOUNT_JSON = "";
 
-// ─── 인증 ─────────────────────────────────────────────────────────────────────
+// ─── Auth ──────────────────────────────────────────────────────────────────────
 
 async function generateJWT(sa: any): Promise<string> {
   const header  = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
@@ -59,7 +59,7 @@ async function getAccessToken(sa: any): Promise<string> {
   return ((await res.json()) as any).access_token;
 }
 
-// ─── Sheets 헬퍼 ──────────────────────────────────────────────────────────────
+// ─── Sheets helpers ────────────────────────────────────────────────────────────
 
 async function readRange(token: string, range: string): Promise<any[][]> {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}`;
@@ -87,26 +87,26 @@ async function writeRange(token: string, range: string, values: any[][]): Promis
   if (!res.ok) throw new Error(`Write error: ${await res.text()}`);
 }
 
-// ─── 메인 ─────────────────────────────────────────────────────────────────────
+// ─── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
   const rawJson = SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (!rawJson) {
-    console.error("❌ 서비스 계정 JSON이 없습니다.");
+    console.error("❌ No service account JSON found.");
     process.exit(1);
   }
   const sa = JSON.parse(rawJson);
 
-  console.log("🔐 인증 중...");
+  console.log("🔐 Authenticating...");
   const token = await getAccessToken(sa);
-  console.log("✅ 인증 완료\n");
+  console.log("✅ Authenticated\n");
 
-  // 1. 메인 시트에서 데이터 읽기 (A2:M)
-  console.log(`📋 "${TRACKER_SHEET}" 데이터 읽는 중...`);
+  // 1. Read data from main sheet (A2:M)
+  console.log(`📋 Reading "${TRACKER_SHEET}" data...`);
   const rows = await readRange(token, `${TRACKER_SHEET}!A2:M`);
-  console.log(`   ${rows.length}행 로드됨\n`);
+  console.log(`   ${rows.length} rows loaded\n`);
 
-  // 2. 월별 × 업체별 집계
+  // 2. Aggregate by month × vendor
   // monthData[monthIndex][vendorKey] = { total, count }
   const monthData: Record<number, Record<string, { total: number; count: number }>> = {};
   for (let m = 0; m < 12; m++) {
@@ -137,7 +137,7 @@ async function main() {
     const vendor = normalizeVendor(vendorRaw);
     if (!vendor) continue;
 
-    // 날짜에서 월 추출 (DD/MM/YYYY 또는 YYYY-MM-DD)
+    // Extract month from date (DD/MM/YYYY or YYYY-MM-DD)
     const s  = String(dateRaw).replace(/^'+|'+$/g, "").trim();
     const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
     const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -150,7 +150,7 @@ async function main() {
     monthData[monthIndex][vendor].count += 1;
   }
 
-  // 3. 시트 데이터 구성
+  // 3. Build sheet data
   const headerRow = ["Vendor", ...MONTHS, "Annual Total"];
 
   // La Portenia (€)
@@ -190,16 +190,16 @@ async function main() {
     meatTotal,
   ];
 
-  // 4. 시트 업데이트
-  console.log(`🔄 "${SHEET_NAME}" 시트 초기화 중...`);
+  // 4. Update sheet
+  console.log(`🔄 Clearing "${SHEET_NAME}" sheet...`);
   await clearRange(token, `${SHEET_NAME}!A:Z`);
 
-  console.log(`✏️  데이터 쓰는 중...`);
+  console.log(`✏️  Writing data...`);
   await writeRange(token, `${SHEET_NAME}!A1`, sheetData);
 
-  console.log(`\n✅ "${SHEET_NAME}" 시트 재구성 완료!`);
-  console.log(`   레이아웃: 1행=제목, 2행=헤더, 3~7행=데이터`);
-  console.log(`   집계된 업체: La Portenia, Es Cuco`);
+  console.log(`\n✅ "${SHEET_NAME}" sheet rebuilt!`);
+  console.log(`   Layout: row 1=title, row 2=headers, rows 3-7=data`);
+  console.log(`   Vendors aggregated: La Portenia, Es Cuco`);
 }
 
 main().catch(err => { console.error("FATAL:", err); process.exit(1); });

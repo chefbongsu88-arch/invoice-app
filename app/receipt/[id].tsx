@@ -148,12 +148,12 @@ export default function ReceiptDetailScreen() {
       // Duplicate detected — show warning with option to force upload
       if (result.rowsAdded === 0) {
         Alert.alert(
-          "중복 인보이스",
-          `이미 존재하는 인보이스입니다:\n${invoice.invoiceNumber || "번호 없음"} / ${invoice.vendor}`,
+          "Duplicate Invoice",
+          `This invoice already exists:\n${invoice.invoiceNumber || "No number"} / ${invoice.vendor}`,
           [
-            { text: "취소", style: "cancel" },
+            { text: "Cancel", style: "cancel" },
             {
-              text: "확인 (강제 업로드)",
+              text: "Upload Anyway",
               onPress: () => handleExport(true),
             },
           ]

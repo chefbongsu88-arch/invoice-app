@@ -61,7 +61,88 @@ function buildUserResponse(
   };
 }
 
+function getRailwayBaseUrl(req: Request): string {
+  // Railway sets RAILWAY_PUBLIC_DOMAIN automatically
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+    return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  }
+  // Fallback: derive from request host
+  const proto = req.headers["x-forwarded-proto"] ?? req.protocol ?? "https";
+  const host = req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost:3000";
+  return `${proto}://${host}`;
+}
+
 export function registerOAuthRoutes(app: Express) {
+  // Gmail OAuth callback — exchanges code for access token then redirects to success page
+  app.get("/auth/gmail/callback", async (req: Request, res: Response) => {
+    const code = getQueryParam(req, "code");
+    if (!code) {
+      res.status(400).send("Missing authorization code");
+      return;
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      res.status(500).send("Google OAuth credentials not configured on server");
+      return;
+    }
+
+    const baseUrl = getRailwayBaseUrl(req);
+    const redirectUri = `${baseUrl}/auth/gmail/callback`;
+
+    try {
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+          grant_type: "authorization_code",
+        }),
+      });
+
+      if (!tokenRes.ok) {
+        const err = await tokenRes.text();
+        console.error("[Gmail OAuth] Token exchange failed:", err);
+        res.redirect(`${baseUrl}/auth/gmail/success?error=token_exchange_failed`);
+        return;
+      }
+
+      const tokenData = (await tokenRes.json()) as { access_token: string };
+
+      let email = "";
+      try {
+        const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        });
+        if (userRes.ok) {
+          const userData = (await userRes.json()) as { email?: string };
+          email = userData.email ?? "";
+        }
+      } catch {
+        // non-fatal — email is optional
+      }
+
+      const params = new URLSearchParams({ token: tokenData.access_token });
+      if (email) params.set("email", email);
+      res.redirect(`${baseUrl}/auth/gmail/success?${params.toString()}`);
+    } catch (err) {
+      console.error("[Gmail OAuth] Callback error:", err);
+      res.redirect(`${getRailwayBaseUrl(req)}/auth/gmail/success?error=server_error`);
+    }
+  });
+
+  // Landing page that the app's openAuthSessionAsync intercepts
+  app.get("/auth/gmail/success", (_req: Request, res: Response) => {
+    res.send(
+      "<!DOCTYPE html><html><body><p>Authentication complete. You may return to the app.</p></body></html>",
+    );
+  });
+
+
   app.get("/api/oauth/callback", async (req: Request, res: Response) => {
     const code = getQueryParam(req, "code");
     const state = getQueryParam(req, "state");

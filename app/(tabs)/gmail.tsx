@@ -18,6 +18,7 @@ import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
 import type { Invoice, InvoiceCategory } from "@/shared/invoice-types";
 import { trpc } from "@/lib/trpc";
+import { getApiBaseUrl } from "@/constants/oauth";
 
 const GMAIL_TOKEN_KEY = "gmail_oauth_token";
 const GMAIL_EMAIL_KEY = "gmail_email_address";
@@ -206,32 +207,46 @@ export default function GmailScreen() {
 
   const handleGoogleLogin = useCallback(async () => {
     try {
-      // Build OAuth URL
-      const clientId = "174596473104-1lbjcc0450cbg53lfhhl5eghu7vida1r.apps.googleusercontent.com";
-      const redirectUri = "https://invoicetrk-k9hvsw3x.manus.space/auth/callback";
+      const apiBase = getApiBaseUrl();
+      const clientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? "174596473104-1lbjcc0450cbg53lfhhl5eghu7vida1r.apps.googleusercontent.com";
+      const redirectUri = `${apiBase}/auth/gmail/callback`;
+      const successUri = `${apiBase}/auth/gmail/success`;
       const scope = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/spreadsheets";
-      
-      const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline`;
 
-      // Open browser for OAuth
-      const result = await WebBrowser.openAuthSessionAsync(oauthUrl, redirectUri);
+      const oauthUrl =
+        `https://accounts.google.com/o/oauth2/v2/auth` +
+        `?client_id=${encodeURIComponent(clientId)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&response_type=code` +
+        `&scope=${encodeURIComponent(scope)}` +
+        `&access_type=offline` +
+        `&prompt=consent`;
+
+      // openAuthSessionAsync closes the browser when it detects a navigation to successUri
+      const result = await WebBrowser.openAuthSessionAsync(oauthUrl, successUri);
 
       if (result.type === "success") {
         const url = new URL(result.url);
-        const code = url.searchParams.get("code");
-        
-        if (code) {
-          // Exchange code for token (this would normally be done on backend)
-          // For now, we'll use the code as a placeholder
-          await AsyncStorage.setItem(GMAIL_TOKEN_KEY, code);
-          setAccessToken(code);
+        const error = url.searchParams.get("error");
+        if (error) {
+          Alert.alert("Error", `OAuth failed: ${error}`);
+          return;
+        }
+
+        const token = url.searchParams.get("token");
+        const email = url.searchParams.get("email") ?? "";
+
+        if (token) {
+          await AsyncStorage.setItem(GMAIL_TOKEN_KEY, token);
+          if (email) await AsyncStorage.setItem(GMAIL_EMAIL_KEY, email);
+          setAccessToken(token);
+          setUserEmail(email);
           setIsLoggedIn(true);
-          
+
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           Alert.alert("Success", "Google account connected!");
-          
-          // Fetch emails after login
-          setTimeout(() => fetchEmails(code), 500);
+
+          setTimeout(() => fetchEmails(token), 500);
         }
       }
     } catch (err) {

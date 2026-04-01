@@ -1,26 +1,26 @@
 /**
  * fix-source-column.ts
  *
- * "2026 Invoice tracker" 메인 시트의 A열(Source)에서
- * "Camera" 또는 "Email" 이 아닌 값(PDF 파일명 등)을 모두 "Email" 로 수정합니다.
+ * In the "2026 Invoice tracker" main sheet, fixes any value in column A (Source)
+ * that is not "Camera" or "Email" (e.g. PDF filenames) by replacing it with "Email".
  *
- * 실행 방법:
- *   1. 아래 SERVICE_ACCOUNT_JSON 에 서비스 계정 JSON 붙여넣기
- *      또는 환경변수 GOOGLE_SERVICE_ACCOUNT_JSON 설정
+ * Usage:
+ *   1. Paste the service account JSON into SERVICE_ACCOUNT_JSON below,
+ *      or set the GOOGLE_SERVICE_ACCOUNT_JSON environment variable.
  *   2. npx ts-node scripts/fix-source-column.ts
  */
 
 import { createSign } from "crypto";
 
-// ─── 설정 ─────────────────────────────────────────────────────────────────────
+// ─── Config ────────────────────────────────────────────────────────────────────
 
 const SPREADSHEET_ID = "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
 const SHEET_NAME     = "2026 Invoice tracker";
 
-// 여기에 서비스 계정 JSON을 직접 붙여넣거나 환경변수를 사용하세요.
+// Paste the service account JSON here or use the environment variable.
 const SERVICE_ACCOUNT_JSON = "";
 
-// ─── 인증 ─────────────────────────────────────────────────────────────────────
+// ─── Auth ──────────────────────────────────────────────────────────────────────
 
 async function generateJWT(sa: any): Promise<string> {
   const header  = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
@@ -53,53 +53,53 @@ async function getAccessToken(sa: any): Promise<string> {
   return data.access_token;
 }
 
-// ─── 메인 ─────────────────────────────────────────────────────────────────────
+// ─── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
   const rawJson = SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (!rawJson) {
-    console.error("❌ 서비스 계정 JSON이 없습니다.\n   SERVICE_ACCOUNT_JSON 상수에 붙여넣거나 환경변수를 설정하세요.");
+    console.error("❌ No service account JSON found.\n   Paste it into SERVICE_ACCOUNT_JSON or set the environment variable.");
     process.exit(1);
   }
 
   const sa = JSON.parse(rawJson);
 
-  console.log("🔐 Google 인증 중...");
+  console.log("🔐 Authenticating with Google...");
   const accessToken = await getAccessToken(sa);
-  console.log("✅ 인증 완료\n");
+  console.log("✅ Authenticated\n");
 
-  // 1. 시트 전체 데이터 읽기 (A열 포함)
+  // 1. Read all values in column A
   const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME + "!A:A")}`;
   const readRes = await fetch(readUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!readRes.ok) throw new Error(`읽기 실패: ${await readRes.text()}`);
+  if (!readRes.ok) throw new Error(`Read failed: ${await readRes.text()}`);
 
   const readData = await readRes.json() as { values?: string[][] };
   const rows = readData.values ?? [];
 
-  console.log(`📋 전체 행 수: ${rows.length} (헤더 포함)\n`);
+  console.log(`📋 Total rows: ${rows.length} (including header)\n`);
 
-  // 2. 수정이 필요한 행 찾기 (헤더 row[0] 제외, row[1] 부터)
+  // 2. Find rows that need fixing (skip header row[0], start from row[1])
   const updates: { row: number; oldValue: string }[] = [];
 
   for (let i = 1; i < rows.length; i++) {
     const cellValue = rows[i]?.[0] ?? "";
     if (cellValue !== "Camera" && cellValue !== "Email") {
-      updates.push({ row: i + 1, oldValue: cellValue }); // row는 1-indexed
+      updates.push({ row: i + 1, oldValue: cellValue }); // row is 1-indexed
     }
   }
 
   if (updates.length === 0) {
-    console.log("✅ 수정이 필요한 행이 없습니다. 모든 Source 값이 올바릅니다.");
+    console.log("✅ Nothing to fix. All Source values are correct.");
     return;
   }
 
-  console.log(`🔧 수정 대상 ${updates.length}건:`);
-  updates.forEach(u => console.log(`   행 ${u.row}: "${u.oldValue}" → "Email"`));
+  console.log(`🔧 ${updates.length} row(s) to fix:`);
+  updates.forEach(u => console.log(`   Row ${u.row}: "${u.oldValue}" → "Email"`));
   console.log();
 
-  // 3. batchUpdate 로 한번에 수정
+  // 3. Batch update all at once
   const batchData = updates.map(u => ({
     range:  `${SHEET_NAME}!A${u.row}`,
     values: [["Email"]],
@@ -118,10 +118,10 @@ async function main() {
     }),
   });
 
-  if (!batchRes.ok) throw new Error(`업데이트 실패: ${await batchRes.text()}`);
+  if (!batchRes.ok) throw new Error(`Update failed: ${await batchRes.text()}`);
 
-  console.log(`✅ ${updates.length}개 셀 업데이트 완료!`);
-  console.log(`   시트: "${SHEET_NAME}" > A열`);
+  console.log(`✅ ${updates.length} cell(s) updated!`);
+  console.log(`   Sheet: "${SHEET_NAME}" > Column A`);
 }
 
 main().catch(err => {

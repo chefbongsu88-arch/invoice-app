@@ -1,3 +1,10 @@
 [build]
 builder = "nixpacks"
-buildCommand = "pnpm install --frozen-lockfile --node-linker=hoisted && pnpm build:web && pnpm build:server"
+buildCommand = "pnpm install --frozen-lockfile --node-linker=hoisted && pnpm build:server"
+
+[deploy]
+startCommand = "pnpm start"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10

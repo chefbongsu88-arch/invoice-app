@@ -26,7 +26,7 @@ export interface StatisticsData {
 }
 
 /**
- * 월별 통계 계산
+ * Calculate monthly statistics
  */
 export function calculateMonthlyStats(invoices: Invoice[]): MonthlyStats[] {
   const monthMap = new Map<string, { total: number; iva: number; count: number; base: number }>();
@@ -53,7 +53,7 @@ export function calculateMonthlyStats(invoices: Invoice[]): MonthlyStats[] {
 }
 
 /**
- * 카테고리별 통계 계산
+ * Calculate per-category statistics
  */
 export function calculateCategoryStats(invoices: Invoice[]): CategoryStats[] {
   const categoryMap = new Map<string, { total: number; iva: number; count: number }>();
@@ -81,7 +81,7 @@ export function calculateCategoryStats(invoices: Invoice[]): CategoryStats[] {
 }
 
 /**
- * 전체 통계 계산
+ * Calculate overall statistics
  */
 export function calculateStatistics(invoices: Invoice[]): StatisticsData {
   const monthlyStats = calculateMonthlyStats(invoices);
@@ -103,7 +103,7 @@ export function calculateStatistics(invoices: Invoice[]): StatisticsData {
 }
 
 /**
- * 월별 차트 데이터 포맷
+ * Format monthly chart data
  */
 export function formatMonthlyChartData(monthlyStats: MonthlyStats[]) {
   return {
@@ -121,7 +121,7 @@ export function formatMonthlyChartData(monthlyStats: MonthlyStats[]) {
 }
 
 /**
- * 카테고리별 차트 데이터 포맷
+ * Format per-category chart data
  */
 export function formatCategoryChartData(categoryStats: CategoryStats[]) {
   const colors = [
