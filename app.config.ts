@@ -46,7 +46,7 @@ const config: ExpoConfig = {
     eas: {
       // Run `eas init` once to populate this with your real project ID.
       // EAS CLI will update this file automatically.
-      projectId: process.env.EAS_PROJECT_ID ?? "",
+      projectId: process.env.EAS_PROJECT_ID ?? "cb8f8ffb-f1b9-468a-b905-c4a06fc0d2ba",
     },
   },
   updates: {
