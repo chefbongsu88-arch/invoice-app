@@ -11,7 +11,7 @@ export type ImageContent = {
   type: "image_url";
   image_url: {
     url: string;
-    detail?: "auto" | "low" | "high";
+    detail?: "auto" | "low" | "high";h
   };
 };
 
@@ -265,7 +265,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   } = params;
 
   const payload: Record<string, unknown> = {
-    model: "claude-sonnet-4-5",
+    model: "claude-sonnet-4-5-20251022",
     messages: messages.map(normalizeMessage),
   };
 
@@ -293,11 +293,11 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
 
   const response = await fetch(resolveApiUrl(), {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY!,
-"anthropic-version": "2023-06-01",
-    },
+   headers: {
+  "content-type": "application/json",
+  "x-api-key": process.env.ANTHROPIC_API_KEY!,
+  "anthropic-version": "2023-06-01",
+},
     body: JSON.stringify(payload),
   });
 
