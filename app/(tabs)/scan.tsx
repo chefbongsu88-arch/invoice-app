@@ -501,7 +501,7 @@ export default function ScanScreen() {
               onPress={() => handleDuplicateAction("continue")}
               style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
             >
-              <Text style={styles.primaryBtnText}>Continue Anyway</Text>
+              <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>Continue Anyway</Text>
             </Pressable>
           </View>
         </View>
@@ -513,63 +513,69 @@ export default function ScanScreen() {
   if (step === "capture") {
     return (
       <ScreenContainer containerClassName="bg-background">
-        <View style={styles.captureContainer}>
-          <Text style={[styles.captureTitle, { color: colors.foreground }]}>Scan Receipt</Text>
-          <Text style={[styles.captureSubtitle, { color: colors.muted }]}>
-            Take a photo of your Spanish receipt or invoice
-          </Text>
-
-          <View style={[styles.captureArea, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-            <View style={[styles.captureIcon, { backgroundColor: colors.camera + "15" }]}>
-              <IconSymbol name="camera.fill" size={48} color={colors.camera} />
-            </View>
-            <Text style={[styles.captureHint, { color: colors.muted }]}>
-              Position the receipt clearly in frame for best results
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.captureScrollContent}
+        >
+          <View style={styles.captureContainer}>
+            <Text style={[styles.captureTitle, { color: colors.foreground }]}>Scan Receipt</Text>
+            <Text style={[styles.captureSubtitle, { color: colors.muted }]}>
+              Take a photo of your Spanish receipt or invoice
             </Text>
-          </View>
 
-          <View style={styles.captureActions}>
-            <Pressable
-              onPress={pickFromCamera}
-              style={({ pressed }) => [
-                styles.primaryBtn,
-                { backgroundColor: colors.camera },
-                pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
-              ]}
-            >
-              <IconSymbol name="camera.fill" size={20} color="#fff" />
-              <Text style={styles.primaryBtnText}>Open Camera</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => pickFromLibrary(false)}
-              style={({ pressed }) => [
-                styles.secondaryBtn,
-                { borderColor: colors.border, backgroundColor: colors.surface },
-                pressed && { opacity: 0.75 },
-              ]}
-            >
-              <IconSymbol name="photo.fill" size={20} color={colors.primary} />
-              <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>
-                Choose from Library
+            <View style={[styles.captureArea, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+              <View style={[styles.captureIcon, { backgroundColor: colors.camera + "15" }]}>
+                <IconSymbol name="camera.fill" size={48} color={colors.camera} />
+              </View>
+              <Text style={[styles.captureHint, { color: colors.muted }]}>
+                Position the receipt clearly in frame for best results
               </Text>
-            </Pressable>
+            </View>
 
-            <Pressable
-              onPress={() => pickFromLibrary(true)}
-              style={({ pressed }) => [
-                styles.secondaryBtn,
-                { borderColor: colors.border, backgroundColor: colors.surface },
-                pressed && { opacity: 0.75 },
-              ]}
-            >
-              <IconSymbol name="photo.fill" size={20} color={colors.primary} />
-              <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>
-                Batch Upload (Multiple)
-              </Text>
-            </Pressable>
+            <View style={styles.captureActions}>
+              <Pressable
+                onPress={pickFromCamera}
+                style={({ pressed }) => [
+                  styles.primaryBtn,
+                  { backgroundColor: colors.camera },
+                  pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
+                ]}
+              >
+                <IconSymbol name="camera.fill" size={20} color="#FFFFFF" />
+                <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>Open Camera</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => pickFromLibrary(false)}
+                style={({ pressed }) => [
+                  styles.secondaryBtn,
+                  { borderColor: colors.border, backgroundColor: colors.surface },
+                  pressed && { opacity: 0.75 },
+                ]}
+              >
+                <IconSymbol name="photo.fill" size={20} color={colors.primary} />
+                <Text style={[styles.secondaryBtnText, styles.secondaryBtnLabel, { color: colors.foreground }]}>
+                  Choose from Library
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => pickFromLibrary(true)}
+                style={({ pressed }) => [
+                  styles.secondaryBtn,
+                  { borderColor: colors.border, backgroundColor: colors.surface },
+                  pressed && { opacity: 0.75 },
+                ]}
+              >
+                <IconSymbol name="photo.fill" size={20} color={colors.primary} />
+                <Text style={[styles.secondaryBtnText, styles.secondaryBtnLabel, { color: colors.foreground }]}>
+                  Batch Upload (Multiple)
+                </Text>
+              </Pressable>
+            </View>
           </View>
-        </View>
+        </ScrollView>
       </ScreenContainer>
     );
   }
@@ -634,7 +640,7 @@ export default function ScanScreen() {
                   style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
                 >
                   <IconSymbol name="plus.circle.fill" size={18} color="#fff" />
-                  <Text style={styles.primaryBtnText}>Add Next Photo</Text>
+                  <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>Add Next Photo</Text>
                 </Pressable>
               ) : (
                 <Pressable
@@ -642,7 +648,9 @@ export default function ScanScreen() {
                   style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
                 >
                   <IconSymbol name="bolt.fill" size={18} color="#fff" />
-                  <Text style={styles.primaryBtnText}>{isBatchMode ? "Analyze All" : "Process with AI"}</Text>
+                  <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>
+                    {isBatchMode ? "Analyze All" : "Process with AI"}
+                  </Text>
                 </Pressable>
               )}
             </View>
@@ -769,7 +777,7 @@ export default function ScanScreen() {
               style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
             >
               <IconSymbol name={isBatchMode && currentBatchIndex < batchImages.length - 1 ? "arrow.right" : "checkmark.circle.fill"} size={18} color="#fff" />
-              <Text style={styles.primaryBtnText}>
+              <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>
                 {isBatchMode ? (currentBatchIndex < batchImages.length - 1 ? "Next" : "Review All") : "Save Invoice"}
               </Text>
             </Pressable>
@@ -824,7 +832,7 @@ export default function ScanScreen() {
               style={[styles.primaryBtn, { backgroundColor: colors.success, flex: 1 }]}
             >
               <IconSymbol name="checkmark.circle.fill" size={18} color="#fff" />
-              <Text style={styles.primaryBtnText}>Export All ({batchInvoices.length})</Text>
+              <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>Export All ({batchInvoices.length})</Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -848,7 +856,7 @@ export default function ScanScreen() {
           style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
         >
           <IconSymbol name="camera.fill" size={18} color="#fff" />
-          <Text style={styles.primaryBtnText}>Scan Another</Text>
+          <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>Scan Another</Text>
         </Pressable>
         <Pressable
           onPress={() => router.push("/(tabs)/receipts" as never)}
@@ -862,11 +870,17 @@ export default function ScanScreen() {
 }
 
 const styles = StyleSheet.create({
-  captureContainer: { flex: 1, padding: 24, gap: 20 },
+  captureScrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 32,
+  },
+  captureContainer: { gap: 20 },
   captureTitle: { fontSize: 26, fontWeight: "700" },
   captureSubtitle: { fontSize: 14, lineHeight: 20, marginTop: -12 },
   captureArea: {
-    flex: 1,
+    minHeight: 240,
     borderRadius: 20,
     borderWidth: 2,
     borderStyle: "dashed",
@@ -887,7 +901,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderRadius: 14,
   },
-  primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  primaryBtnText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
+  primaryBtnLabel: { flexShrink: 0, includeFontPadding: false },
+  secondaryBtnLabel: { flexShrink: 0, includeFontPadding: false },
   secondaryBtn: {
     flexDirection: "row",
     alignItems: "center",

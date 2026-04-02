@@ -1,4 +1,4 @@
-import { ScrollView, Text, View, Pressable, Dimensions } from "react-native";
+import { ScrollView, Text, View, Pressable, Dimensions, StyleSheet } from "react-native";
 import { useState, useMemo } from "react";
 import { ScreenContainer } from "@/components/screen-container";
 import { useInvoices } from "@/hooks/use-invoices";
@@ -7,6 +7,8 @@ import { LineChart, PieChart } from "react-native-chart-kit";
 import { useColors } from "@/hooks/use-colors";
 
 const screenWidth = Dimensions.get("window").width;
+/** ScreenContainer `p-4` (16) + chart card inner `p-4` (16) on each horizontal side */
+const STATS_CHART_WIDTH = Math.max(280, screenWidth - 64);
 
 export default function StatisticsScreen() {
   const colors = useColors();
@@ -31,7 +33,7 @@ export default function StatisticsScreen() {
 
   return (
     <ScreenContainer className="p-4">
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View className="gap-6">
           {/* Header */}
           <View className="gap-2">
@@ -95,14 +97,14 @@ export default function StatisticsScreen() {
           {activeTab === "monthly" && stats.monthlyStats.length > 0 ? (
             <View className="gap-4">
               <Text className="text-lg font-semibold text-foreground">Monthly Trend</Text>
-              <View className="bg-surface rounded-xl p-4 border border-border overflow-hidden">
+              <View className="bg-surface rounded-xl p-4 border border-border overflow-hidden items-center">
                 <LineChart
                   data={monthlyChartData}
-                  width={screenWidth - 48}
+                  width={STATS_CHART_WIDTH}
                   height={220}
                   chartConfig={chartConfig}
                   bezier
-                  style={{ marginLeft: -20 }}
+                  style={styles.chart}
                 />
               </View>
 
@@ -131,17 +133,17 @@ export default function StatisticsScreen() {
           {activeTab === "category" && stats.categoryStats.length > 0 ? (
             <View className="gap-4">
               <Text className="text-lg font-semibold text-foreground">Category Distribution</Text>
-              <View className="bg-surface rounded-xl p-4 border border-border overflow-hidden">
-              <PieChart
-                data={categoryChartData as any}
-                width={screenWidth - 48}
-                height={220}
-                chartConfig={chartConfig}
-                accessor="data"
-                backgroundColor="transparent"
-                paddingLeft="15"
-                style={{ marginLeft: -20 }}
-              />
+              <View className="bg-surface rounded-xl p-4 border border-border overflow-hidden items-center">
+                <PieChart
+                  data={categoryChartData as any}
+                  width={STATS_CHART_WIDTH}
+                  height={220}
+                  chartConfig={chartConfig}
+                  accessor="data"
+                  backgroundColor="transparent"
+                  paddingLeft="8"
+                  style={styles.chart}
+                />
               </View>
 
               {/* Category Details */}
@@ -170,3 +172,13 @@ export default function StatisticsScreen() {
     </ScreenContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 24,
+  },
+  chart: {
+    alignSelf: "center",
+  },
+});
