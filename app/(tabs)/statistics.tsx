@@ -1,4 +1,4 @@
-import { ScrollView, Text, View, Pressable, Dimensions } from "react-native";
+import { ScrollView, Text, View, Pressable, Dimensions, StyleSheet } from "react-native";
 import { useState, useMemo } from "react";
 import { ScreenContainer } from "@/components/screen-container";
 import { useInvoices } from "@/hooks/use-invoices";
@@ -14,7 +14,6 @@ export default function StatisticsScreen() {
   const [activeTab, setActiveTab] = useState<"monthly" | "category">("monthly");
 
   const stats = useMemo(() => calculateStatistics(invoices), [invoices]);
-
   const monthlyChartData = useMemo(() => formatMonthlyChartData(stats.monthlyStats), [stats.monthlyStats]);
   const categoryChartData = useMemo(() => formatCategoryChartData(stats.categoryStats), [stats.categoryStats]);
 
@@ -30,72 +29,65 @@ export default function StatisticsScreen() {
   };
 
   return (
-    <ScreenContainer className="p-4">
+    <ScreenContainer style={{ padding: 16 }}>
       <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
-        <View className="gap-6">
+        <View style={styles.container}>
+
           {/* Header */}
-          <View className="gap-2">
-            <Text className="text-3xl font-bold text-foreground">Statistics</Text>
-            <Text className="text-sm text-muted">Track your expenses by month and category</Text>
+          <View style={styles.header}>
+            <Text style={[styles.title, { color: colors.foreground }]}>Statistics</Text>
+            <Text style={[styles.subtitle, { color: colors.muted }]}>Track your expenses by month and category</Text>
           </View>
 
           {/* Summary Cards */}
-          <View className="gap-3">
-            <View className="flex-row gap-3">
-              <View className="flex-1 bg-surface rounded-xl p-4 border border-border">
-                <Text className="text-xs text-muted mb-1">Total Invoices</Text>
-                <Text className="text-2xl font-bold text-foreground">{stats.totalCount}</Text>
+          <View style={styles.cardsContainer}>
+            <View style={styles.cardRow}>
+              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.cardLabel, { color: colors.muted }]}>Total Invoices</Text>
+                <Text style={[styles.cardValue, { color: colors.foreground }]}>{stats.totalCount}</Text>
               </View>
-              <View className="flex-1 bg-surface rounded-xl p-4 border border-border">
-                <Text className="text-xs text-muted mb-1">Total Amount</Text>
-                <Text className="text-2xl font-bold text-primary">€{stats.totalAmount.toFixed(2)}</Text>
+              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.cardLabel, { color: colors.muted }]}>Total Amount</Text>
+                <Text style={[styles.cardValue, { color: colors.primary }]}>€{stats.totalAmount.toFixed(2)}</Text>
               </View>
             </View>
-            <View className="flex-row gap-3">
-              <View className="flex-1 bg-surface rounded-xl p-4 border border-border">
-                <Text className="text-xs text-muted mb-1">Total IVA</Text>
-                <Text className="text-2xl font-bold text-warning">€{stats.totalIVA.toFixed(2)}</Text>
+            <View style={styles.cardRow}>
+              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.cardLabel, { color: colors.muted }]}>Total IVA</Text>
+                <Text style={[styles.cardValue, { color: colors.warning }]}>€{stats.totalIVA.toFixed(2)}</Text>
               </View>
-              <View className="flex-1 bg-surface rounded-xl p-4 border border-border">
-                <Text className="text-xs text-muted mb-1">Average</Text>
-                <Text className="text-2xl font-bold text-foreground">€{stats.averageAmount.toFixed(2)}</Text>
+              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.cardLabel, { color: colors.muted }]}>Average</Text>
+                <Text style={[styles.cardValue, { color: colors.foreground }]}>€{stats.averageAmount.toFixed(2)}</Text>
               </View>
             </View>
           </View>
 
           {/* Tab Selector */}
-          <View className="flex-row gap-2 bg-surface rounded-lg p-1">
+          <View style={[styles.tabContainer, { backgroundColor: colors.surface }]}>
             <Pressable
               onPress={() => setActiveTab("monthly")}
-              className={`flex-1 py-2 px-3 rounded-md ${activeTab === "monthly" ? "bg-primary" : ""}`}
+              style={[styles.tab, activeTab === "monthly" && { backgroundColor: colors.primary }]}
             >
-              <Text
-                className={`text-center font-semibold text-sm ${
-                  activeTab === "monthly" ? "text-background" : "text-foreground"
-                }`}
-              >
+              <Text style={[styles.tabText, { color: activeTab === "monthly" ? colors.background : colors.foreground }]}>
                 Monthly
               </Text>
             </Pressable>
             <Pressable
               onPress={() => setActiveTab("category")}
-              className={`flex-1 py-2 px-3 rounded-md ${activeTab === "category" ? "bg-primary" : ""}`}
+              style={[styles.tab, activeTab === "category" && { backgroundColor: colors.primary }]}
             >
-              <Text
-                className={`text-center font-semibold text-sm ${
-                  activeTab === "category" ? "text-background" : "text-foreground"
-                }`}
-              >
+              <Text style={[styles.tabText, { color: activeTab === "category" ? colors.background : colors.foreground }]}>
                 Category
               </Text>
             </Pressable>
           </View>
 
-          {/* Charts */}
+          {/* Monthly Charts */}
           {activeTab === "monthly" && stats.monthlyStats.length > 0 ? (
-            <View className="gap-4">
-              <Text className="text-lg font-semibold text-foreground">Monthly Trend</Text>
-              <View className="bg-surface rounded-xl p-4 border border-border overflow-hidden">
+            <View style={styles.chartSection}>
+              <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Monthly Trend</Text>
+              <View style={[styles.chartBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <LineChart
                   data={monthlyChartData}
                   width={screenWidth - 48}
@@ -105,68 +97,95 @@ export default function StatisticsScreen() {
                   style={{ marginLeft: -20 }}
                 />
               </View>
-
-              {/* Monthly Details */}
-              <View className="gap-2">
+              <View style={styles.listSection}>
                 {stats.monthlyStats.map((month) => (
-                  <View key={month.month} className="bg-surface rounded-lg p-3 border border-border flex-row justify-between">
+                  <View key={month.month} style={[styles.listItem, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                     <View>
-                      <Text className="text-sm font-semibold text-foreground">{month.month}</Text>
-                      <Text className="text-xs text-muted">{month.count} invoices</Text>
+                      <Text style={[styles.listItemTitle, { color: colors.foreground }]}>{month.month}</Text>
+                      <Text style={[styles.listItemSub, { color: colors.muted }]}>{month.count} invoices</Text>
                     </View>
-                    <View className="items-end">
-                      <Text className="text-sm font-bold text-primary">€{month.total.toFixed(2)}</Text>
-                      <Text className="text-xs text-warning">IVA: €{month.iva.toFixed(2)}</Text>
+                    <View style={styles.listItemRight}>
+                      <Text style={[styles.listItemAmount, { color: colors.primary }]}>€{month.total.toFixed(2)}</Text>
+                      <Text style={[styles.listItemIva, { color: colors.warning }]}>IVA: €{month.iva.toFixed(2)}</Text>
                     </View>
                   </View>
                 ))}
               </View>
             </View>
           ) : activeTab === "monthly" ? (
-            <View className="bg-surface rounded-xl p-6 border border-border items-center justify-center">
-              <Text className="text-muted">No monthly data available</Text>
+            <View style={[styles.emptyBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.emptyText, { color: colors.muted }]}>No monthly data available</Text>
             </View>
           ) : null}
 
+          {/* Category Charts */}
           {activeTab === "category" && stats.categoryStats.length > 0 ? (
-            <View className="gap-4">
-              <Text className="text-lg font-semibold text-foreground">Category Distribution</Text>
-              <View className="bg-surface rounded-xl p-4 border border-border overflow-hidden">
-              <PieChart
-                data={categoryChartData as any}
-                width={screenWidth - 48}
-                height={220}
-                chartConfig={chartConfig}
-                accessor="data"
-                backgroundColor="transparent"
-                paddingLeft="15"
-                style={{ marginLeft: -20 }}
-              />
+            <View style={styles.chartSection}>
+              <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Category Distribution</Text>
+              <View style={[styles.chartBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <PieChart
+                  data={categoryChartData as any}
+                  width={screenWidth - 48}
+                  height={220}
+                  chartConfig={chartConfig}
+                  accessor="data"
+                  backgroundColor="transparent"
+                  paddingLeft="15"
+                  style={{ marginLeft: -20 }}
+                />
               </View>
-
-              {/* Category Details */}
-              <View className="gap-2">
+              <View style={styles.listSection}>
                 {stats.categoryStats.map((category) => (
-                  <View key={category.category} className="bg-surface rounded-lg p-3 border border-border">
-                    <View className="flex-row justify-between mb-1">
-                      <Text className="text-sm font-semibold text-foreground">{category.category}</Text>
-                      <Text className="text-sm font-bold text-primary">{category.percentage.toFixed(1)}%</Text>
+                  <View key={category.category} style={[styles.categoryItem, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <View style={styles.categoryRow}>
+                      <Text style={[styles.listItemTitle, { color: colors.foreground }]}>{category.category}</Text>
+                      <Text style={[styles.listItemAmount, { color: colors.primary }]}>{category.percentage.toFixed(1)}%</Text>
                     </View>
-                    <View className="flex-row justify-between">
-                      <Text className="text-xs text-muted">{category.count} invoices</Text>
-                      <Text className="text-xs text-primary">€{category.total.toFixed(2)}</Text>
+                    <View style={styles.categoryRow}>
+                      <Text style={[styles.listItemSub, { color: colors.muted }]}>{category.count} invoices</Text>
+                      <Text style={[styles.listItemSub, { color: colors.primary }]}>€{category.total.toFixed(2)}</Text>
                     </View>
                   </View>
                 ))}
               </View>
             </View>
           ) : activeTab === "category" ? (
-            <View className="bg-surface rounded-xl p-6 border border-border items-center justify-center">
-              <Text className="text-muted">No category data available</Text>
+            <View style={[styles.emptyBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.emptyText, { color: colors.muted }]}>No category data available</Text>
             </View>
           ) : null}
+
         </View>
       </ScrollView>
     </ScreenContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { gap: 24, paddingBottom: 32 },
+  header: { gap: 8 },
+  title: { fontSize: 28, fontWeight: "700" },
+  subtitle: { fontSize: 14 },
+  cardsContainer: { gap: 12 },
+  cardRow: { flexDirection: "row", gap: 12 },
+  card: { flex: 1, borderRadius: 12, padding: 16, borderWidth: 1 },
+  cardLabel: { fontSize: 12, marginBottom: 4 },
+  cardValue: { fontSize: 22, fontWeight: "700" },
+  tabContainer: { flexDirection: "row", gap: 8, borderRadius: 10, padding: 4 },
+  tab: { flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
+  tabText: { textAlign: "center", fontWeight: "600", fontSize: 14 },
+  chartSection: { gap: 16 },
+  sectionTitle: { fontSize: 18, fontWeight: "600" },
+  chartBox: { borderRadius: 12, padding: 16, borderWidth: 1, overflow: "hidden" },
+  listSection: { gap: 8 },
+  listItem: { borderRadius: 10, padding: 12, borderWidth: 1, flexDirection: "row", justifyContent: "space-between" },
+  listItemTitle: { fontSize: 14, fontWeight: "600" },
+  listItemSub: { fontSize: 12, marginTop: 2 },
+  listItemRight: { alignItems: "flex-end" },
+  listItemAmount: { fontSize: 14, fontWeight: "700" },
+  listItemIva: { fontSize: 12 },
+  categoryItem: { borderRadius: 10, padding: 12, borderWidth: 1, gap: 4 },
+  categoryRow: { flexDirection: "row", justifyContent: "space-between" },
+  emptyBox: { borderRadius: 12, padding: 24, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  emptyText: { fontSize: 14 },
+});
