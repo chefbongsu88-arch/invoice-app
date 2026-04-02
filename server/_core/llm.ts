@@ -239,7 +239,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   } = params;
 
   const payload: Record<string, unknown> = {
-    model: model: "claude-sonnet-4-5",
+    model: "claude-sonnet-4-5",
     max_tokens: 4096,
     messages: messages.map(normalizeMessage),
   };
