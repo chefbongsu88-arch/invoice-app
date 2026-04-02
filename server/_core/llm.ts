@@ -306,5 +306,24 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     throw new Error(`LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`);
   }
 
-  return (await response.json()) as InvokeResult;
+  const data = await response.json() as any;
+// Anthropic API 응답을 OpenAI 형식으로 변환
+return {
+  id: data.id || "",
+  created: Date.now(),
+  model: data.model || "",
+  choices: [{
+    index: 0,
+    message: {
+      role: "assistant",
+      content: data.content?.[0]?.text || "",
+    },
+    finish_reason: data.stop_reason || null,
+  }],
+  usage: {
+    prompt_tokens: data.usage?.input_tokens || 0,
+    completion_tokens: data.usage?.output_tokens || 0,
+    total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
+  },
+};
 }
