@@ -30,6 +30,15 @@ const { width: SCREEN_WIDTH } = Dimensions.get("window");
 /** Keep decoded JPEG roughly under this so Anthropic (5 MiB) and mobile payloads stay safe. */
 const RECEIPT_OCR_TARGET_DECODED_BYTES = 3_800_000;
 
+/** iOS 15+ ImagePicker defaults to `.current` (keeps HEIC). Use `.compatible` so library/camera return JPEG when possible — avoids server sharp/heic issues. */
+const IOS_PICKER_HEIC_SAFE =
+  Platform.OS === "ios"
+    ? {
+        preferredAssetRepresentationMode:
+          ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+      }
+    : {};
+
 const OCR_COMPRESSION_STEPS: { width: number; compress: number }[] = [
   { width: 1536, compress: 0.7 },
   { width: 1280, compress: 0.64 },
@@ -253,6 +262,7 @@ export default function ScanScreen() {
       quality: 0.7,
       base64: true,
       allowsEditing: false,
+      ...IOS_PICKER_HEIC_SAFE,
     });
     if (!result.canceled && result.assets[0]) {
       const a = result.assets[0];
@@ -273,6 +283,7 @@ export default function ScanScreen() {
       quality: 0.7,
       base64: true,
       allowsEditing: false,
+      ...IOS_PICKER_HEIC_SAFE,
     });
     if (!result.canceled && result.assets[0]) {
       const a = result.assets[0];

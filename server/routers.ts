@@ -74,21 +74,6 @@ function looksLikePngMagic(buf: Buffer): boolean {
   );
 }
 
-/** Claude vision 400 or local image-prep failure → try Gemini when configured. */
-function shouldFallbackClaudeReceiptOcrToGemini(err: unknown): boolean {
-  const s = `${stringifyAnthropicStyleError(err)} ${stringifyErrorChain(err)}`;
-  if (/Could not process image|invalid_request_error|invalid_request/i.test(s)) return true;
-  if ((err as { status?: number }).status === 400) return true;
-  if (
-    /Could not prepare the receipt image|Could not read this photo \(HEIC\)|Claude returned an empty response/i.test(
-      s,
-    )
-  ) {
-    return true;
-  }
-  return false;
-}
-
 // Helper function to parse DD/MM/YYYY date format correctly
 function parseInvoiceDateDDMMYYYY(dateStr: string): Date {
   if (!dateStr) return new Date();
@@ -533,8 +518,8 @@ export const appRouter = router({
               );
             } catch (claudeErr) {
               const cm = `${stringifyAnthropicStyleError(claudeErr)} ${stringifyErrorChain(claudeErr)}`;
-              const claudeImageRejected = shouldFallbackClaudeReceiptOcrToGemini(claudeErr);
-              if (useGeminiGoogle && claudeImageRejected) {
+              // Any Claude failure (incl. sharp/HEIC before the API call): try Gemini when configured.
+              if (useGeminiGoogle) {
                 console.warn(
                   "[OCR] Claude path failed; falling back to Google Gemini. First error:",
                   cm.slice(0, 500),
