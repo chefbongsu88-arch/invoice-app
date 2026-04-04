@@ -14,7 +14,16 @@ export function isLikelyHeicOrHeifBuffer(buf: Buffer): boolean {
   if (buf.length < 12) return false;
   if (buf.subarray(4, 8).toString("ascii") !== "ftyp") return false;
   const brand = buf.subarray(8, 12).toString("ascii").replace(/\0/g, "").toLowerCase();
-  return /^(heic|heix|hevc|heim|heis|mif1|msf1)/.test(brand);
+  if (/^(heic|heix|hevc|heim|heis|mif1|msf1|hevx|hevm)/.test(brand)) return true;
+  // Some devices put a different primary brand; scan header for HEIF identifiers
+  const sniff = buf.subarray(0, Math.min(128, buf.length)).toString("latin1");
+  return /mif1|msf1|heic|heix|hevx/i.test(sniff);
+}
+
+/** libvips/sharp on Linux (Railway) is often built without HEIF — this matches that failure. */
+export function isLibvipsHeifDecodeError(err: unknown): boolean {
+  const s = err instanceof Error ? `${err.message} ${err.stack ?? ""}` : String(err);
+  return /heif|heic|No decoding plugin|compression format|bad seek/i.test(s);
 }
 
 /** Decode HEIC/HEIF to JPEG bytes so `sharp` (no libheif on Railway) can resize. */

@@ -15,6 +15,36 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { uploadImageToStorage } from "./image-upload-storage";
 
+/** Include nested Anthropic `error` payload — `.message` alone can miss "Could not process image". */
+function stringifyAnthropicStyleError(err: unknown): string {
+  if (err == null) return "";
+  if (err instanceof Error) {
+    const any = err as Error & { status?: number; error?: unknown };
+    const bits = [any.name, any.message];
+    if (typeof any.status === "number") bits.push(`http:${any.status}`);
+    if (any.error !== undefined) {
+      try {
+        bits.push(JSON.stringify(any.error));
+      } catch {
+        bits.push(String(any.error));
+      }
+    }
+    return bits.join(" ");
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+/** Claude vision 400 → try Gemini when configured (message body is not always in `err.message`). */
+function shouldFallbackClaudeReceiptOcrToGemini(err: unknown): boolean {
+  const s = stringifyAnthropicStyleError(err);
+  if (/Could not process image|invalid_request_error|invalid_request/i.test(s)) return true;
+  return (err as { status?: number }).status === 400;
+}
+
 // Helper function to parse DD/MM/YYYY date format correctly
 function parseInvoiceDateDDMMYYYY(dateStr: string): Date {
   if (!dateStr) return new Date();
@@ -458,15 +488,12 @@ export const appRouter = router({
                 RECEIPT_PARSE_USER,
               );
             } catch (claudeErr) {
-              const cm = claudeErr instanceof Error ? claudeErr.message : String(claudeErr);
-              const claudeImageRejected =
-                /Could not process image|invalid_request_error|BadRequestError|status:\s*400|"type":"error"/i.test(
-                  cm,
-                );
+              const cm = stringifyAnthropicStyleError(claudeErr);
+              const claudeImageRejected = shouldFallbackClaudeReceiptOcrToGemini(claudeErr);
               if (useGeminiGoogle && claudeImageRejected) {
                 console.warn(
                   "[OCR] Claude rejected the image; falling back to Google Gemini. First error:",
-                  cm.slice(0, 280),
+                  cm.slice(0, 400),
                 );
                 const jpeg = await encodeReceiptImageForForgeStep(normalized, mimeType, 0);
                 text = await parseReceiptWithGoogleGemini(

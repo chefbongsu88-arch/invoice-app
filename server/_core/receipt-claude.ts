@@ -2,7 +2,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 
 import { ENV } from "./env";
-import { heicBufferToJpeg, isLikelyHeicOrHeifBuffer } from "./heic-to-jpeg";
+import {
+  heicBufferToJpeg,
+  isLibvipsHeifDecodeError,
+  isLikelyHeicOrHeifBuffer,
+} from "./heic-to-jpeg";
 
 /** Anthropic hard limit is 5_242_880 bytes decoded; stay clearly under. */
 const CLAUDE_IMAGE_BYTE_TARGET = 4_000_000;
@@ -23,9 +27,11 @@ async function shrinkImageForClaudeIfNeeded(
   }
 
   const mtLower = mimeType.toLowerCase();
+  let preconvertedHeic = false;
   if (mtLower === "image/heic" || mtLower === "image/heif" || isLikelyHeicOrHeifBuffer(raw)) {
     try {
       raw = Buffer.from(await heicBufferToJpeg(raw));
+      preconvertedHeic = true;
     } catch (e) {
       console.error("[OCR] HEIC→JPEG failed (iPhone photos are often HEIC):", e);
       throw new Error(
@@ -34,18 +40,36 @@ async function shrinkImageForClaudeIfNeeded(
     }
   }
 
-  let working: Buffer;
-  try {
-    working = await sharp(raw, { failOn: "none" })
+  async function normalizeToWorkingJpeg(input: Buffer): Promise<Buffer> {
+    return sharp(input, { failOn: "none" })
       .rotate()
       .resize({ width: 2048, height: 2048, fit: "inside", withoutEnlargement: true })
       .jpeg({ quality: 85, mozjpeg: true, chromaSubsampling: "4:2:0" })
       .toBuffer();
+  }
+
+  let working: Buffer;
+  try {
+    working = await normalizeToWorkingJpeg(raw);
   } catch (e) {
-    console.error("[OCR] sharp normalize (→JPEG) failed for Claude:", e);
-    throw new Error(
-      "Could not prepare the receipt image for OCR. Try a smaller or clearer photo.",
-    );
+    if (!preconvertedHeic && isLibvipsHeifDecodeError(e)) {
+      console.warn("[OCR] sharp cannot decode HEIF (no libheif on server); using heic-convert");
+      try {
+        const original = Buffer.from(normalizedBase64, "base64");
+        raw = Buffer.from(await heicBufferToJpeg(original));
+        working = await normalizeToWorkingJpeg(raw);
+      } catch (e2) {
+        console.error("[OCR] heic-convert after sharp HEIF failure:", e2);
+        throw new Error(
+          "Could not read this photo (HEIC). In Photos, duplicate as JPEG or use Settings → Camera → Formats → Most Compatible.",
+        );
+      }
+    } else {
+      console.error("[OCR] sharp normalize (→JPEG) failed for Claude:", e);
+      throw new Error(
+        "Could not prepare the receipt image for OCR. Try a smaller or clearer photo.",
+      );
+    }
   }
 
   if (working.length <= CLAUDE_IMAGE_BYTE_TARGET) {

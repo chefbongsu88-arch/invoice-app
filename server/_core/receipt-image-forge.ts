@@ -1,6 +1,10 @@
 import sharp from "sharp";
 
-import { heicBufferToJpeg, isLikelyHeicOrHeifBuffer } from "./heic-to-jpeg";
+import {
+  heicBufferToJpeg,
+  isLibvipsHeifDecodeError,
+  isLikelyHeicOrHeifBuffer,
+} from "./heic-to-jpeg";
 
 /**
  * Progressive JPEG ladder — unknown incoming size/format always lands on a bounded JPEG.
@@ -42,9 +46,11 @@ export async function encodeReceiptImageForForgeStep(
   }
 
   const mtLower = hintedMime.toLowerCase();
+  let preconvertedHeic = false;
   if (mtLower === "image/heic" || mtLower === "image/heif" || isLikelyHeicOrHeifBuffer(raw)) {
     try {
       raw = Buffer.from(await heicBufferToJpeg(raw));
+      preconvertedHeic = true;
     } catch (err) {
       console.error("[OCR] HEIC→JPEG failed before Forge encode:", err);
       throw new Error(
@@ -53,24 +59,28 @@ export async function encodeReceiptImageForForgeStep(
     }
   }
 
-  try {
-    const encode = async (edge: number, q: number) =>
-      sharp(raw)
-        .rotate()
-        .resize({ width: edge, height: edge, fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality: q, mozjpeg: true })
-        .toBuffer();
+  const encode = async (input: Buffer, edge: number, q: number) =>
+    sharp(input)
+      .rotate()
+      .resize({ width: edge, height: edge, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: q, mozjpeg: true })
+      .toBuffer();
 
-    let buf = await encode(maxEdge, quality);
+  async function runLadder(input: Buffer): Promise<Buffer> {
+    let buf = await encode(input, maxEdge, quality);
 
     if (buf.length > SOFT_MAX_BYTES && idx < FORGE_OCR_LADDER.length - 1) {
       const tighter = Math.max(52, quality - 10);
-      buf = await encode(Math.min(maxEdge, 768), tighter);
+      buf = await encode(input, Math.min(maxEdge, 768), tighter);
     }
     if (buf.length > SOFT_MAX_BYTES) {
-      buf = await encode(512, 55);
+      buf = await encode(input, 512, 55);
     }
+    return buf;
+  }
 
+  try {
+    let buf = await runLadder(raw);
     const jpegBytes = buf.length;
     return {
       base64: buf.toString("base64"),
@@ -79,6 +89,25 @@ export async function encodeReceiptImageForForgeStep(
       stepUsed: idx,
     };
   } catch (err) {
+    if (!preconvertedHeic && isLibvipsHeifDecodeError(err)) {
+      console.warn("[OCR] Forge: sharp HEIF decode failed; using heic-convert");
+      try {
+        const original = Buffer.from(normalizedBase64, "base64");
+        raw = Buffer.from(await heicBufferToJpeg(original));
+        const buf = await runLadder(raw);
+        return {
+          base64: buf.toString("base64"),
+          mimeType: "image/jpeg",
+          jpegBytes: buf.length,
+          stepUsed: idx,
+        };
+      } catch (e2) {
+        console.error("[OCR] Forge heic-convert after sharp HEIF failure:", e2);
+        throw new Error(
+          "Could not read HEIC image. Export as JPEG from Photos or change iPhone camera format to Most Compatible.",
+        );
+      }
+    }
     console.error("[OCR] sharp encode failed:", err);
     throw new Error(
       `Could not normalize receipt image (sharp): ${err instanceof Error ? err.message : String(err)}`,
