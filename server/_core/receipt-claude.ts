@@ -87,7 +87,7 @@ export async function parseReceiptWithClaude(
   }
 
   const client = new Anthropic({ apiKey: key });
-  const model = ENV.anthropicReceiptModel?.trim() || "claude-3-5-sonnet-20241022";
+  const model = ENV.anthropicReceiptModel?.trim() || "claude-sonnet-4-20250514";
   const { data: imageData, mediaType } = await shrinkImageForClaudeIfNeeded(normalizedBase64, mimeType);
 
   const msg = await client.messages.create({
