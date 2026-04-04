@@ -28,39 +28,70 @@ import { trpc } from "@/lib/trpc";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
-/** Downscale before OCR/API — large originals often cause Forge 400 "Could not process image". */
-const RECEIPT_MAX_WIDTH = 1600;
-const RECEIPT_JPEG_QUALITY = 0.72;
+/** Keep decoded JPEG roughly under this so Anthropic (5 MiB) and mobile payloads stay safe. */
+const RECEIPT_OCR_TARGET_DECODED_BYTES = 3_800_000;
 
+const OCR_COMPRESSION_STEPS: { width: number; compress: number }[] = [
+  { width: 1536, compress: 0.7 },
+  { width: 1280, compress: 0.64 },
+  { width: 1152, compress: 0.58 },
+  { width: 1024, compress: 0.54 },
+  { width: 896, compress: 0.5 },
+  { width: 800, compress: 0.46 },
+  { width: 720, compress: 0.42 },
+  { width: 640, compress: 0.38 },
+];
+
+function approxDecodedBytesFromBase64(b64: string): number {
+  const s = b64.replace(/\s/g, "");
+  if (!s.length) return 0;
+  return Math.floor((s.length * 3) / 4);
+}
+
+/** Downscale before OCR — avoids 400 "image exceeds 5 MB maximum" from Claude. */
 async function encodeReceiptImageForServer(
   uri: string,
   fallbackBase64: string | null,
 ): Promise<string | undefined> {
-  try {
-    const manipulated = await ImageManipulator.manipulateAsync(
-      uri,
-      [{ resize: { width: RECEIPT_MAX_WIDTH } }],
-      {
-        compress: RECEIPT_JPEG_QUALITY,
-        format: ImageManipulator.SaveFormat.JPEG,
-        base64: true,
-      },
-    );
-    const b = manipulated.base64?.replace(/\s/g, "") ?? "";
-    if (b.length > 64) return b;
-  } catch (e) {
-    console.warn("[Scan] Resize for OCR failed:", e);
+  let best: string | undefined;
+  let bestDecoded = Number.POSITIVE_INFINITY;
+
+  for (const { width, compress } of OCR_COMPRESSION_STEPS) {
+    try {
+      const manipulated = await ImageManipulator.manipulateAsync(
+        uri,
+        [{ resize: { width } }],
+        {
+          compress,
+          format: ImageManipulator.SaveFormat.JPEG,
+          base64: true,
+        },
+      );
+      const b = manipulated.base64?.replace(/\s/g, "") ?? "";
+      if (b.length < 64) continue;
+      const dec = approxDecodedBytesFromBase64(b);
+      if (dec <= RECEIPT_OCR_TARGET_DECODED_BYTES) return b;
+      if (dec < bestDecoded) {
+        bestDecoded = dec;
+        best = b;
+      }
+    } catch (e) {
+      console.warn("[Scan] Resize for OCR failed:", width, e);
+    }
   }
+
+  if (best) return best;
+
   if (fallbackBase64) {
     const b = fallbackBase64.replace(/\s/g, "");
-    if (b.length > 64) return b;
+    if (b.length > 64 && approxDecodedBytesFromBase64(b) <= RECEIPT_OCR_TARGET_DECODED_BYTES) return b;
   }
   try {
     const raw = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
     });
     const b = raw.replace(/\s/g, "");
-    if (b.length > 64) return b;
+    if (b.length > 64 && approxDecodedBytesFromBase64(b) <= RECEIPT_OCR_TARGET_DECODED_BYTES) return b;
   } catch {
     /* handled below */
   }
