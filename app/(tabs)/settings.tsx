@@ -11,6 +11,7 @@ import {
   Alert,
 } from "react-native";
 import { trpc } from "@/lib/trpc";
+import { DEFAULT_MAIN_TRACKER_SHEET_NAME } from "@/shared/sheets-defaults";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -28,7 +29,7 @@ interface AppSettings {
 
 const DEFAULT_SETTINGS: AppSettings = {
   spreadsheetId: "",
-  sheetName: "Invoices",
+  sheetName: DEFAULT_MAIN_TRACKER_SHEET_NAME,
   autoSaveGmailEmails: false,
   autoExportToSheets: false,
 };
@@ -271,8 +272,8 @@ export default function SettingsScreen() {
           <EditableField
             label="Sheet Name (Tab)"
             value={settings.sheetName}
-            placeholder="e.g. Invoices"
-            onSave={(v) => saveSettings({ ...settings, sheetName: v || "Invoices" })}
+            placeholder="2026 Invoice tracker"
+            onSave={(v) => saveSettings({ ...settings, sheetName: v || DEFAULT_MAIN_TRACKER_SHEET_NAME })}
           />
           <Pressable
             onPress={() => {
@@ -301,11 +302,11 @@ export default function SettingsScreen() {
           </Text>
           {[
             ["A", "Source", "Camera / Email"],
-            ["B", "Invoice #", "Factura number"],
+            ["B", "Invoice #", "Invoice number"],
             ["C", "Vendor", "Business name"],
             ["D", "Date", "Receipt date"],
             ["E", "Total (€)", "Total amount"],
-            ["F", "IVA (€)", "Tax amount"],
+            ["F", "VAT (€)", "VAT amount"],
             ["G", "Base (€)", "Amount before tax"],
             ["H", "Category", "AI classification"],
             ["I", "Currency", "EUR"],
@@ -331,7 +332,7 @@ export default function SettingsScreen() {
           </View>
           <View style={[styles.settingRow, { borderBottomColor: "transparent" }]}>
             <Text style={[styles.settingLabel, { color: colors.foreground }]}>Region</Text>
-            <Text style={[styles.settingValue, { color: colors.muted }]}>Spain (EUR / IVA)</Text>
+            <Text style={[styles.settingValue, { color: colors.muted }]}>Spain (EUR, VAT)</Text>
           </View>
         </View>
 
@@ -393,7 +394,7 @@ export default function SettingsScreen() {
 
         {/* Quick Start Guide */}
         <SectionHeader title="Quick Start" />
-        <View style={[styles.guideBox, { backgroundColor: colors.primary + "10", borderColor: colors.primary + "30" }]}>
+        <View style={[styles.guideBox, { backgroundColor: colors.surface, borderColor: colors.primary + "45" }]}>
           <View style={styles.guideStep}>
             <View style={[styles.stepNumber, { backgroundColor: colors.primary }]}>
               <Text style={styles.stepNumberText}>1</Text>

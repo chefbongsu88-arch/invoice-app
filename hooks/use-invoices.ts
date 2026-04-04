@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useState } from "react";
+import { Alert } from "react-native";
 import type { DashboardStats, Invoice } from "@/shared/invoice-types";
+import { getSheetsExportTarget } from "@/lib/sheets-settings";
 import { trpc } from "@/lib/trpc";
 import { OFFLINE_INVOICES_KEY, type OfflineInvoiceEntry } from "@/hooks/use-offline-sync";
 
@@ -37,11 +39,10 @@ export function useInvoices() {
       setInvoices(updated); // Update state immediately
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated)); // Then save to storage
       
-      // Auto-export to Google Sheets
+      // Auto-export to Google Sheets (main tracker tab from Settings, default: 2026 Invoice tracker)
       try {
-        const spreadsheetId = '1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E';
-        const sheetName = new Date(invoice.date).toLocaleString('en-US', { month: 'long' });
-        
+        const { spreadsheetId, sheetName } = await getSheetsExportTarget();
+
         // Prepare row data for Google Sheets
         const rowData = {
           source: invoice.source || 'Camera',
@@ -59,23 +60,38 @@ export function useInvoices() {
           items: invoice.items || [],
         };
         
-        // Call exportToSheets endpoint
-        await exportMutation.mutateAsync({
+        const exportResult = await exportMutation.mutateAsync({
           spreadsheetId,
           sheetName,
           rows: [rowData],
         });
-        
-        // Mark as exported
-        const updatedWithExport = updated.map(inv => 
-          inv.id === invoice.id ? { ...inv, exportedToSheets: true } : inv
+
+        if (exportResult.rowsAdded === 0) {
+          Alert.alert(
+            "Already in Google Sheets",
+            "This invoice matches a row already in your spreadsheet (same invoice number, or same store + date + amount). It was not added again.",
+            [{ text: "OK" }],
+          );
+          return;
+        }
+
+        if (exportResult.receiptImageMissing && invoice.imageUri) {
+          Alert.alert(
+            "Image not attached",
+            "The invoice was added to Google Sheets, but the receipt image could not be uploaded. The row was saved without the photo. Check server storage settings or try again later.",
+            [{ text: "OK" }],
+          );
+        }
+
+        const updatedWithExport = updated.map((inv) =>
+          inv.id === invoice.id ? { ...inv, exportedToSheets: true } : inv,
         );
         await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedWithExport));
         setInvoices(updatedWithExport);
       } catch (error) {
         console.error('[Export] Failed to export to Google Sheets, saving offline:', error);
         // Keep invoice in local state — save to offline queue for auto-upload later
-        const sheetName = new Date(invoice.date).toLocaleString('en-US', { month: 'long' });
+        const { sheetName } = await getSheetsExportTarget();
         const offlineRaw = await AsyncStorage.getItem(OFFLINE_INVOICES_KEY);
         const offlineEntries: OfflineInvoiceEntry[] = offlineRaw ? JSON.parse(offlineRaw) : [];
         offlineEntries.push({
@@ -100,7 +116,7 @@ export function useInvoices() {
         // Do not throw — invoice is saved locally and will be synced when online
       }
     },
-    [invoices]
+    [invoices, exportMutation]
   );
 
   const updateInvoice = useCallback(

@@ -215,7 +215,7 @@ export default function ManualInvoiceScreen() {
           />
 
           <FieldRow
-            label="IVA / Tax (€)"
+            label="VAT / tax (€)"
             value={ivaAmount}
             onChange={setIvaAmount}
             keyboardType="decimal-pad"

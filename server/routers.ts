@@ -1,7 +1,16 @@
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { COOKIE_NAME } from "../shared/const.js";
+import { DEFAULT_MAIN_TRACKER_SHEET_NAME } from "../shared/sheets-defaults.js";
 import { getSessionCookieOptions } from "./_core/cookies";
+import { ENV } from "./_core/env";
 import { invokeLLM } from "./_core/llm";
+import {
+  encodeReceiptImageForForgeStep,
+  FORGE_OCR_LADDER,
+} from "./_core/receipt-image-forge";
+import { parseReceiptWithClaude } from "./_core/receipt-claude";
+import { parseReceiptWithGoogleGemini } from "./_core/receipt-gemini-google";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { uploadImageToStorage } from "./image-upload-storage";
@@ -34,6 +43,271 @@ function parseInvoiceDateDDMMYYYY(dateStr: string): Date {
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
+/** YYYY-MM-DD for duplicate matching (sheet stores DD/MM/YYYY with optional leading '). */
+function normalizeDateKeyForDuplicate(dateStr: string): string {
+  const s = String(dateStr ?? "").replace(/^'+|'+$/g, "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  const d = parseInvoiceDateDDMMYYYY(s);
+  if (!isNaN(d.getTime())) {
+    const y = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, "0");
+    const da = String(d.getDate()).padStart(2, "0");
+    return `${y}-${mo}-${da}`;
+  }
+  return s;
+}
+
+function normalizeAmountKeyForDuplicate(val: unknown): string {
+  if (typeof val === "number" && Number.isFinite(val)) return val.toFixed(2);
+  const n = parseFloat(String(val ?? "").replace(/[€\s]/g, "").replace(",", "."));
+  return Number.isFinite(n) ? n.toFixed(2) : "0.00";
+}
+
+function duplicateRowKey(vendor: string, dateRaw: string, amountRaw: unknown): string {
+  const v = String(vendor ?? "").trim().toLowerCase();
+  const d = normalizeDateKeyForDuplicate(dateRaw);
+  const a = normalizeAmountKeyForDuplicate(amountRaw);
+  return `${v}|${d}|${a}`;
+}
+
+/** Strip `data:image/...;base64,` prefix if present (some clients send full data URLs). */
+function normalizeReceiptImageBase64(input: string): string {
+  const trimmed = input.trim();
+  const m = trimmed.match(/^data:image\/[a-zA-Z0-9+.-]+;base64,(.*)$/s);
+  if (m?.[1]) return m[1].replace(/\s/g, "");
+  return trimmed.replace(/\s/g, "");
+}
+
+/**
+ * Decode base64 and read magic bytes. Do NOT slice the base64 string before decoding — that breaks decoding.
+ */
+function detectMimeFromImageBase64(b64: string): string {
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(b64, "base64");
+  } catch {
+    return "image/jpeg";
+  }
+  if (buf.length < 12) return "image/jpeg";
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return "image/gif";
+  if (
+    buf[0] === 0x52 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46 &&
+    buf[3] === 0x46 &&
+    buf[8] === 0x57 &&
+    buf[9] === 0x45 &&
+    buf[10] === 0x42 &&
+    buf[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  return "image/jpeg";
+}
+
+function extractLlmMessageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part: unknown) => {
+        if (
+          part &&
+          typeof part === "object" &&
+          "type" in part &&
+          (part as { type: string }).type === "text" &&
+          "text" in part
+        ) {
+          return String((part as { text: string }).text);
+        }
+        return "";
+      })
+      .join("");
+  }
+  return "";
+}
+
+/** Accept 69.50, 69,50, Spanish 1.234,56, "€ 12.30", etc. */
+function parseMoneyNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    let s = value.replace(/€/g, "").replace(/\s/g, "").trim();
+    if (!s) return 0;
+    // Spanish/EU: thousands with dot, decimals with comma (e.g. 1.234,56 or 114,32)
+    if (/^\d{1,3}(?:\.\d{3})*,\d{1,2}$/.test(s) || /^\d+,\d{1,2}$/.test(s)) {
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      s = s.replace(/,/g, "");
+    }
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+function isValidGregorianDate(y: number, m: number, d: number): boolean {
+  if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+function padDatePart(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/**
+ * Normalize model output to YYYY-MM-DD. Spanish/EU receipts use DD/MM/YYYY on paper — never use
+ * "today" or the photo's file date; only the printed date. Accepts ISO, DD/MM/YYYY, and variants.
+ */
+function normalizeReceiptDateToIso(raw: unknown): string {
+  if (raw === undefined || raw === null) return "";
+  const s0 = String(raw).trim();
+  if (!s0) return "";
+
+  let m = s0.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    const y = +m[1];
+    const mo = +m[2];
+    const d = +m[3];
+    if (isValidGregorianDate(y, mo, d)) return `${m[1]}-${m[2]}-${m[3]}`;
+    return "";
+  }
+
+  m = s0.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
+  if (m) {
+    const a = +m[1];
+    const b = +m[2];
+    const y = +m[3];
+    let day: number;
+    let month: number;
+    if (b > 12) {
+      month = a;
+      day = b;
+    } else if (a > 12) {
+      day = a;
+      month = b;
+    } else {
+      // Both ≤12: ambiguous (e.g. 03/04) — assume DD/MM (Spain / EU facturas), not US MM/DD.
+      day = a;
+      month = b;
+    }
+    if (isValidGregorianDate(y, month, day)) return `${y}-${padDatePart(month)}-${padDatePart(day)}`;
+    return "";
+  }
+
+  m = s0.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})$/);
+  if (m) {
+    const a = +m[1];
+    const b = +m[2];
+    const yy = +m[3];
+    const y = yy >= 69 ? 1900 + yy : 2000 + yy;
+    let day: number;
+    let month: number;
+    if (b > 12) {
+      month = a;
+      day = b;
+    } else if (a > 12) {
+      day = a;
+      month = b;
+    } else {
+      day = a;
+      month = b;
+    }
+    if (isValidGregorianDate(y, month, day)) return `${y}-${padDatePart(month)}-${padDatePart(day)}`;
+    return "";
+  }
+
+  return "";
+}
+
+/** LLMs often return Spanish/alternate keys; map into our schema before reading fields. */
+function normalizeReceiptParsedFields(raw: Record<string, unknown>): Record<string, unknown> {
+  const merged = { ...raw };
+  const str = (v: unknown) => (v === undefined || v === null ? "" : String(v).trim());
+
+  const firstNonEmpty = (...vals: unknown[]) => {
+    for (const v of vals) {
+      const t = str(v);
+      if (t !== "") return v;
+    }
+    return undefined;
+  };
+
+  if (!str(merged.date)) {
+    const v = firstNonEmpty(
+      merged.fecha,
+      merged.fechaFactura,
+      merged.fecha_factura,
+      merged.fechaEmision,
+      merged.fecha_emision,
+      merged.fechaExpedicion,
+      merged.dateDocument,
+    );
+    if (v !== undefined) merged.date = v;
+  }
+
+  if (!str(merged.vendor)) {
+    const v = firstNonEmpty(
+      merged.emisor,
+      merged.businessName,
+      merged.merchantName,
+      merged.nombreComercio,
+      merged.nombre,
+      merged.tienda,
+      merged.storeName,
+      merged.retailer,
+    );
+    if (v !== undefined) merged.vendor = v;
+  }
+
+  if (!str(merged.invoiceNumber)) {
+    const v = firstNonEmpty(
+      merged.numeroFactura,
+      merged.numero_factura,
+      merged.facturaNumber,
+      merged.nFactura,
+      merged.invoice_number,
+      merged.number,
+      merged.factura,
+    );
+    if (v !== undefined) merged.invoiceNumber = v;
+  }
+
+  const totalMissing =
+    merged.totalAmount === undefined ||
+    merged.totalAmount === null ||
+    merged.totalAmount === "" ||
+    (typeof merged.totalAmount === "number" && merged.totalAmount === 0);
+  if (totalMissing) {
+    const v = firstNonEmpty(
+      merged.total,
+      merged.importeTotal,
+      merged.importe_total,
+      merged.grandTotal,
+      merged.amount,
+      merged.importe,
+      merged.totalEUR,
+      merged.total_eur,
+    );
+    if (v !== undefined) merged.totalAmount = v;
+  }
+
+  const ivaMissing =
+    merged.ivaAmount === undefined ||
+    merged.ivaAmount === null ||
+    merged.ivaAmount === "" ||
+    (typeof merged.ivaAmount === "number" && merged.ivaAmount === 0);
+  if (ivaMissing) {
+    const v = firstNonEmpty(merged.iva, merged.cuotaIva, merged.cuota_iva, merged.tax, merged.vat);
+    if (v !== undefined) merged.ivaAmount = v;
+  }
+
+  return merged;
+}
+
 // Get Google OAuth access token using Refresh Token
 async function getGoogleAccessToken(): Promise<string> {
   const clientId     = process.env.GOOGLE_CLIENT_ID;
@@ -60,7 +334,21 @@ async function getGoogleAccessToken(): Promise<string> {
   if (!res.ok) {
     const err = await res.text();
     console.error("OAuth token error:", err);
-    throw new Error("Failed to authenticate with Google Sheets.");
+    let message =
+      "Failed to authenticate with Google Sheets. Check GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN on the server (e.g. Railway).";
+    try {
+      const j = JSON.parse(err) as { error?: string; error_description?: string };
+      if (j.error === "invalid_grant") {
+        message =
+          "Google Sheets login expired (invalid_grant). Create a new refresh token and set GOOGLE_REFRESH_TOKEN in Railway — e.g. revoke app access in Google Account settings, then run your OAuth setup again.";
+      } else if (j.error === "invalid_client") {
+        message =
+          "Google OAuth client is invalid (invalid_client). Verify GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET match the Google Cloud OAuth client.";
+      }
+    } catch {
+      /* keep default message */
+    }
+    throw new Error(message);
   }
 
   const data = await res.json() as { access_token: string };
@@ -68,39 +356,36 @@ async function getGoogleAccessToken(): Promise<string> {
 }
 
 
-const RECEIPT_PARSE_PROMPT = `You are an expert OCR assistant specialising in Spanish receipts and invoices (tickets de compra, facturas).
-Extract data from the provided receipt image and return a single JSON object with exactly these keys:
+const RECEIPT_PARSE_SYSTEM = `You read printed receipt and ticket photos from Spain, Europe, and elsewhere. Text may be Spanish or English. Copy every readable business name, date, and money amount into JSON. Photos may be blurry, angled, or on pink/thermal paper — still try hard.
 
-{
-  "invoiceNumber": string,   // Nº factura / ticket number, or "" if not found
-  "vendor": string,          // Business name printed on the receipt (e.g. "Mercadona", "Repsol")
-  "date": string,            // ISO format YYYY-MM-DD. Spanish receipts use DD/MM/YYYY — convert correctly
-  "totalAmount": number,     // Final amount paid INCLUDING IVA (look for TOTAL, IMPORTE TOTAL, TOTAL A PAGAR)
-  "ivaAmount": number,       // IVA / VAT amount in EUR (look for CUOTA IVA, I.V.A., IVA 21%, IVA 10%, IVA 4%). 0 if not shown
-  "tipAmount": number,       // Tip/propina in EUR, 0 if none
-  "category": string,        // Pick the BEST match from this exact list:
-                             //   "Meat" — butcher, carnicería, La Portenia, Es Cuco
-                             //   "Seafood" — fish, pescadería
-                             //   "Vegetables" — supermarket (Mercadona, Lidl, Carrefour, Aldi, Día), frutas y verduras
-                             //   "Restaurant" — bar, cafetería, restaurante, meals
-                             //   "Gas Station" — Repsol, BP, Cepsa, gasolinera, combustible
-                             //   "Water" — agua, fontanería
-                             //   "Beverages" — wine, beer, spirits, bebidas
-                             //   "Asian Market" — bazar, productos asiáticos
-                             //   "Caviar" — caviar
-                             //   "Truffle" — truffle, trufa
-                             //   "Organic Farm" — organic, ecológico, granja
-                             //   "Hardware Store" — ferretería, bricolaje
-                             //   "Other" — anything else
-  "items": array             // ONLY for La Portenia or Es Cuco: extract [{partName, quantity, unit:"kg", pricePerUnit, total}]
-                             // For ALL other vendors return []
-}
+You MUST output exactly one JSON object. Use ONLY these English key names (do not use Spanish keys like importe or emisor — read Spanish text from the image but put values under the keys below):
+invoiceNumber, vendor, date, totalAmount, ivaAmount, tipAmount, category, items
 
-Rules:
-- Output ONLY the JSON object. No markdown, no explanation, no extra text.
-- totalAmount must be a number (e.g. 12.50), never a string.
-- If a field is not found use "" for strings, 0 for numbers, [] for arrays.
-- Mercadona receipts show "TOTAL" at the bottom; IVA breakdown is shown per tax rate.`;
+CRITICAL — amounts (European style):
+- Spain often uses comma as decimal separator: 114,32 means 114.32 in JSON (use JSON number 114.32). Same for 69,50 → 69.5.
+- Large amounts may look like 1.234,56 (dot = thousands, comma = decimals) → use JSON number 1234.56.
+- totalAmount = final amount to pay: look for TOTAL, IMPORTE TOTAL, TOTAL A PAGAR, SUMA, IMPORTE, Factura totals, or the bottom-line payment. NEVER use 0 for totalAmount if any plausible final total appears on the ticket.
+- ivaAmount = VAT: IVA, CUOTA IVA, BASE IMPONIBLE, % IVA lines; use 0 only if no tax amount is visible.
+
+Vendor:
+- Copy the shop / issuer name from the header (Factura, NIF block, or letterhead). Partial names are OK. Use "" only if truly unreadable.
+
+Date (critical — read ONLY what is printed on the paper):
+- Do NOT use today's date, do NOT use the phone/camera/gallery file date, do NOT guess a year. Copy the date from the receipt text only.
+- Spanish facturas almost always use DAY/MONTH/YEAR order (DD/MM/YYYY). Example printed 03/04/2026 = 3 April 2026 → date "2026-04-03". Another: 15/01/2025 = 15 January 2025 → "2025-01-15".
+- If the printed date uses slashes or dashes (03-04-2026), apply the same DD/MM/YYYY rule before outputting ISO YYYY-MM-DD.
+- If no legible date is on the receipt, use "" (empty string). Never invent a date.
+
+category — one exact string:
+"Meat","Seafood","Vegetables","Restaurant","Gas Station","Water","Beverages","Asian Market","Caviar","Truffle","Organic Farm","Hardware Store","Other"
+Use "Meat" for butchers, carnicería, deli, embutidos, charcutería, names containing CARNS or similar.
+Use "Restaurant" for bars, cafés, menús.
+
+items: [{partName, quantity, unit:"kg", pricePerUnit, total}] when line items with weights/prices are visible (e.g. meat tickets); otherwise [].
+
+Numbers in JSON must be JSON numbers for totalAmount, ivaAmount, tipAmount (not strings). Output ONLY the JSON object, no markdown.`;
+
+const RECEIPT_PARSE_USER = `Read only text visible on this receipt image (totals, tax, vendor header, factura number, printed date). Ignore any idea of "today". Return the JSON object now.`;
 
 const EMAIL_PARSE_PROMPT = `You are an expert at extracting invoice data from email content.
 Analyze the provided email text and extract invoice information.
@@ -131,59 +416,167 @@ export const appRouter = router({
   invoices: router({
     // Parse receipt image with AI OCR
     parseReceipt: publicProcedure
-      .input(z.object({ imageBase64: z.string() }))
+      .input(
+        z.object({
+          imageBase64: z.string().min(1, "Image data is empty"),
+        }),
+      )
       .mutation(async ({ input }) => {
-        // Detect MIME type from base64 magic bytes instead of hardcoding jpeg
-        const header = Buffer.from(input.imageBase64.slice(0, 16), "base64");
-        let mimeType = "image/jpeg";
-        if (header[0] === 0x89 && header[1] === 0x50) mimeType = "image/png";
-        else if (header[0] === 0x47 && header[1] === 0x49) mimeType = "image/gif";
-        else if (header[0] === 0x52 && header[1] === 0x49) mimeType = "image/webp";
+        const normalized = normalizeReceiptImageBase64(input.imageBase64);
+        if (normalized.length < 64) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Image data is too small. Please take a clearer photo and try again.",
+          });
+        }
+
+        const mimeType = detectMimeFromImageBase64(normalized);
 
         try {
-          const response = await invokeLLM({
-            messages: [
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: RECEIPT_PARSE_PROMPT },
-                  {
-                    type: "image_url",
-                    image_url: {
-                      url: `data:${mimeType};base64,${input.imageBase64}`,
-                      detail: "high",
-                    },
-                  },
-                ],
-              },
-            ],
-            responseFormat: { type: "json_object" },
-          });
+          const useClaude = Boolean(ENV.anthropicApiKey?.trim());
+          const useGeminiGoogle = Boolean(ENV.googleGeminiApiKey?.trim());
+          const useForge = Boolean(ENV.forgeApiKey?.trim());
+          if (!useClaude && !useGeminiGoogle && !useForge) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message:
+                "Receipt AI is not configured. Set one of: ANTHROPIC_API_KEY (recommended), GOOGLE_GEMINI_API_KEY from Google AI Studio, or BUILT_IN_FORGE_API_KEY on Railway.",
+            });
+          }
 
-          const rawContent = response.choices?.[0]?.message?.content;
-          console.log("[OCR] Raw LLM response:", typeof rawContent === "string" ? rawContent.slice(0, 200) : rawContent);
-          const text = typeof rawContent === "string" ? rawContent : "{}";
-          // Strip thinking blocks, markdown fences, and leading/trailing whitespace
+          console.log(
+            `[OCR] Providers: anthropic=${useClaude} gemini_direct=${useGeminiGoogle} forge=${useForge}`,
+          );
+
+          let text: string;
+          if (useClaude) {
+            text = await parseReceiptWithClaude(
+              normalized,
+              mimeType,
+              RECEIPT_PARSE_SYSTEM,
+              RECEIPT_PARSE_USER,
+            );
+          } else if (useGeminiGoogle) {
+            const jpeg = await encodeReceiptImageForForgeStep(normalized, mimeType, 0);
+            console.log(`[OCR] Using Google Gemini API directly (${jpeg.jpegBytes} bytes JPEG)`);
+            text = await parseReceiptWithGoogleGemini(
+              jpeg.base64,
+              jpeg.mimeType,
+              RECEIPT_PARSE_SYSTEM,
+              RECEIPT_PARSE_USER,
+            );
+          } else {
+            // Forge often rejects huge inline base64 in JSON. Prefer a short HTTPS URL after temp upload.
+            let response: Awaited<ReturnType<typeof invokeLLM>> | undefined;
+            let lastForgeErr: unknown;
+            for (let step = 0; step < FORGE_OCR_LADDER.length; step++) {
+              const forgeImage = await encodeReceiptImageForForgeStep(normalized, mimeType, step);
+              console.log(
+                `[OCR] Forge step ${step}/${FORGE_OCR_LADDER.length - 1}: JPEG ${forgeImage.jpegBytes} bytes (edge ≤ ${FORGE_OCR_LADDER[forgeImage.stepUsed].maxEdge}px)`,
+              );
+
+              let visionUrl: string;
+              try {
+                const fileName = `receipt-ocr-${Date.now()}-${step}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+                const hosted = await uploadImageToStorage(forgeImage.base64, fileName);
+                if (hosted && /^https:\/\//i.test(hosted)) {
+                  visionUrl = hosted;
+                  console.log(`[OCR] Using hosted image URL for Forge (small request body)`);
+                } else {
+                  throw new Error("Storage returned no HTTPS URL");
+                }
+              } catch (uploadErr) {
+                console.warn(`[OCR] Temp upload for OCR failed (step ${step}), using inline data URL:`, uploadErr);
+                visionUrl = `data:${forgeImage.mimeType};base64,${forgeImage.base64}`;
+              }
+
+              try {
+                response = await invokeLLM({
+                  messages: [
+                    {
+                      role: "user",
+                      content: [
+                        {
+                          type: "text",
+                          text: `${RECEIPT_PARSE_SYSTEM}\n\n${RECEIPT_PARSE_USER}`,
+                        },
+                        {
+                          type: "image_url",
+                          image_url: {
+                            url: visionUrl,
+                            detail: "low",
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                  responseFormat: { type: "json_object" },
+                });
+                break;
+              } catch (forgeErr) {
+                lastForgeErr = forgeErr;
+                const msg = forgeErr instanceof Error ? forgeErr.message : String(forgeErr);
+                const retryable = /400|Could not process image|Bad Request/i.test(msg);
+                if (retryable && step < FORGE_OCR_LADDER.length - 1) {
+                  console.warn(`[OCR] Forge rejected at step ${step}; next ladder step...`);
+                  continue;
+                }
+                throw forgeErr;
+              }
+            }
+
+            if (!response) {
+              throw lastForgeErr instanceof Error
+                ? lastForgeErr
+                : new Error("Forge OCR failed after all resize steps");
+            }
+
+            const rawContent = response.choices?.[0]?.message?.content;
+            text = extractLlmMessageText(rawContent);
+          }
+          console.log(
+            "[OCR] Raw LLM response:",
+            text.length > 0 ? text.slice(0, 240) : "(empty)",
+          );
+
+          if (!text || text.trim().length === 0) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "The recognition service returned no text. Please try again with a sharper image.",
+            });
+          }
+
           const cleaned = text
             .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
             .replace(/```json\n?/g, "")
             .replace(/```\n?/g, "")
             .trim();
-          // Extract first JSON object if there's surrounding text
           const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
           const jsonStr = jsonMatch ? jsonMatch[0] : cleaned;
-          return JSON.parse(jsonStr);
-        } catch (err) {
-          console.error("[OCR] Parse error:", err);
+          const rawParsed = JSON.parse(jsonStr) as Record<string, unknown>;
+          const parsed = normalizeReceiptParsedFields(rawParsed);
+
+          const dateOut = normalizeReceiptDateToIso(parsed.date);
+
           return {
-            invoiceNumber: "",
-            vendor: "",
-            date: new Date().toISOString().split("T")[0],
-            totalAmount: 0,
-            ivaAmount: 0,
-            tipAmount: 0,
-            category: "Other",
+            invoiceNumber: String(parsed.invoiceNumber ?? "").trim(),
+            vendor: String(parsed.vendor ?? "").trim(),
+            date: dateOut,
+            totalAmount: parseMoneyNumber(parsed.totalAmount),
+            ivaAmount: parseMoneyNumber(parsed.ivaAmount),
+            tipAmount: parseMoneyNumber(parsed.tipAmount),
+            category: String(parsed.category ?? "Other").trim() || "Other",
+            items: Array.isArray(parsed.items) ? parsed.items : [],
           };
+        } catch (err) {
+          if (err instanceof TRPCError) throw err;
+          console.error("[OCR] Parse error:", err);
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Receipt recognition failed: ${msg}`,
+            cause: err,
+          });
         }
       }),
 
@@ -251,7 +644,7 @@ export const appRouter = router({
       .input(
         z.object({
           spreadsheetId: z.string(),
-          sheetName: z.string().default("Invoices"),
+          sheetName: z.string().default(DEFAULT_MAIN_TRACKER_SHEET_NAME),
           rows: z.array(
             z.object({
               source: z.string(),
@@ -288,9 +681,9 @@ export const appRouter = router({
         const accessToken = await getGoogleAccessToken();
 
         // First, ensure header row exists
-        // ✅ Correct column order: Source, Invoice#, Vendor, Date, Total, IVA, Base, Tip, Category, Currency, Notes, ImageURL, ExportedAt
+        // ✅ Column order (English labels for Sheets): Source, Invoice#, Vendor, Date, Total, VAT, Base, Tip, ...
         const headerValues = [
-          ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"],
+          ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"],
         ];
 
         // Check if sheet exists and has headers
@@ -343,28 +736,26 @@ export const appRouter = router({
         
         const existingInvoicesByVendorDateAmount = new Set(
           existingData.values?.slice(1).map((row) => {
-            // row[2] = Vendor, row[3] = Date, row[4] = Total (€)
             const vendor = row[2] || "";
             const date = row[3] || "";
-            const amount = row[4] || "";
-            return `${vendor}|${date}|${amount}`;
-          }) || []
+            const amount = row[4] ?? "";
+            return duplicateRowKey(vendor, String(date), amount);
+          }) || [],
         );
-        
-        // Filter out duplicates using both checks
+
         newRows = rows.filter((r) => {
-          // Check 1: If invoice number exists and matches, it's a duplicate
           if (r.invoiceNumber && r.invoiceNumber.trim().length > 0) {
             if (existingInvoicesByNumber.has(r.invoiceNumber.trim())) {
               console.warn(`[Export] Skipping duplicate invoice (by Invoice #): ${r.invoiceNumber}`);
               return false;
             }
           }
-          
-          // Check 2: Vendor + Date + Amount (for invoices without number or as additional check)
-          const key = `${r.vendor}|${r.date}|€${r.totalAmount.toFixed(2)}`;
+
+          const key = duplicateRowKey(r.vendor, r.date, r.totalAmount);
           if (existingInvoicesByVendorDateAmount.has(key)) {
-            console.warn(`[Export] Skipping duplicate invoice (by Vendor+Date+Amount): ${r.vendor} | ${r.date} | €${r.totalAmount.toFixed(2)}`);
+            console.warn(
+              `[Export] Skipping duplicate (Vendor+Date+Amount): ${r.vendor} | ${r.date} | €${r.totalAmount.toFixed(2)}`,
+            );
             return false;
           }
           return true;
@@ -377,9 +768,11 @@ export const appRouter = router({
 
         // Append data rows with image upload
         const now = new Date().toISOString();
+        let receiptImageMissing = false;
         const dataRows = await Promise.all(
           newRows.map(async (r) => {
             let imageUrl = r.imageUrl ?? "";
+            const userProvidedImage = Boolean(r.imageUrl?.trim());
             
             // If imageUrl is a base64 string or local file path, upload it to storage
             if (imageUrl && (imageUrl.startsWith("data:") || imageUrl.startsWith("file://"))) {
@@ -420,27 +813,40 @@ export const appRouter = router({
             }
             
             // Format date as DD/MM/YYYY (with leading apostrophe to prevent Google Sheets auto-formatting)
-            // Parse DD/MM/YYYY correctly
-            const parsedDate = parseInvoiceDateDDMMYYYY(r.date);
-            const dd = String(parsedDate.getDate()).padStart(2, '0');
-            const mm = String(parsedDate.getMonth() + 1).padStart(2, '0');
-            const yyyy = parsedDate.getFullYear();
-            const formattedDate = `'${dd}/${mm}/${yyyy}`;
-            
-            // ✅ Correct column order: Source, Invoice#, Vendor, Date, Total, IVA, Base, Tip, Category, Currency, Notes, ImageURL, ExportedAt
+            const rawDate = String(r.date ?? "").trim();
+            let formattedDate = "";
+            if (rawDate) {
+              const parsedDate = parseInvoiceDateDDMMYYYY(rawDate);
+              const dd = String(parsedDate.getDate()).padStart(2, "0");
+              const mm = String(parsedDate.getMonth() + 1).padStart(2, "0");
+              const yyyy = parsedDate.getFullYear();
+              formattedDate = `'${dd}/${mm}/${yyyy}`;
+            }
+
+            // L: embed preview in the cell when we have a public HTTPS URL (storage upload succeeded)
+            let imageColumnValue: string = imageUrl;
+            if (imageUrl && /^https:\/\//i.test(imageUrl)) {
+              const safe = imageUrl.replace(/"/g, '""');
+              imageColumnValue = `=IMAGE("${safe}", 1)`;
+            }
+
+            if (userProvidedImage && !String(imageUrl ?? "").trim()) {
+              receiptImageMissing = true;
+            }
+
             return [
               r.source?.toLowerCase() === "camera" ? "Camera" : "Email", // A - Source
               r.invoiceNumber,       // B - Invoice #
               r.vendor,              // C - Vendor
               formattedDate,         // D - Date (DD/MM/YYYY)
               r.totalAmount,                                                           // E - Total (€)
-              r.ivaAmount ?? 0,                                                        // F - IVA (€)
+              r.ivaAmount ?? 0,                                                        // F - VAT (€)
               r.baseAmount != null ? r.baseAmount : r.totalAmount - (r.ivaAmount ?? 0), // G - Base (€) fallback for old invoices
               r.tip ?? 0,            // H - Tip (€)
               r.category,            // I - Category
               r.currency,            // J - Currency
               r.notes ?? "",         // K - Notes
-              imageUrl,              // L - Image URL
+              imageColumnValue,      // L - Receipt image (IMAGE formula) or URL / empty
               now,                   // M - Exported At
             ];
           })
@@ -471,7 +877,7 @@ export const appRouter = router({
             const { automateGoogleSheets, updateMeatMonthlySheet } = await import("./sheets-automation-vendor-aggregated");
             
             // Fetch ALL data from 2026 Invoice tracker sheet for complete monthly/quarterly aggregation
-            const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("2026 Invoice tracker")}!A2:M`;
+            const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A2:M`;
             const trackerRes = await fetch(trackerSheetUrl, {
               headers: { Authorization: `Bearer ${accessToken}` },
             });
@@ -530,7 +936,7 @@ export const appRouter = router({
             }, ["La Portenia", "Es Cuco"]);
 
             // Update Meat_Monthly pivot table for invoices with items[]
-            const meatRows = rows.filter(r => r.items && r.items.length > 0);
+            const meatRows = newRows.filter((r) => r.items && r.items.length > 0);
             if (meatRows.length > 0) {
               await updateMeatMonthlySheet(accessToken, spreadsheetId, meatRows);
             }
@@ -544,7 +950,13 @@ export const appRouter = router({
           }
         }
 
-        return { success: true, rowsAdded: rows.length, message: "Invoice exported successfully" };
+        return {
+          success: true,
+          rowsAdded: newRows.length,
+          message: "Invoice exported successfully",
+          /** True if the client sent image data but storage upload failed so the sheet row has no image URL */
+          receiptImageMissing,
+        };
       }),
 
     // Fetch Gmail messages with invoice keywords

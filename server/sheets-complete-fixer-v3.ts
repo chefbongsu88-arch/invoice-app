@@ -157,7 +157,7 @@ export async function fixAllSheets(serviceAccount: any): Promise<any> {
 
       // Build rows for this month
       const rows: any[][] = [
-        ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"],
+        ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"],
         ["", "", "TOTAL", "", "=SUM(E3:E1000)", "=SUM(F3:F1000)", "=SUM(G3:G1000)", "=SUM(H3:H1000)", "", "", "", "", ""],
       ];
 
@@ -205,7 +205,7 @@ export async function fixAllSheets(serviceAccount: any): Promise<any> {
       });
 
       const rows: any[][] = [
-        ["Vendor", "Total (€)", "IVA (€)", "Base (€)", "% of Quarter"],
+        ["Vendor", "Total (€)", "VAT (€)", "Base (€)", "% of Quarter"],
       ];
 
       const quarterTotal = Object.values(vendorMap).reduce((a, b) => a + b, 0);

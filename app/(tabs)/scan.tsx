@@ -1,8 +1,9 @@
 import * as Haptics from "expo-haptics";
+import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useRouter } from "expo-router";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -22,11 +23,51 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
 import type { Invoice, InvoiceCategory, MeatItem } from "@/shared/invoice-types";
+import { getOcrAlertForUser } from "@/lib/ocr-user-message";
 import { trpc } from "@/lib/trpc";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
-type ScanStep = "capture" | "preview" | "review" | "done" | "batch-review";
+/** Downscale before OCR/API — large originals often cause Forge 400 "Could not process image". */
+const RECEIPT_MAX_WIDTH = 1600;
+const RECEIPT_JPEG_QUALITY = 0.72;
+
+async function encodeReceiptImageForServer(
+  uri: string,
+  fallbackBase64: string | null,
+): Promise<string | undefined> {
+  try {
+    const manipulated = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: RECEIPT_MAX_WIDTH } }],
+      {
+        compress: RECEIPT_JPEG_QUALITY,
+        format: ImageManipulator.SaveFormat.JPEG,
+        base64: true,
+      },
+    );
+    const b = manipulated.base64?.replace(/\s/g, "") ?? "";
+    if (b.length > 64) return b;
+  } catch (e) {
+    console.warn("[Scan] Resize for OCR failed:", e);
+  }
+  if (fallbackBase64) {
+    const b = fallbackBase64.replace(/\s/g, "");
+    if (b.length > 64) return b;
+  }
+  try {
+    const raw = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    const b = raw.replace(/\s/g, "");
+    if (b.length > 64) return b;
+  } catch {
+    /* handled below */
+  }
+  return undefined;
+}
+
+type ScanStep = "capture" | "preview" | "review" | "done";
 
 const PREDEFINED_CATEGORIES: InvoiceCategory[] = [
   "Meat",
@@ -124,12 +165,14 @@ export default function ScanScreen() {
   const { addInvoice, checkDuplicate } = useInvoices();
   const [step, setStep] = useState<ScanStep>("capture");
   const [imageUri, setImageUri] = useState<string | null>(null);
+  /** Prefer Expo ImagePicker base64 (reliable on iOS/Android); FileSystem read is fallback */
+  const [imageBase64FromPicker, setImageBase64FromPicker] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
 
   // Extracted fields
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [vendor, setVendor] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  const [date, setDate] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
   const [ivaAmount, setIvaAmount] = useState("");
   const [category, setCategory] = useState<InvoiceCategory>("Other");
@@ -139,11 +182,6 @@ export default function ScanScreen() {
   const [showCustomCategoryInput, setShowCustomCategoryInput] = useState(false);
   const [customCategoryInput, setCustomCategoryInput] = useState("");
 
-  // Batch upload state
-  const [batchImages, setBatchImages] = useState<string[]>([]);
-  const [currentBatchIndex, setCurrentBatchIndex] = useState(0);
-  const [batchInvoices, setBatchInvoices] = useState<Invoice[]>([]);
-  const [isBatchMode, setIsBatchMode] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState<Invoice | null>(null);
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [pendingInvoice, setPendingInvoice] = useState<Invoice | null>(null);
@@ -163,50 +201,35 @@ export default function ScanScreen() {
     }
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ["images"],
-      quality: 0.85,
+      quality: 0.7,
       base64: true,
-      allowsEditing: true,
-      aspect: [3, 4],
+      allowsEditing: false,
     });
     if (!result.canceled && result.assets[0]) {
-      setImageUri(result.assets[0].uri);
+      const a = result.assets[0];
+      setImageUri(a.uri);
+      setImageBase64FromPicker(a.base64 ?? null);
       setStep("preview");
     }
   }, []);
 
-  const pickFromLibrary = useCallback(async (allowMultiple: boolean = false) => {
+  const pickFromLibrary = useCallback(async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
       Alert.alert("Permission Required", "Photo library permission is needed.");
       return;
     }
-    const options: any = {
+    const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
-      quality: 0.85,
+      quality: 0.7,
       base64: true,
       allowsEditing: false,
-    };
-    
-    if (allowMultiple) {
-      options.allowsMultiple = true;
-    }
-    // Note: No aspect ratio constraint for library photos to preserve original images
-    
-    const result = await ImagePicker.launchImageLibraryAsync(options);
-    if (!result.canceled && result.assets.length > 0) {
-      if (allowMultiple && result.assets.length > 1) {
-        const imageUris = result.assets.map((asset) => asset.uri);
-        setBatchImages(imageUris);
-        setCurrentBatchIndex(0);
-        setIsBatchMode(true);
-        setBatchInvoices([]);
-        setImageUri(imageUris[0]);
-        setStep("preview");
-      } else {
-        setImageUri(result.assets[0].uri);
-        setIsBatchMode(false);
-        setStep("preview");
-      }
+    });
+    if (!result.canceled && result.assets[0]) {
+      const a = result.assets[0];
+      setImageUri(a.uri);
+      setImageBase64FromPicker(a.base64 ?? null);
+      setStep("preview");
     }
   }, []);
 
@@ -214,34 +237,38 @@ export default function ScanScreen() {
     if (!imageUri) return;
     setProcessing(true);
     try {
-      // Convert image to base64 for server processing
-      // Use FileSystem for reliable Base64 conversion (works with both camera and library images)
-      let base64: string;
-      try {
-        base64 = await FileSystem.readAsStringAsync(imageUri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-      } catch (fsError) {
-        console.warn("FileSystem read failed, using fetch fallback", fsError);
-        const response = await fetch(imageUri);
-        const blob = await response.blob();
-        const reader = new FileReader();
-        base64 = await new Promise<string>((resolve, reject) => {
-          reader.onloadend = () => {
-            const result = reader.result as string;
-            const b64 = result.split(",")[1];
-            if (!b64) {
-              reject(new Error("Failed to extract base64 from blob"));
-            } else {
-              resolve(b64);
-            }
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
+      let base64 = await encodeReceiptImageForServer(imageUri, imageBase64FromPicker);
+
+      if (!base64) {
+        try {
+          const response = await fetch(imageUri);
+          const blob = await response.blob();
+          const reader = new FileReader();
+          base64 = await new Promise<string>((resolve, reject) => {
+            reader.onloadend = () => {
+              const r = reader.result as string;
+              const b64 = r.split(",")[1];
+              if (!b64) reject(new Error("Failed to extract base64 from blob"));
+              else resolve(b64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } catch (fetchErr) {
+          console.warn("Fetch fallback for image failed:", fetchErr);
+        }
       }
 
-      const parsed = await ocrMutation.mutateAsync({ imageBase64: base64 });
+      const b64Payload = base64.replace(/\s/g, "");
+      if (b64Payload.length < 64) {
+        Alert.alert(
+          "Could not read image",
+          "This photo could not be loaded for scanning. Try the camera, or pick one photo at a time. If it keeps happening, choose a different photo or lower resolution in system settings.",
+        );
+        return;
+      }
+
+      const parsed = await ocrMutation.mutateAsync({ imageBase64: b64Payload });
       
       // Extract items if present (for meat vendors)
       if (parsed.items && Array.isArray(parsed.items)) {
@@ -250,7 +277,9 @@ export default function ScanScreen() {
 
       setInvoiceNumber(parsed.invoiceNumber ?? "");
       setVendor(parsed.vendor ?? "");
-      setDate(parsed.date ?? new Date().toISOString().split("T")[0]);
+      setDate(
+        parsed.date && /^\d{4}-\d{2}-\d{2}$/.test(String(parsed.date)) ? String(parsed.date) : "",
+      );
       setTotalAmount(parsed.totalAmount?.toString() ?? "");
       setIvaAmount(parsed.ivaAmount?.toString() ?? "");
       setCategory((parsed.category as InvoiceCategory) ?? "Other");
@@ -259,81 +288,13 @@ export default function ScanScreen() {
       setStep("review");
     } catch (err) {
       console.error("OCR error:", err);
-      // Allow manual entry even if OCR fails
+      const { title, message } = getOcrAlertForUser(err);
       setStep("review");
-      Alert.alert(
-        "OCR Notice",
-        "Could not automatically extract all fields. Please fill them in manually."
-      );
+      Alert.alert(title, message);
     } finally {
       setProcessing(false);
     }
-  }, [imageUri, ocrMutation]);
-
-  const handleBatchNext = useCallback(async () => {
-    // Save current invoice
-    if (vendor.trim()) {
-      const total = parseFloat(totalAmount) || 0;
-      const iva = parseFloat(ivaAmount) || 0;
-      const tipAmount = parseFloat(tip) || 0;
-      const invoice: Invoice = {
-        id: `cam_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-        source: "camera",
-        invoiceNumber: invoiceNumber.trim() || `AUTO-${Date.now()}`,
-        vendor: vendor.trim(),
-        date,
-        totalAmount: total,
-        ivaAmount: iva,
-        baseAmount: total - iva,
-        currency: "EUR",
-        category,
-        notes: notes.trim(),
-        tip: tipAmount > 0 ? tipAmount : undefined,
-        imageUri: imageUri ?? undefined,
-        items: items.length > 0 ? items : undefined,
-        exportedToSheets: false,
-        createdAt: new Date().toISOString(),
-      };
-      setBatchInvoices([...batchInvoices, invoice]);
-    }
-
-    // Move to next image
-    if (currentBatchIndex < batchImages.length - 1) {
-      setCurrentBatchIndex(currentBatchIndex + 1);
-      setImageUri(batchImages[currentBatchIndex + 1]);
-      setInvoiceNumber("");
-      setVendor("");
-      setDate(new Date().toISOString().split("T")[0]);
-      setTotalAmount("");
-      setIvaAmount("");
-      setCategory("Other");
-      setNotes("");
-      setTip("");
-      setItems([]);
-      setProcessing(false);
-      setStep("preview");
-    } else {
-      setStep("batch-review");
-    }
-  }, [currentBatchIndex, batchImages, vendor, totalAmount, ivaAmount, tip, invoiceNumber, date, category, notes, imageUri, items, batchInvoices]);
-
-  const handleBatchPrevious = useCallback(() => {
-    if (currentBatchIndex > 0) {
-      setCurrentBatchIndex(currentBatchIndex - 1);
-      setImageUri(batchImages[currentBatchIndex - 1]);
-      setInvoiceNumber("");
-      setVendor("");
-      setDate(new Date().toISOString().split("T")[0]);
-      setTotalAmount("");
-      setIvaAmount("");
-      setCategory("Other");
-      setNotes("");
-      setTip("");
-      setItems([]);
-      setProcessing(false);
-      setStep("preview");
-    }
-  }, [currentBatchIndex, batchImages]);
+  }, [imageUri, ocrMutation, imageBase64FromPicker]);
 
   const handleSave = useCallback(async () => {
     if (!vendor.trim()) {
@@ -344,16 +305,12 @@ export default function ScanScreen() {
     const iva = parseFloat(ivaAmount) || 0;
     const tipAmount = parseFloat(tip) || 0;
     
-    // Convert image to base64 if present
+    // Same resize path as OCR — smaller payload for storage upload + Sheets.
     let imageUrl: string | undefined = undefined;
     if (imageUri) {
-      try {
-        const base64 = await FileSystem.readAsStringAsync(imageUri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        imageUrl = `data:image/jpeg;base64,${base64}`;
-      } catch (err) {
-        console.warn("Failed to convert image to base64:", err);
+      const b64 = await encodeReceiptImageForServer(imageUri, imageBase64FromPicker);
+      if (b64) {
+        imageUrl = `data:image/jpeg;base64,${b64}`;
       }
     }
     
@@ -362,7 +319,7 @@ export default function ScanScreen() {
       source: "camera",
       invoiceNumber: invoiceNumber.trim() || `AUTO-${Date.now()}`,
       vendor: vendor.trim(),
-      date,
+      date: date.trim() || new Date().toISOString().split("T")[0],
       totalAmount: total,
       ivaAmount: iva,
       baseAmount: total - iva,
@@ -375,7 +332,7 @@ export default function ScanScreen() {
       exportedToSheets: false,
       createdAt: new Date().toISOString(),
     };
-    
+
     // Check for duplicates
     const duplicate = checkDuplicate(invoice);
     if (duplicate) {
@@ -384,92 +341,60 @@ export default function ScanScreen() {
       setShowDuplicateDialog(true);
       return;
     }
-    
-    if (isBatchMode) {
-      await handleBatchNext();
-    } else {
-      await addInvoice(invoice);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setStep("done");
-    }
-  }, [vendor, totalAmount, ivaAmount, tip, invoiceNumber, date, category, notes, imageUri, addInvoice, isBatchMode, handleBatchNext, checkDuplicate]);
+
+    await addInvoice(invoice);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setStep("done");
+  }, [
+    vendor,
+    totalAmount,
+    ivaAmount,
+    tip,
+    invoiceNumber,
+    date,
+    category,
+    notes,
+    imageUri,
+    imageBase64FromPicker,
+    addInvoice,
+    checkDuplicate,
+  ]);
 
   const resetScan = useCallback(() => {
     setStep("capture");
     setImageUri(null);
+    setImageBase64FromPicker(null);
     setInvoiceNumber("");
     setVendor("");
-    setDate(new Date().toISOString().split("T")[0]);
+    setDate("");
     setTotalAmount("");
     setIvaAmount("");
     setCategory("Other");
     setNotes("");
     setTip("");
     setItems([]);
-    setBatchImages([]);
-    setCurrentBatchIndex(0);
-    setBatchInvoices([]);
-    setIsBatchMode(false);
     setShowDuplicateDialog(false);
     setDuplicateWarning(null);
     setPendingInvoice(null);
   }, []);
 
-  const handleDuplicateAction = useCallback(async (action: "skip" | "continue") => {
-    setShowDuplicateDialog(false);
-    
-    if (action === "continue" && pendingInvoice) {
-      if (isBatchMode) {
-        setBatchInvoices([...batchInvoices, pendingInvoice]);
-        if (currentBatchIndex < batchImages.length - 1) {
-          setCurrentBatchIndex(currentBatchIndex + 1);
-          setImageUri(batchImages[currentBatchIndex + 1]);
-          setInvoiceNumber("");
-          setVendor("");
-          setDate(new Date().toISOString().split("T")[0]);
-          setTotalAmount("");
-          setIvaAmount("");
-          setCategory("Other");
-          setNotes("");
-          setTip("");
-          setItems([]);
-          setProcessing(false);
-          setStep("preview");
-        } else {
-          setStep("batch-review");
-        }
-      } else {
+  const handleDuplicateAction = useCallback(
+    async (action: "skip" | "continue") => {
+      setShowDuplicateDialog(false);
+
+      if (action === "continue" && pendingInvoice) {
         await addInvoice(pendingInvoice);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setStep("done");
-      }
-    } else {
-      if (isBatchMode) {
-        if (currentBatchIndex < batchImages.length - 1) {
-          setCurrentBatchIndex(currentBatchIndex + 1);
-          setImageUri(batchImages[currentBatchIndex + 1]);
-          setInvoiceNumber("");
-          setVendor("");
-          setDate(new Date().toISOString().split("T")[0]);
-          setTotalAmount("");
-          setIvaAmount("");
-          setCategory("Other");
-          setNotes("");
-          setTip("");
-          setItems([]);
-          setProcessing(false);
-          setStep("preview");
-        } else {
-          setStep("batch-review");
-        }
       } else {
         resetScan();
       }
-    }
-    
-    setPendingInvoice(null);
-    setDuplicateWarning(null);
-  }, [pendingInvoice, isBatchMode, currentBatchIndex, batchImages, batchInvoices, addInvoice, resetScan]);
+
+      setPendingInvoice(null);
+      setDuplicateWarning(null);
+    },
+    [pendingInvoice, addInvoice, resetScan],
+  );
 
   // Duplicate warning dialog
   if (showDuplicateDialog && duplicateWarning) {
@@ -484,7 +409,9 @@ export default function ScanScreen() {
           </View>
 
           <View style={[styles.formCard, { backgroundColor: colors.surface, borderColor: colors.border, padding: 16 }]}>
-            <Text style={[styles.fieldLabel, { color: colors.muted, marginBottom: 8 }]}>This receipt appears to be a duplicate:</Text>
+            <Text style={[styles.fieldLabel, { color: colors.muted, marginBottom: 8 }]}>
+              This matches an invoice already saved in the app (and may already be in Google Sheets if you exported it):
+            </Text>
             <Text style={[styles.fieldLabel, { color: colors.foreground, fontSize: 14, marginBottom: 4 }]}>Vendor: {duplicateWarning.vendor}</Text>
             <Text style={[styles.fieldLabel, { color: colors.foreground, fontSize: 14, marginBottom: 4 }]}>Date: {duplicateWarning.date}</Text>
             <Text style={[styles.fieldLabel, { color: colors.foreground, fontSize: 14 }]}>Amount: €{duplicateWarning.totalAmount.toFixed(2)}</Text>
@@ -501,7 +428,9 @@ export default function ScanScreen() {
               onPress={() => handleDuplicateAction("continue")}
               style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
             >
-              <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>Continue Anyway</Text>
+              <Text style={[styles.primaryBtnText, styles.primaryBtnLabel, { color: "#FFFFFF" }]}>
+                Continue Anyway
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -521,7 +450,7 @@ export default function ScanScreen() {
           <View style={styles.captureContainer}>
             <Text style={[styles.captureTitle, { color: colors.foreground }]}>Scan Receipt</Text>
             <Text style={[styles.captureSubtitle, { color: colors.muted }]}>
-              Take a photo of your Spanish receipt or invoice
+              Take a clear photo of your receipt or invoice
             </Text>
 
             <View style={[styles.captureArea, { borderColor: colors.border, backgroundColor: colors.surface }]}>
@@ -543,11 +472,13 @@ export default function ScanScreen() {
                 ]}
               >
                 <IconSymbol name="camera.fill" size={20} color="#FFFFFF" />
-                <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>Open Camera</Text>
+                <Text style={[styles.primaryBtnText, styles.primaryBtnLabel, { color: "#FFFFFF" }]}>
+                  Open Camera
+                </Text>
               </Pressable>
 
               <Pressable
-                onPress={() => pickFromLibrary(false)}
+                onPress={() => pickFromLibrary()}
                 style={({ pressed }) => [
                   styles.secondaryBtn,
                   { borderColor: colors.border, backgroundColor: colors.surface },
@@ -557,20 +488,6 @@ export default function ScanScreen() {
                 <IconSymbol name="photo.fill" size={20} color={colors.primary} />
                 <Text style={[styles.secondaryBtnText, styles.secondaryBtnLabel, { color: colors.foreground }]}>
                   Choose from Library
-                </Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() => pickFromLibrary(true)}
-                style={({ pressed }) => [
-                  styles.secondaryBtn,
-                  { borderColor: colors.border, backgroundColor: colors.surface },
-                  pressed && { opacity: 0.75 },
-                ]}
-              >
-                <IconSymbol name="photo.fill" size={20} color={colors.primary} />
-                <Text style={[styles.secondaryBtnText, styles.secondaryBtnLabel, { color: colors.foreground }]}>
-                  Batch Upload (Multiple)
                 </Text>
               </Pressable>
             </View>
@@ -596,25 +513,6 @@ export default function ScanScreen() {
             resizeMode="contain"
           />
 
-          {isBatchMode && batchImages.length > 0 && (
-            <View style={[styles.batchIndicator, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Text style={[styles.batchIndicatorText, { color: colors.muted }]}>
-                Photo {currentBatchIndex + 1} of {batchImages.length}
-              </Text>
-              <View style={styles.batchProgressBar}>
-                <View
-                  style={[
-                    styles.batchProgressFill,
-                    {
-                      backgroundColor: colors.primary,
-                      width: `${((currentBatchIndex + 1) / batchImages.length) * 100}%`,
-                    },
-                  ]}
-                />
-              </View>
-            </View>
-          )}
-
           {processing ? (
             <View style={styles.processingBox}>
               <ActivityIndicator size="large" color={colors.primary} />
@@ -631,28 +529,15 @@ export default function ScanScreen() {
                 <IconSymbol name="arrow.clockwise" size={18} color={colors.muted} />
                 <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Retake</Text>
               </Pressable>
-              {isBatchMode && currentBatchIndex < batchImages.length - 1 ? (
-                <Pressable
-                  onPress={() => {
-                    setCurrentBatchIndex(currentBatchIndex + 1);
-                    setImageUri(batchImages[currentBatchIndex + 1]);
-                  }}
-                  style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
-                >
-                  <IconSymbol name="plus.circle.fill" size={18} color="#fff" />
-                  <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>Add Next Photo</Text>
-                </Pressable>
-              ) : (
-                <Pressable
-                  onPress={processImage}
-                  style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
-                >
-                  <IconSymbol name="bolt.fill" size={18} color="#fff" />
-                  <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>
-                    {isBatchMode ? "Analyze All" : "Process with AI"}
-                  </Text>
-                </Pressable>
-              )}
+              <Pressable
+                onPress={processImage}
+                style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
+              >
+                <IconSymbol name="bolt.fill" size={18} color="#fff" />
+                <Text style={[styles.primaryBtnText, styles.primaryBtnLabel, { color: "#FFFFFF" }]}>
+                  Process with AI
+                </Text>
+              </Pressable>
             </View>
           )}
         </View>
@@ -680,10 +565,15 @@ export default function ScanScreen() {
 
           <View style={[styles.formCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <FieldRow label="Vendor / Business Name" value={vendor} onChange={setVendor} placeholder="e.g. Mercadona" />
-            <FieldRow label="Invoice Number" value={invoiceNumber} onChange={setInvoiceNumber} placeholder="e.g. FAC-2024-001" />
+            <FieldRow
+              label="Invoice Number"
+              value={invoiceNumber}
+              onChange={setInvoiceNumber}
+              placeholder="e.g. FAC-2024-001 (optional if not on receipt)"
+            />
             <FieldRow label="Date (YYYY-MM-DD)" value={date} onChange={setDate} placeholder="2024-01-15" />
             <FieldRow label="Total Amount (€)" value={totalAmount} onChange={setTotalAmount} keyboardType="decimal-pad" placeholder="0.00" />
-            <FieldRow label="IVA Amount (€)" value={ivaAmount} onChange={setIvaAmount} keyboardType="decimal-pad" placeholder="0.00" />
+            <FieldRow label="VAT amount (€)" value={ivaAmount} onChange={setIvaAmount} keyboardType="decimal-pad" placeholder="0.00" />
             <FieldRow label="Tip (€) - optional" value={tip} onChange={setTip} keyboardType="decimal-pad" placeholder="0.00" />
             <FieldRow label="Notes (optional)" value={notes} onChange={setNotes} placeholder="Any additional notes" />
           </View>
@@ -747,92 +637,20 @@ export default function ScanScreen() {
           )}
 
           <View style={styles.reviewActions}>
-            {isBatchMode && currentBatchIndex > 0 && (
-              <Pressable
-                onPress={handleBatchPrevious}
-                style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
-              >
-                <IconSymbol name="arrow.left" size={18} color={colors.muted} />
-                <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Previous</Text>
-              </Pressable>
-            )}
-            {isBatchMode && currentBatchIndex === 0 && (
-              <Pressable
-                onPress={resetScan}
-                style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
-              >
-                <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Cancel</Text>
-              </Pressable>
-            )}
-            {!isBatchMode && (
-              <Pressable
-                onPress={resetScan}
-                style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
-              >
-                <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Cancel</Text>
-              </Pressable>
-            )}
+            <Pressable
+              onPress={resetScan}
+              style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+            >
+              <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Cancel</Text>
+            </Pressable>
             <Pressable
               onPress={handleSave}
               style={[styles.primaryBtn, { backgroundColor: colors.primary, flex: 1 }]}
             >
-              <IconSymbol name={isBatchMode && currentBatchIndex < batchImages.length - 1 ? "arrow.right" : "checkmark.circle.fill"} size={18} color="#fff" />
-              <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>
-                {isBatchMode ? (currentBatchIndex < batchImages.length - 1 ? "Next" : "Review All") : "Save Invoice"}
-              </Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-      </ScreenContainer>
-    );
-  }
-
-  // STEP: BATCH REVIEW
-  if (step === "batch-review" && isBatchMode) {
-    return (
-      <ScreenContainer containerClassName="bg-background">
-        <ScrollView contentContainerStyle={styles.reviewContent}>
-          <Text style={[styles.captureTitle, { color: colors.foreground }]}>Review Batch ({batchInvoices.length} invoices)</Text>
-          <Text style={[styles.captureSubtitle, { color: colors.muted }]}>
-            All receipts processed. Ready to export?
-          </Text>
-
-          {batchInvoices.map((inv, idx) => (
-            <View key={idx} style={[styles.formCard, { backgroundColor: colors.surface, borderColor: colors.border, marginBottom: 12 }]}>
-              <View style={{ padding: 12 }}>
-                <Text style={[styles.fieldLabel, { color: colors.foreground, marginBottom: 4 }]}>
-                  {idx + 1}. {inv.vendor}
-                </Text>
-                <Text style={[styles.fieldLabel, { color: colors.muted, fontSize: 12 }]}>
-                  {inv.date} • €{inv.totalAmount.toFixed(2)}
-                </Text>
-              </View>
-            </View>
-          ))}
-
-          <View style={styles.reviewActions}>
-            <Pressable
-              onPress={() => {
-                setCurrentBatchIndex(0);
-                setImageUri(batchImages[0]);
-                setStep("preview");
-              }}
-              style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
-            >
-              <Text style={[styles.secondaryBtnText, { color: colors.muted }]}>Edit</Text>
-            </Pressable>
-            <Pressable
-              onPress={async () => {
-                for (const invoice of batchInvoices) {
-                  await addInvoice(invoice);
-                }
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                setStep("done");
-              }}
-              style={[styles.primaryBtn, { backgroundColor: colors.success, flex: 1 }]}
-            >
               <IconSymbol name="checkmark.circle.fill" size={18} color="#fff" />
-              <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>Export All ({batchInvoices.length})</Text>
+              <Text style={[styles.primaryBtnText, styles.primaryBtnLabel, { color: "#FFFFFF" }]}>
+                Save Invoice
+              </Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -856,7 +674,7 @@ export default function ScanScreen() {
           style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
         >
           <IconSymbol name="camera.fill" size={18} color="#fff" />
-          <Text style={[styles.primaryBtnText, styles.primaryBtnLabel]}>Scan Another</Text>
+          <Text style={[styles.primaryBtnText, styles.primaryBtnLabel, { color: "#FFFFFF" }]}>Scan Another</Text>
         </Pressable>
         <Pressable
           onPress={() => router.push("/(tabs)/receipts" as never)}
@@ -978,20 +796,6 @@ const styles = StyleSheet.create({
   customCategoryActions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
   customCategoryBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
   customCategoryBtnText: { fontSize: 13, fontWeight: "600" },
-  batchIndicator: {
-    borderRadius: 10,
-    borderWidth: 1,
-    padding: 12,
-    marginBottom: 12,
-    gap: 8,
-  },
-  batchIndicatorText: { fontSize: 12, fontWeight: "600" },
-  batchProgressBar: {
-    height: 6,
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  batchProgressFill: { height: 6, borderRadius: 3 },
   doneContainer: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
   doneIcon: { width: 100, height: 100, borderRadius: 28, alignItems: "center", justifyContent: "center" },
   doneTitle: { fontSize: 26, fontWeight: "700" },

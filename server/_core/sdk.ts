@@ -181,8 +181,8 @@ class SDKServer {
   async verifySession(
     cookieValue: string | undefined | null,
   ): Promise<{ openId: string; appId: string; name: string } | null> {
+    // No cookie is normal for native apps and public tRPC routes; do not warn (avoids confusion with OCR/API errors).
     if (!cookieValue) {
-      console.warn("[Auth] Missing session cookie");
       return null;
     }
 

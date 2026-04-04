@@ -19,6 +19,7 @@ import { useInvoices } from "@/hooks/use-invoices";
 import type { Invoice, InvoiceCategory } from "@/shared/invoice-types";
 import { trpc } from "@/lib/trpc";
 import { getApiBaseUrl } from "@/constants/oauth";
+import { displayInvoiceNumber } from "@/lib/invoice-display";
 
 const GMAIL_TOKEN_KEY = "gmail_oauth_token";
 const GMAIL_EMAIL_KEY = "gmail_email_address";
@@ -107,7 +108,9 @@ function EmailCard({
           </View>
           <View style={styles.parsedRow}>
             <Text style={[styles.parsedLabel, { color: colors.muted }]}>Invoice #</Text>
-            <Text style={[styles.parsedValue, { color: colors.foreground }]}>{pd.invoiceNumber || "—"}</Text>
+            <Text style={[styles.parsedValue, { color: colors.foreground }]}>
+              {displayInvoiceNumber(pd.invoiceNumber)}
+            </Text>
           </View>
           <View style={styles.parsedRow}>
             <Text style={[styles.parsedLabel, { color: colors.muted }]}>Date</Text>
@@ -120,7 +123,7 @@ function EmailCard({
             </Text>
           </View>
           <View style={styles.parsedRow}>
-            <Text style={[styles.parsedLabel, { color: colors.muted }]}>IVA</Text>
+            <Text style={[styles.parsedLabel, { color: colors.muted }]}>VAT</Text>
             <Text style={[styles.parsedValue, { color: colors.warning }]}>€{pd.ivaAmount.toFixed(2)}</Text>
           </View>
           <View style={styles.parsedRow}>
@@ -373,6 +376,7 @@ export default function GmailScreen() {
   return (
     <ScreenContainer containerClassName="bg-background">
       <FlatList
+        style={{ flex: 1, backgroundColor: colors.background }}
         data={emails}
         keyExtractor={(item) => item.id}
         ListHeaderComponent={

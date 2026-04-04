@@ -68,9 +68,9 @@ describe("Invoice data structure", () => {
     expect(baseAmount * superReducedIvaRate).toBe(4);
   });
 
-  it("should format date correctly for Spain locale", () => {
+  it("should format date correctly for en-US locale", () => {
     const dateStr = "2024-01-15";
-    const formatted = new Date(dateStr).toLocaleDateString("en-ES", {
+    const formatted = new Date(dateStr).toLocaleDateString("en-US", {
       day: "2-digit",
       month: "short",
       year: "numeric",

@@ -1,5 +1,3 @@
-import { ENV } from "./env";
-
 export type Role = "system" | "user" | "assistant" | "tool" | "function";
 
 export type TextContent = {
@@ -268,7 +266,15 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`);
+    let hint = "";
+    if (
+      response.status === 400 &&
+      /Could not process image/i.test(errorText)
+    ) {
+      hint =
+        " If this was receipt OCR, set ANTHROPIC_API_KEY on the server (preferred) or try a smaller/clearer JPEG photo.";
+    }
+    throw new Error(`LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}${hint}`);
   }
 
   // Anthropic API 응답을 OpenAI 형식으로 변환

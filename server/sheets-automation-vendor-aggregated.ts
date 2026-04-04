@@ -157,7 +157,7 @@ async function createMonthlySheets(
 
     // Build sheet rows
     const header = [
-      "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)",
+      "Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)",
       "Category", "Currency", "Notes", "Image URL", "Exported At"
     ];
 
@@ -173,7 +173,7 @@ async function createMonthlySheets(
     const totalRow = [
       "", "", `${month} TOTAL`, "",
       "=SUM(E3:E1000)",      // E: Total (€) - auto sum
-      "=SUM(F3:F1000)",      // F: IVA (€) - auto sum
+      "=SUM(F3:F1000)",      // F: VAT (€) - auto sum
       "=SUM(G3:G1000)",      // G: Base (€) - auto sum
       "=SUM(H3:H1000)",      // H: Tip (€) - auto sum
       "", "", "", "", ""
@@ -188,7 +188,7 @@ async function createMonthlySheets(
         vendor.vendor,           // C: Vendor
         vendor.date,             // D: Date
         vendor.totalAmount,      // E: Total (€) - as number, not string!
-        vendor.ivaAmount,        // F: IVA (€) - as number, not string!
+        vendor.ivaAmount,        // F: VAT (€) - as number, not string!
         vendor.baseAmount,       // G: Base (€) - as number, not string!
         vendor.tip ?? 0,         // H: Tip (€) - as number, not string!
         vendor.category,         // I: Category
@@ -252,7 +252,7 @@ async function createQuarterlySheets(
 
     // Build sheet rows
     const header = [
-      "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)",
+      "Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)",
       "Category", "Currency", "Notes", "Image URL", "Exported At"
     ];
 
@@ -268,7 +268,7 @@ async function createQuarterlySheets(
     const totalRow = [
       "", "", "QUARTERLY TOTAL", "",
       "=SUM(E3:E1000)",      // E: Total (€) - auto sum
-      "=SUM(F3:F1000)",      // F: IVA (€) - auto sum
+      "=SUM(F3:F1000)",      // F: VAT (€) - auto sum
       "=SUM(G3:G1000)",      // G: Base (€) - auto sum
       "=SUM(H3:H1000)",      // H: Tip (€) - auto sum
       "", "", "", "", ""
@@ -283,7 +283,7 @@ async function createQuarterlySheets(
         vendor.vendor,           // C: Vendor
         vendor.date,             // D: Date
         vendor.totalAmount,      // E: Total (€) - as number, not string!
-        vendor.ivaAmount,        // F: IVA (€) - as number, not string!
+        vendor.ivaAmount,        // F: VAT (€) - as number, not string!
         vendor.baseAmount,       // G: Base (€) - as number, not string!
         vendor.tip ?? 0,         // H: Tip (€) - as number, not string!
         vendor.category,         // I: Category

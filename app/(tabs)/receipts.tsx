@@ -16,6 +16,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
+import { displayInvoiceNumberWithHash } from "@/lib/invoice-display";
 import { trpc } from "@/lib/trpc";
 import type { Invoice } from "@/shared/invoice-types";
 
@@ -75,7 +76,7 @@ function InvoiceCard({
               {invoice.vendor || "Unknown Vendor"}
             </Text>
             <Text style={[styles.cardInvNum, { color: colors.muted }]}>
-              {invoice.invoiceNumber ? `#${invoice.invoiceNumber}` : "No invoice #"}
+              {displayInvoiceNumberWithHash(invoice.invoiceNumber)}
             </Text>
           </View>
         </View>
@@ -95,7 +96,7 @@ function InvoiceCard({
         <View style={styles.cardMeta}>
           <IconSymbol name="calendar" size={12} color={colors.muted} />
           <Text style={[styles.cardMetaText, { color: colors.muted }]}>
-            {new Date(invoice.date).toLocaleDateString("en-ES", {
+            {new Date(invoice.date).toLocaleDateString("en-US", {
               day: "2-digit",
               month: "short",
               year: "numeric",
@@ -107,7 +108,7 @@ function InvoiceCard({
           <Text style={[styles.cardMetaText, { color: colors.muted }]}>{invoice.category}</Text>
         </View>
         <View style={styles.cardMeta}>
-          <Text style={[styles.ivaLabel, { color: colors.muted }]}>IVA</Text>
+          <Text style={[styles.ivaLabel, { color: colors.muted }]}>VAT</Text>
           <Text style={[styles.cardMetaText, { color: colors.warning }]}>
             €{invoice.ivaAmount.toFixed(2)}
           </Text>
@@ -211,6 +212,7 @@ export default function ReceiptsScreen() {
   return (
     <ScreenContainer containerClassName="bg-background">
       <FlatList
+        style={{ flex: 1, backgroundColor: colors.background }}
         data={filtered}
         keyExtractor={(item) => item.id}
         refreshControl={

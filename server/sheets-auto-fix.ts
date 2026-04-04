@@ -57,7 +57,8 @@ export async function analyzeJanuaryTemplate(
   // Identify column positions
   const vendorColumn = headers.indexOf("Vendor");
   const totalColumn = headers.indexOf("Total (€)");
-  const ivaColumn = headers.indexOf("IVA (€)");
+  const ivaColumn =
+    headers.indexOf("VAT (€)") >= 0 ? headers.indexOf("VAT (€)") : headers.indexOf("IVA (€)");
   const baseColumn = headers.indexOf("Base (€)");
   const tipColumn = headers.indexOf("Tip (€)");
 

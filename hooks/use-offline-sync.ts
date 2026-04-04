@@ -1,10 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getSheetsExportTarget } from "@/lib/sheets-settings";
 import { trpc } from "@/lib/trpc";
 
 export const OFFLINE_INVOICES_KEY = "offline_invoices";
-const SPREADSHEET_ID = "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
 
 export type UploadStatus = "idle" | "uploading" | "success" | "failed";
 
@@ -49,9 +49,10 @@ export function useOfflineSync() {
 
     setUploadStatus("uploading");
     try {
+      const { spreadsheetId } = await getSheetsExportTarget();
       for (const entry of entries) {
         await exportMutation.mutateAsync({
-          spreadsheetId: SPREADSHEET_ID,
+          spreadsheetId,
           sheetName: entry.sheetName,
           rows: [entry.row],
           automateSheets: true,

@@ -1,4 +1,3 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import * as FileSystem from "expo-file-system/legacy";
@@ -18,10 +17,10 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
+import { displayInvoiceNumber } from "@/lib/invoice-display";
+import { getSheetsExportTarget } from "@/lib/sheets-settings";
 import { trpc } from "@/lib/trpc";
 import type { Invoice } from "@/shared/invoice-types";
-
-const SETTINGS_KEY = "app_settings_v1";
 
 // Helper function to convert image file to base64
 async function convertImageToBase64(imageUri: string): Promise<string> {
@@ -96,19 +95,7 @@ export default function ReceiptDetailScreen() {
   const handleExport = useCallback(async (skipDuplicateCheck = false) => {
     if (!invoice) return;
 
-    const settings = await AsyncStorage.getItem(SETTINGS_KEY);
-    const parsed = settings ? JSON.parse(settings) : {};
-    const spreadsheetId = parsed.spreadsheetId;
-    const sheetName = parsed.sheetName ?? "Invoices";
-
-    if (!spreadsheetId) {
-      Alert.alert(
-        "Spreadsheet Not Configured",
-        "Please enter your Google Spreadsheet ID in Settings.",
-        [{ text: "OK" }]
-      );
-      return;
-    }
+    const { spreadsheetId, sheetName } = await getSheetsExportTarget();
 
     setExporting(true);
     try {
@@ -148,15 +135,15 @@ export default function ReceiptDetailScreen() {
       // Duplicate detected — show warning with option to force upload
       if (result.rowsAdded === 0) {
         Alert.alert(
-          "Duplicate Invoice",
-          `This invoice already exists:\n${invoice.invoiceNumber || "No number"} / ${invoice.vendor}`,
+          "Already in Google Sheets",
+          `A row with the same invoice number or the same store, date, and total is already in your spreadsheet.\n\n${displayInvoiceNumber(invoice.invoiceNumber)} · ${invoice.vendor}`,
           [
             { text: "Cancel", style: "cancel" },
             {
-              text: "Upload Anyway",
+              text: "Upload anyway",
               onPress: () => handleExport(true),
             },
-          ]
+          ],
         );
         return;
       }
@@ -167,7 +154,15 @@ export default function ReceiptDetailScreen() {
       });
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert("Exported!", "Invoice has been added to your Google Spreadsheet.");
+      if (result.receiptImageMissing && invoice.imageUri) {
+        Alert.alert(
+          "Exported without image",
+          "The row was added to your Google Spreadsheet, but the receipt photo could not be uploaded. Invoice details are still saved.",
+          [{ text: "OK" }],
+        );
+      } else {
+        Alert.alert("Exported!", "Invoice has been added to your Google Spreadsheet.");
+      }
     } catch (err) {
       console.error("[Export] Error:", err);
       Alert.alert("Export Failed", "Could not export to Google Sheets. Check your connection and spreadsheet ID.");
@@ -246,7 +241,7 @@ export default function ReceiptDetailScreen() {
             </View>
             <View style={[styles.amountDivider, { backgroundColor: colors.border }]} />
             <View style={styles.amountItem}>
-              <Text style={[styles.amountLabel, { color: colors.muted }]}>IVA</Text>
+              <Text style={[styles.amountLabel, { color: colors.muted }]}>VAT</Text>
               <Text style={[styles.amountValue, { color: colors.warning }]}>
                 €{invoice.ivaAmount.toFixed(2)}
               </Text>
@@ -263,10 +258,10 @@ export default function ReceiptDetailScreen() {
 
         {/* Details */}
         <View style={[styles.detailsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <DetailRow label="Invoice Number" value={invoice.invoiceNumber || "—"} />
+          <DetailRow label="Invoice Number" value={displayInvoiceNumber(invoice.invoiceNumber)} />
           <DetailRow
             label="Date"
-            value={new Date(invoice.date).toLocaleDateString("en-ES", {
+            value={new Date(invoice.date).toLocaleDateString("en-US", {
               weekday: "long",
               day: "2-digit",
               month: "long",
@@ -281,7 +276,7 @@ export default function ReceiptDetailScreen() {
           {invoice.notes && <DetailRow label="Notes" value={invoice.notes} />}
           <DetailRow
             label="Added"
-            value={new Date(invoice.createdAt).toLocaleDateString("en-ES", {
+            value={new Date(invoice.createdAt).toLocaleDateString("en-US", {
               day: "2-digit",
               month: "short",
               year: "numeric",

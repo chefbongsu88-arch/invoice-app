@@ -16,10 +16,9 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
+import { getSheetsExportTarget } from "@/lib/sheets-settings";
 import { trpc } from "@/lib/trpc";
 import type { InvoiceCategory } from "@/shared/invoice-types";
-
-const SPREADSHEET_ID = "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
 
 const CATEGORIES: InvoiceCategory[] = [
   "Meat",
@@ -168,8 +167,9 @@ export default function EditInvoiceScreen() {
       // Update in Sheets if previously exported
       if (invoice.exportedToSheets) {
         try {
+          const { spreadsheetId } = await getSheetsExportTarget();
           await updateInSheetsMutation.mutateAsync({
-            spreadsheetId:         SPREADSHEET_ID,
+            spreadsheetId,
             originalInvoiceNumber: invoice.invoiceNumber,
             originalVendor:        invoice.vendor,
             source:                invoice.source,
@@ -270,7 +270,7 @@ export default function EditInvoiceScreen() {
             placeholder="0.00"
           />
           <FieldRow
-            label="IVA / Tax (€)"
+            label="VAT / tax (€)"
             value={ivaAmount}
             onChange={setIvaAmount}
             keyboardType="decimal-pad"

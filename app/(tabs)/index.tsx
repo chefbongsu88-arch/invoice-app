@@ -85,7 +85,7 @@ function RecentItem({ invoice }: { invoice: Invoice }) {
           {invoice.vendor || "Unknown Vendor"}
         </Text>
         <Text style={[styles.recentDate, { color: colors.muted }]}>
-          {new Date(invoice.date).toLocaleDateString("en-ES", {
+          {new Date(invoice.date).toLocaleDateString("en-US", {
             day: "2-digit",
             month: "short",
             year: "numeric",
@@ -133,6 +133,7 @@ export default function HomeScreen() {
   return (
     <ScreenContainer containerClassName="bg-background">
       <FlatList
+        style={{ flex: 1, backgroundColor: colors.background }}
         data={recent}
         keyExtractor={(item) => item.id}
         refreshControl={
@@ -168,7 +169,7 @@ export default function HomeScreen() {
                 accent={colors.primary}
               />
               <StatCard
-                label="Total IVA"
+                label="Total VAT"
                 value={`€${stats.totalIva.toFixed(0)}`}
                 accent={colors.warning}
               />

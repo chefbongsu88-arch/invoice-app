@@ -32,7 +32,10 @@ export function calculateMonthlyStats(invoices: Invoice[]): MonthlyStats[] {
   const monthMap = new Map<string, { total: number; iva: number; count: number; base: number }>();
 
   invoices.forEach((invoice) => {
-    const date = new Date(invoice.date);
+    const dStr = String(invoice.date ?? "").trim();
+    if (!dStr || !/^\d{4}-\d{2}-\d{2}/.test(dStr)) return;
+    const date = new Date(`${dStr}T12:00:00`);
+    if (Number.isNaN(date.getTime())) return;
     const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 
     const existing = monthMap.get(monthKey) || { total: 0, iva: 0, count: 0, base: 0 };
@@ -120,11 +123,19 @@ export function formatMonthlyChartData(monthlyStats: MonthlyStats[]) {
   };
 }
 
+/** PieChart rows for react-native-chart-kit (accessor = population). */
+export type CategoryPieSlice = {
+  name: string;
+  population: number;
+  color: string;
+  legendFontColor: string;
+};
+
 /**
- * Format per-category chart data
+ * Format per-category chart data for PieChart (not LineChart).
  */
-export function formatCategoryChartData(categoryStats: CategoryStats[]) {
-  const colors = [
+export function formatCategoryChartData(categoryStats: CategoryStats[]): CategoryPieSlice[] {
+  const palette = [
     "#0a7ea4",
     "#9b59b6",
     "#e74c3c",
@@ -135,13 +146,10 @@ export function formatCategoryChartData(categoryStats: CategoryStats[]) {
     "#27ae60",
   ];
 
-  return {
-    labels: categoryStats.map((c) => c.category),
-    datasets: [
-      {
-        data: categoryStats.map((c) => c.percentage),
-      },
-    ],
-    colors: categoryStats.map((_, i) => colors[i % colors.length]),
-  };
+  return categoryStats.map((c, i) => ({
+    name: c.category.length > 18 ? `${c.category.slice(0, 16)}…` : c.category,
+    population: Math.max(0, c.total),
+    color: palette[i % palette.length],
+    legendFontColor: "#94A3B8",
+  }));
 }
