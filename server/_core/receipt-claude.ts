@@ -12,6 +12,10 @@ import {
 const CLAUDE_IMAGE_BYTE_TARGET = 4_000_000;
 const ANTHROPIC_IMAGE_MAX_BYTES = 5_242_880;
 
+function looksLikeJpegBuffer(buf: Buffer): boolean {
+  return buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xd8;
+}
+
 /**
  * Decode HEIC if needed, then always re-encode with sharp to baseline JPEG.
  * Anthropic often returns "Could not process image" for HEIC-convert output or exotic PNG/WebP
@@ -72,6 +76,20 @@ async function shrinkImageForClaudeIfNeeded(
     }
   }
 
+  if (!looksLikeJpegBuffer(working)) {
+    console.warn("[OCR] post-normalize buffer is not JPEG; forcing HEIC→JPEG");
+    try {
+      raw = Buffer.from(await heicBufferToJpeg(Buffer.from(normalizedBase64, "base64")));
+      preconvertedHeic = true;
+      working = await normalizeToWorkingJpeg(raw);
+    } catch (e) {
+      console.error("[OCR] forced HEIC→JPEG failed:", e);
+      throw new Error(
+        "Could not read this photo (HEIC). In Photos, duplicate as JPEG or use Settings → Camera → Formats → Most Compatible.",
+      );
+    }
+  }
+
   if (working.length <= CLAUDE_IMAGE_BYTE_TARGET) {
     return { data: working.toString("base64"), mediaType: "image/jpeg" };
   }
@@ -79,18 +97,42 @@ async function shrinkImageForClaudeIfNeeded(
   let quality = 76;
   let maxWidth = 1600;
 
+  async function resizeOnce(w: Buffer, mw: number, q: number): Promise<Buffer> {
+    return sharp(w, { failOn: "none" })
+      .resize({ width: mw, height: mw, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: q, mozjpeg: true, chromaSubsampling: "4:2:0" })
+      .toBuffer();
+  }
+
+  async function recoverWorkingFromHeicOriginal(): Promise<void> {
+    const original = Buffer.from(normalizedBase64, "base64");
+    raw = Buffer.from(await heicBufferToJpeg(original));
+    preconvertedHeic = true;
+    working = await normalizeToWorkingJpeg(raw);
+  }
+
   for (let attempt = 0; attempt < 22; attempt++) {
     let out: Buffer;
     try {
-      out = await sharp(working, { failOn: "none" })
-        .resize({ width: maxWidth, height: maxWidth, fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality, mozjpeg: true, chromaSubsampling: "4:2:0" })
-        .toBuffer();
+      out = await resizeOnce(working, maxWidth, quality);
     } catch (e) {
-      console.error("[OCR] sharp failed while resizing receipt for Claude:", e);
-      throw new Error(
-        "Could not prepare the receipt image for OCR. Try a smaller or clearer photo.",
-      );
+      if (isLibvipsHeifDecodeError(e)) {
+        console.warn("[OCR] sharp resize hit HEIF/libvips issue; re-encoding via heic-convert");
+        try {
+          await recoverWorkingFromHeicOriginal();
+          out = await resizeOnce(working, maxWidth, quality);
+        } catch (e2) {
+          console.error("[OCR] sharp failed while resizing receipt for Claude:", e2);
+          throw new Error(
+            "Could not prepare the receipt image for OCR. Try a smaller or clearer photo.",
+          );
+        }
+      } else {
+        console.error("[OCR] sharp failed while resizing receipt for Claude:", e);
+        throw new Error(
+          "Could not prepare the receipt image for OCR. Try a smaller or clearer photo.",
+        );
+      }
     }
 
     if (out.length <= CLAUDE_IMAGE_BYTE_TARGET) {
@@ -101,10 +143,21 @@ async function shrinkImageForClaudeIfNeeded(
     maxWidth = Math.max(480, Math.floor(maxWidth * 0.86));
   }
 
-  const last = await sharp(working, { failOn: "none" })
-    .resize({ width: 480, height: 480, fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 26, mozjpeg: true, chromaSubsampling: "4:2:0" })
-    .toBuffer();
+  let last: Buffer;
+  try {
+    last = await resizeOnce(working, 480, 26);
+  } catch (e) {
+    if (isLibvipsHeifDecodeError(e)) {
+      console.warn("[OCR] sharp final resize hit HEIF/libvips issue; re-encoding via heic-convert");
+      await recoverWorkingFromHeicOriginal();
+      last = await resizeOnce(working, 480, 26);
+    } else {
+      console.error("[OCR] sharp final resize failed for Claude:", e);
+      throw new Error(
+        "Could not prepare the receipt image for OCR. Try a smaller or clearer photo.",
+      );
+    }
+  }
 
   if (last.length > ANTHROPIC_IMAGE_MAX_BYTES) {
     throw new Error(

@@ -12,12 +12,28 @@ const heicConvert = require("heic-convert") as (opts: {
  */
 export function isLikelyHeicOrHeifBuffer(buf: Buffer): boolean {
   if (buf.length < 12) return false;
-  if (buf.subarray(4, 8).toString("ascii") !== "ftyp") return false;
-  const brand = buf.subarray(8, 12).toString("ascii").replace(/\0/g, "").toLowerCase();
-  if (/^(heic|heix|hevc|heim|heis|mif1|msf1|hevx|hevm)/.test(brand)) return true;
+  if (buf.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = buf.subarray(8, 12).toString("ascii").replace(/\0/g, "").toLowerCase();
+    if (/^(heic|heix|hevc|heim|heis|mif1|msf1|hevx|hevm)/.test(brand)) return true;
+  }
   // Some devices put a different primary brand; scan header for HEIF identifiers
   const sniff = buf.subarray(0, Math.min(128, buf.length)).toString("latin1");
-  return /mif1|msf1|heic|heix|hevx/i.test(sniff);
+  if (/mif1|msf1|heic|heix|hevx/i.test(sniff)) return true;
+
+  // Exif wrapper or other prefix before the first `ftyp` box — scan first 16 KiB
+  const scanLen = Math.min(buf.length, 16384);
+  for (let i = 0; i <= scanLen - 12; i++) {
+    if (
+      buf[i] === 0x66 &&
+      buf[i + 1] === 0x74 &&
+      buf[i + 2] === 0x79 &&
+      buf[i + 3] === 0x70
+    ) {
+      const brand = buf.subarray(i + 8, i + 12).toString("ascii").replace(/\0/g, "").toLowerCase();
+      if (/^(heic|heix|hevc|heim|heis|mif1|msf1|hevx|hevm)/.test(brand)) return true;
+    }
+  }
+  return false;
 }
 
 /** libvips/sharp on Linux (Railway) is often built without HEIF — this matches that failure. */
