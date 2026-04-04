@@ -32,6 +32,12 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
+  // Large tRPC JSON (e.g. base64 images) + slow mobile networks: avoid premature close behind proxies.
+  // Node 18+: requestTimeout defaults can be tight for multi‑MB bodies; relax for invoice export/OCR.
+  server.requestTimeout = 180_000; // 3 min
+  server.headersTimeout = 185_000; // must be > requestTimeout (Node requirement)
+  server.keepAliveTimeout = 75_000;
+
   // Enable CORS for all routes - reflect the request origin to support credentials
   app.use((req, res, next) => {
     const origin = req.headers.origin;
@@ -94,7 +100,7 @@ async function startServer() {
       `[boot] Receipt OCR keys: ANTHROPIC_API_KEY=${ENV.anthropicApiKey?.trim() ? "set" : "MISSING"} | GOOGLE_GEMINI_API_KEY=${ENV.googleGeminiApiKey?.trim() ? "set" : "MISSING"} | BUILT_IN_FORGE_API_KEY=${ENV.forgeApiKey?.trim() ? "set" : "MISSING"}`,
     );
     console.log(
-      "[boot] Order used: Claude first (if Anthropic set) → then Google Gemini direct (if Gemini key set) → else Forge. If you see invokeLLM errors, Forge is running — add/fix ANTHROPIC or GOOGLE_GEMINI on Railway.",
+      "[boot] Receipt OCR order: Gemini first when both keys → else Claude / Gemini-only / Forge.",
     );
   });
 }
