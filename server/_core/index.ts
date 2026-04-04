@@ -100,15 +100,25 @@ async function startServer() {
     });
   });
 
-  const preferredPort = parseInt(process.env.PORT || "3000");
-  const port = await findAvailablePort(preferredPort);
+  const preferredPort = parseInt(process.env.PORT || "3000", 10);
+  // Railway/Docker inject PORT — healthchecks hit that port only. Never substitute another port.
+  const hasPlatformPort =
+    process.env.PORT != null && String(process.env.PORT).trim() !== "";
+  const port = hasPlatformPort
+    ? preferredPort
+    : await findAvailablePort(preferredPort);
 
-  if (port !== preferredPort) {
+  if (!hasPlatformPort && port !== preferredPort) {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
-  server.listen(port, () => {
-    console.log(`[api] server listening on port ${port}`);
+  const listenHost = "0.0.0.0";
+  server.on("error", (err) => {
+    console.error("[api] server listen error:", err);
+    process.exit(1);
+  });
+  server.listen(port, listenHost, () => {
+    console.log(`[api] server listening on ${listenHost}:${port}`);
     console.log(
       `[boot] Receipt OCR keys: ANTHROPIC_API_KEY=${ENV.anthropicApiKey?.trim() ? "set" : "MISSING"} | GOOGLE_GEMINI_API_KEY=${ENV.googleGeminiApiKey?.trim() ? "set" : "MISSING"} | BUILT_IN_FORGE_API_KEY=${ENV.forgeApiKey?.trim() ? "set" : "MISSING"}`,
     );

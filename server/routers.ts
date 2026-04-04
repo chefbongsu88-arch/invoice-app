@@ -23,7 +23,12 @@ import { parseReceiptWithGoogleGemini } from "./_core/receipt-gemini-google";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { uploadImageToStorage } from "./image-upload-storage";
-import { encodeValuesRange } from "./sheets-automation";
+import {
+  applyThinTextFormatToGridRange,
+  encodeValuesRange,
+  getSheetIdByTitle,
+  parseAppendUpdatedRangeToGridRange,
+} from "./sheets-automation";
 import {
   detectMimeFromBuffer,
   putReceiptShareImage,
@@ -986,6 +991,27 @@ export const appRouter = router({
           console.error("Sheets API error:", errText);
           console.error("Append URL:", appendUrl);
           throw new Error(`Failed to export to Google Sheets. Please try again.`);
+        }
+
+        const appendJson = (await appendRes.json()) as {
+          updates?: { updatedRange?: string };
+        };
+        const updatedRange = appendJson.updates?.updatedRange;
+        if (updatedRange) {
+          const sheetIdForFormat = await getSheetIdByTitle(
+            spreadsheetId,
+            sheetName,
+            accessToken,
+          );
+          const grid = parseAppendUpdatedRangeToGridRange(updatedRange);
+          if (sheetIdForFormat != null && grid) {
+            await applyThinTextFormatToGridRange(
+              spreadsheetId,
+              accessToken,
+              sheetIdForFormat,
+              grid,
+            );
+          }
         }
 
         // Automatically trigger sheet automation on every upload

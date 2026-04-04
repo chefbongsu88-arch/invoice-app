@@ -56,6 +56,112 @@ export function encodeValuesRange(sheetName: string, a1: string): string {
   return encodeURIComponent(`${sheetName}!${a1}`);
 }
 
+/** Columns A–M for tracker-style sheets (13 columns). */
+export const TRACKER_COLUMN_COUNT = 13;
+
+/** 0-based column index from A1 letters (A=0, …, Z=25, AA=26, …). */
+export function a1ColumnLettersToIndex(letters: string): number {
+  let n = 0;
+  for (const ch of letters.toUpperCase()) {
+    if (ch < "A" || ch > "Z") return 0;
+    n = n * 26 + (ch.charCodeAt(0) - 64);
+  }
+  return n - 1;
+}
+
+/**
+ * Parse a value append `updatedRange` like `'Sheet Name'!A12:M14` into grid indices (endRowIndex exclusive).
+ */
+export function parseAppendUpdatedRangeToGridRange(updatedRange: string): {
+  startRowIndex: number;
+  endRowIndex: number;
+  startColumnIndex: number;
+  endColumnIndex: number;
+} | null {
+  const bang = updatedRange.lastIndexOf("!");
+  const coords = bang === -1 ? updatedRange : updatedRange.slice(bang + 1);
+  const m = coords.match(/^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$/);
+  if (!m) return null;
+  const startRow1 = parseInt(m[2], 10);
+  const endRow1 = parseInt(m[4], 10);
+  const startCol = a1ColumnLettersToIndex(m[1]);
+  const endCol = a1ColumnLettersToIndex(m[3]);
+  return {
+    startRowIndex: startRow1 - 1,
+    endRowIndex: endRow1,
+    startColumnIndex: startCol,
+    endColumnIndex: endCol + 1,
+  };
+}
+
+export async function getSheetIdByTitle(
+  spreadsheetId: string,
+  sheetTitle: string,
+  accessToken: string,
+): Promise<number | null> {
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!res.ok) return null;
+  const data = (await res.json()) as {
+    sheets?: Array<{ properties: { title: string; sheetId: number } }>;
+  };
+  const sheet = data.sheets?.find((s) => s.properties.title === sheetTitle);
+  return sheet?.properties.sheetId ?? null;
+}
+
+/**
+ * Normal weight, slightly smaller Roboto — reads “thinner” than default bold headers in Sheets.
+ */
+export async function applyThinTextFormatToGridRange(
+  spreadsheetId: string,
+  accessToken: string,
+  sheetId: number,
+  range: {
+    startRowIndex: number;
+    endRowIndex: number;
+    startColumnIndex: number;
+    endColumnIndex: number;
+  },
+): Promise<void> {
+  const batchRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        requests: [
+          {
+            repeatCell: {
+              range: { sheetId, ...range },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: false,
+                    fontSize: 10,
+                    fontFamily: "Roboto",
+                  },
+                },
+              },
+              fields: "userEnteredFormat.textFormat",
+            },
+          },
+        ],
+      }),
+    },
+  );
+  if (!batchRes.ok) {
+    console.warn(
+      "[Sheets] applyThinTextFormatToGridRange failed:",
+      await batchRes.text(),
+    );
+  }
+}
+
 /**
  * Create or update a sheet with headers
  */

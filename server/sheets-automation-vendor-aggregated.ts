@@ -1,5 +1,11 @@
 import { isMeatCategory } from "../shared/invoice-types";
-import { encodeValuesRange, ensureSheetExists } from "./sheets-automation";
+import {
+  applyThinTextFormatToGridRange,
+  encodeValuesRange,
+  ensureSheetExists,
+  getSheetIdByTitle,
+  TRACKER_COLUMN_COUNT,
+} from "./sheets-automation";
 
 export interface SheetAutomationConfig {
   spreadsheetId: string;
@@ -241,6 +247,16 @@ async function createMonthlySheets(
       body: JSON.stringify({ values: sheetRows })
     });
 
+    const monthSheetId = await getSheetIdByTitle(spreadsheetId, month, accessToken);
+    if (monthSheetId != null && sheetRows.length > 0) {
+      await applyThinTextFormatToGridRange(spreadsheetId, accessToken, monthSheetId, {
+        startRowIndex: 0,
+        endRowIndex: sheetRows.length,
+        startColumnIndex: 0,
+        endColumnIndex: TRACKER_COLUMN_COUNT,
+      });
+    }
+
     console.log(`✅ Updated ${month} sheet: ${aggregated.length} vendors`);
   }
 }
@@ -338,6 +354,16 @@ async function createQuarterlySheets(
       },
       body: JSON.stringify({ values: sheetRows })
     });
+
+    const quarterSheetId = await getSheetIdByTitle(spreadsheetId, quarter, accessToken);
+    if (quarterSheetId != null && sheetRows.length > 0) {
+      await applyThinTextFormatToGridRange(spreadsheetId, accessToken, quarterSheetId, {
+        startRowIndex: 0,
+        endRowIndex: sheetRows.length,
+        startColumnIndex: 0,
+        endColumnIndex: TRACKER_COLUMN_COUNT,
+      });
+    }
 
     console.log(`✅ Updated ${quarter} sheet: ${aggregated.length} vendors`);
   }
@@ -518,6 +544,17 @@ export async function updateMeatMonthlySheet(
     body: JSON.stringify({ values: sheetData }),
   });
   if (!writeRes.ok) throw new Error(`Meat_Monthly write error: ${await writeRes.text()}`);
+
+  const meatSheetId = await getSheetIdByTitle(spreadsheetId, SHEET, accessToken);
+  if (meatSheetId != null && sheetData.length > 0) {
+    const nCols = sheetData.reduce((m, r) => Math.max(m, r.length), 0);
+    await applyThinTextFormatToGridRange(spreadsheetId, accessToken, meatSheetId, {
+      startRowIndex: 0,
+      endRowIndex: sheetData.length,
+      startColumnIndex: 0,
+      endColumnIndex: Math.max(nCols, 1),
+    });
+  }
 
   console.log(`✅ Meat_Monthly updated: ${dataRows.length} cut rows across ${meatInvoices.length} invoices`);
 }
