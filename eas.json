@@ -9,14 +9,12 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "installCommand": "pnpm install --no-frozen-lockfile",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://invoice-app-production-18c0.up.railway.app"
       }
     },
     "preview": {
       "distribution": "internal",
-      "installCommand": "pnpm install --no-frozen-lockfile",
       "android": {
         "buildType": "apk"
       },
@@ -26,7 +24,6 @@
     },
     "production": {
       "autoIncrement": true,
-      "installCommand": "pnpm install --no-frozen-lockfile",
       "android": {
         "buildType": "apk"
       },
@@ -37,7 +34,6 @@
     "testflight": {
       "distribution": "store",
       "autoIncrement": true,
-      "installCommand": "pnpm install --no-frozen-lockfile",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://invoice-app-production-18c0.up.railway.app"
       }
