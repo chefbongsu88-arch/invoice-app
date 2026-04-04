@@ -8,6 +8,8 @@ expo-env.d.ts
 node_modules
 
 # Local secrets and tooling (do not commit)
+# Use pnpm only — stale package-lock.json breaks EAS (npm ci out of sync).
+package-lock.json
 .env.local
 .expo/
 dist/
