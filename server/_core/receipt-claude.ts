@@ -52,29 +52,34 @@ async function shrinkImageForClaudeIfNeeded(
       .toBuffer();
   }
 
-  let working: Buffer;
-  try {
-    working = await normalizeToWorkingJpeg(raw);
-  } catch (e) {
-    if (!preconvertedHeic && isLibvipsHeifDecodeError(e)) {
-      console.warn("[OCR] sharp cannot decode HEIF (no libheif on server); using heic-convert");
-      try {
+  let working: Buffer = await (async () => {
+    try {
+      return await normalizeToWorkingJpeg(raw);
+    } catch (e) {
+      if (isLibvipsHeifDecodeError(e)) {
+        console.warn("[OCR] sharp normalize failed (HEIF/libvips); using heic-convert with quality ladder");
         const original = Buffer.from(normalizedBase64, "base64");
-        raw = Buffer.from(await heicBufferToJpeg(original));
-        working = await normalizeToWorkingJpeg(raw);
-      } catch (e2) {
-        console.error("[OCR] heic-convert after sharp HEIF failure:", e2);
+        const qualities = preconvertedHeic ? [0.72, 0.55, 0.4] : [0.88, 0.72, 0.55, 0.4];
+        for (const q of qualities) {
+          try {
+            raw = Buffer.from(await heicBufferToJpeg(original, q));
+            preconvertedHeic = true;
+            return await normalizeToWorkingJpeg(raw);
+          } catch {
+            /* try next quality */
+          }
+        }
+        console.error("[OCR] heic-convert after sharp HEIF failure:", e);
         throw new Error(
           "Could not read this photo (HEIC). In Photos, duplicate as JPEG or use Settings → Camera → Formats → Most Compatible.",
         );
       }
-    } else {
       console.error("[OCR] sharp normalize (→JPEG) failed for Claude:", e);
       throw new Error(
         "Could not prepare the receipt image for OCR. Try a smaller or clearer photo.",
       );
     }
-  }
+  })();
 
   if (!looksLikeJpegBuffer(working)) {
     console.warn("[OCR] post-normalize buffer is not JPEG; forcing HEIC→JPEG");
@@ -106,9 +111,18 @@ async function shrinkImageForClaudeIfNeeded(
 
   async function recoverWorkingFromHeicOriginal(): Promise<void> {
     const original = Buffer.from(normalizedBase64, "base64");
-    raw = Buffer.from(await heicBufferToJpeg(original));
-    preconvertedHeic = true;
-    working = await normalizeToWorkingJpeg(raw);
+    const qualities = [0.88, 0.72, 0.55, 0.4];
+    for (const q of qualities) {
+      try {
+        raw = Buffer.from(await heicBufferToJpeg(original, q));
+        preconvertedHeic = true;
+        working = await normalizeToWorkingJpeg(raw);
+        return;
+      } catch {
+        /* next */
+      }
+    }
+    throw new Error("HEIC→JPEG recovery failed");
   }
 
   for (let attempt = 0; attempt < 22; attempt++) {

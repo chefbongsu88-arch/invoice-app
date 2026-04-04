@@ -1,0 +1,3 @@
+# Native lib for `heic-convert` (some iPhone HEIC compression modes need libheif at runtime).
+[variables]
+NIXPACKS_APT_PKGS = "libheif1"

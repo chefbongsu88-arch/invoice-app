@@ -6,6 +6,10 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { ENV } from "./_core/env";
 import { invokeLLM } from "./_core/llm";
 import {
+  heicBufferToJpeg,
+  isLikelyHeicOrHeifBuffer,
+} from "./_core/heic-to-jpeg";
+import {
   encodeReceiptImageForForgeStep,
   FORGE_OCR_LADDER,
 } from "./_core/receipt-image-forge";
@@ -38,11 +42,51 @@ function stringifyAnthropicStyleError(err: unknown): string {
   }
 }
 
-/** Claude vision 400 → try Gemini when configured (message body is not always in `err.message`). */
+/** Full message + `Error.cause` chain (libvips often nests `heif:` under `cause`). */
+function stringifyErrorChain(err: unknown): string {
+  const parts: string[] = [];
+  let e: unknown = err;
+  let depth = 0;
+  while (e != null && depth < 12) {
+    if (e instanceof Error) {
+      parts.push(e.name, e.message, e.stack ?? "");
+      e = (e as Error & { cause?: unknown }).cause;
+    } else {
+      parts.push(String(e));
+      break;
+    }
+    depth++;
+  }
+  return parts.join(" ");
+}
+
+function looksLikeJpegMagic(buf: Buffer): boolean {
+  return buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xd8;
+}
+
+function looksLikePngMagic(buf: Buffer): boolean {
+  return (
+    buf.length >= 4 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47
+  );
+}
+
+/** Claude vision 400 or local image-prep failure → try Gemini when configured. */
 function shouldFallbackClaudeReceiptOcrToGemini(err: unknown): boolean {
-  const s = stringifyAnthropicStyleError(err);
+  const s = `${stringifyAnthropicStyleError(err)} ${stringifyErrorChain(err)}`;
   if (/Could not process image|invalid_request_error|invalid_request/i.test(s)) return true;
-  return (err as { status?: number }).status === 400;
+  if ((err as { status?: number }).status === 400) return true;
+  if (
+    /Could not prepare the receipt image|Could not read this photo \(HEIC\)|Claude returned an empty response/i.test(
+      s,
+    )
+  ) {
+    return true;
+  }
+  return false;
 }
 
 // Helper function to parse DD/MM/YYYY date format correctly
@@ -488,20 +532,51 @@ export const appRouter = router({
                 RECEIPT_PARSE_USER,
               );
             } catch (claudeErr) {
-              const cm = stringifyAnthropicStyleError(claudeErr);
+              const cm = `${stringifyAnthropicStyleError(claudeErr)} ${stringifyErrorChain(claudeErr)}`;
               const claudeImageRejected = shouldFallbackClaudeReceiptOcrToGemini(claudeErr);
               if (useGeminiGoogle && claudeImageRejected) {
                 console.warn(
-                  "[OCR] Claude rejected the image; falling back to Google Gemini. First error:",
-                  cm.slice(0, 400),
+                  "[OCR] Claude path failed; falling back to Google Gemini. First error:",
+                  cm.slice(0, 500),
                 );
-                const jpeg = await encodeReceiptImageForForgeStep(normalized, mimeType, 0);
-                text = await parseReceiptWithGoogleGemini(
-                  jpeg.base64,
-                  jpeg.mimeType,
-                  RECEIPT_PARSE_SYSTEM,
-                  RECEIPT_PARSE_USER,
-                );
+                try {
+                  const jpeg = await encodeReceiptImageForForgeStep(normalized, mimeType, 0);
+                  text = await parseReceiptWithGoogleGemini(
+                    jpeg.base64,
+                    jpeg.mimeType,
+                    RECEIPT_PARSE_SYSTEM,
+                    RECEIPT_PARSE_USER,
+                  );
+                } catch (forgeErr) {
+                  console.warn(
+                    "[OCR] Forge encode for Gemini failed; trying direct JPEG/PNG or HEIC→JPEG:",
+                    forgeErr instanceof Error ? forgeErr.message : forgeErr,
+                  );
+                  const rawBuf = Buffer.from(normalized, "base64");
+                  let geminiB64 = normalized;
+                  let geminiMime: "image/jpeg" | "image/png" = "image/jpeg";
+                  if (looksLikeJpegMagic(rawBuf)) {
+                    geminiMime = "image/jpeg";
+                  } else if (looksLikePngMagic(rawBuf)) {
+                    geminiMime = "image/png";
+                  } else if (isLikelyHeicOrHeifBuffer(rawBuf)) {
+                    geminiB64 = (await heicBufferToJpeg(rawBuf, 0.75)).toString("base64");
+                    geminiMime = "image/jpeg";
+                  } else {
+                    try {
+                      geminiB64 = (await heicBufferToJpeg(rawBuf, 0.75)).toString("base64");
+                      geminiMime = "image/jpeg";
+                    } catch {
+                      throw forgeErr instanceof Error ? forgeErr : new Error(String(forgeErr));
+                    }
+                  }
+                  text = await parseReceiptWithGoogleGemini(
+                    geminiB64,
+                    geminiMime,
+                    RECEIPT_PARSE_SYSTEM,
+                    RECEIPT_PARSE_USER,
+                  );
+                }
               } else {
                 throw claudeErr;
               }

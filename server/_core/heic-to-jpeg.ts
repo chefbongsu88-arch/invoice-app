@@ -38,16 +38,29 @@ export function isLikelyHeicOrHeifBuffer(buf: Buffer): boolean {
 
 /** libvips/sharp on Linux (Railway) is often built without HEIF — this matches that failure. */
 export function isLibvipsHeifDecodeError(err: unknown): boolean {
-  const s = err instanceof Error ? `${err.message} ${err.stack ?? ""}` : String(err);
-  return /heif|heic|No decoding plugin|compression format|bad seek/i.test(s);
+  const parts: string[] = [];
+  let e: unknown = err;
+  let depth = 0;
+  while (e != null && depth < 10) {
+    if (e instanceof Error) {
+      parts.push(e.message, e.stack ?? "");
+      e = (e as Error & { cause?: unknown }).cause;
+    } else {
+      parts.push(String(e));
+      break;
+    }
+    depth++;
+  }
+  const s = parts.join(" ");
+  return /heif|heic|No decoding plugin|compression format|bad seek|source: bad seek/i.test(s);
 }
 
 /** Decode HEIC/HEIF to JPEG bytes so `sharp` (no libheif on Railway) can resize. */
-export async function heicBufferToJpeg(buf: Buffer): Promise<Buffer> {
+export async function heicBufferToJpeg(buf: Buffer, quality = 0.88): Promise<Buffer> {
   const out = await heicConvert({
     buffer: buf,
     format: "JPEG",
-    quality: 0.88,
+    quality,
   });
   if (Buffer.isBuffer(out)) return out;
   if (out instanceof ArrayBuffer) return Buffer.from(out);
