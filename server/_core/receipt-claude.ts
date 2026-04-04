@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 
 import { ENV } from "./env";
+import { heicBufferToJpeg, isLikelyHeicOrHeifBuffer } from "./heic-to-jpeg";
 
 /** Anthropic hard limit is 5_242_880 bytes decoded; stay clearly under. */
 const CLAUDE_IMAGE_BYTE_TARGET = 4_000_000;
@@ -22,13 +23,30 @@ async function shrinkImageForClaudeIfNeeded(
   normalizedBase64: string,
   mimeType: string,
 ): Promise<{ data: string; mediaType: ReturnType<typeof mimeToAnthropicMediaType> }> {
-  const raw = Buffer.from(normalizedBase64, "base64");
+  let raw = Buffer.from(normalizedBase64, "base64");
   if (!raw.length) {
     throw new Error("Receipt image decoded to an empty buffer.");
   }
 
+  let effectiveMime = mimeType;
+  const mtLower = mimeType.toLowerCase();
+  if (mtLower === "image/heic" || mtLower === "image/heif" || isLikelyHeicOrHeifBuffer(raw)) {
+    try {
+      raw = Buffer.from(await heicBufferToJpeg(raw));
+      effectiveMime = "image/jpeg";
+    } catch (e) {
+      console.error("[OCR] HEIC→JPEG failed (iPhone photos are often HEIC):", e);
+      throw new Error(
+        "Could not read this photo (HEIC). In Photos, duplicate as JPEG or take a new picture after Settings → Camera → Formats → Most Compatible.",
+      );
+    }
+  }
+
   if (raw.length <= CLAUDE_IMAGE_BYTE_TARGET) {
-    return { data: normalizedBase64, mediaType: mimeToAnthropicMediaType(mimeType) };
+    return {
+      data: raw.toString("base64"),
+      mediaType: mimeToAnthropicMediaType(effectiveMime),
+    };
   }
 
   let quality = 76;

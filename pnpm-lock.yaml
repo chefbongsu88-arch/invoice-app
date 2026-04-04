@@ -60,8 +60,8 @@ importers:
         specifier: ^1.0.10
         version: 1.0.10(expo@54.0.29)
       expo-camera:
-        specifier: ^55.0.11
-        version: 55.0.11(@types/emscripten@1.41.5)(expo@54.0.29)(react-native-web@0.21.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
+        specifier: ^17.0.10
+        version: 17.0.10(expo@54.0.29)(react-native-web@0.21.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
       expo-constants:
         specifier: ~18.0.12
         version: 18.0.12(expo@54.0.29)(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))
@@ -78,11 +78,11 @@ importers:
         specifier: ~3.0.11
         version: 3.0.11(expo@54.0.29)(react-native-web@0.21.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
       expo-image-manipulator:
-        specifier: ^55.0.13
-        version: 55.0.13(expo@54.0.29)
+        specifier: ^14.0.8
+        version: 14.0.8(expo@54.0.29)
       expo-image-picker:
-        specifier: ^55.0.13
-        version: 55.0.13(expo@54.0.29)
+        specifier: ^17.0.10
+        version: 17.0.10(expo@54.0.29)
       expo-keep-awake:
         specifier: ~15.0.8
         version: 15.0.8(expo@54.0.29)(react@19.1.0)
@@ -116,6 +116,9 @@ importers:
       expo-web-browser:
         specifier: ~15.0.10
         version: 15.0.10(expo@54.0.29)(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))
+      heic-convert:
+        specifier: ^2.1.0
+        version: 2.1.0
       jose:
         specifier: 6.1.0
         version: 6.1.0
@@ -2715,9 +2718,6 @@ packages:
   '@types/cookie@0.6.0':
     resolution: {integrity: sha512-4Kh9a6B2bQciAhf7FSuMRRkUWecJgJu9nPnx3yzpsfXX/c50REIqpHY4C82bXP90qrLtXtkDxTZosYO3UpOwlA==}
 
-  '@types/emscripten@1.41.5':
-    resolution: {integrity: sha512-cMQm7pxu6BxtHyqJ7mQZ2kXWV5SLmugybFdHCBbJ5eHzOo6VhBckEgAT3//rP5FwPHNPeEiq4SmQ5ucBwsOo4Q==}
-
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
 
@@ -3218,9 +3218,6 @@ packages:
 
   balanced-match@1.0.2:
     resolution: {integrity: sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==}
-
-  barcode-detector@3.1.1:
-    resolution: {integrity: sha512-ghWlEAV93ZCUniO7Co3ih/01XPm+U30CV+NoPbO6Chj5lZzHydDAqKlrBEd+37TkoR+QTH3tnnwd8k8epGTfIg==}
 
   base64-js@1.5.1:
     resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
@@ -4066,8 +4063,8 @@ packages:
     peerDependencies:
       expo: '*'
 
-  expo-camera@55.0.11:
-    resolution: {integrity: sha512-8z8qVXHPj4lGF8n4e6zsYR1YkTjNPz6Vim8T+EwAWaG9+5gQw9ax+fCz6+J9FVCR4mjK5XjZj1UaG65NbYJOHg==}
+  expo-camera@17.0.10:
+    resolution: {integrity: sha512-w1RBw83mAGVk4BPPwNrCZyFop0VLiVSRE3c2V9onWbdFwonpRhzmB4drygG8YOUTl1H3wQvALJHyMPTbgsK1Jg==}
     peerDependencies:
       expo: '*'
       react: '*'
@@ -4121,18 +4118,18 @@ packages:
     peerDependencies:
       expo: '*'
 
-  expo-image-loader@55.0.0:
-    resolution: {integrity: sha512-NOjp56wDrfuA5aiNAybBIjqIn1IxKeGJ8CECWZncQ/GzjZfyTYAHTCyeApYkdKkMBLHINzI4BbTGSlbCa0fXXQ==}
+  expo-image-loader@6.0.0:
+    resolution: {integrity: sha512-nKs/xnOGw6ACb4g26xceBD57FKLFkSwEUTDXEDF3Gtcu3MqF3ZIYd3YM+sSb1/z9AKV1dYT7rMSGVNgsveXLIQ==}
     peerDependencies:
       expo: '*'
 
-  expo-image-manipulator@55.0.13:
-    resolution: {integrity: sha512-ClUPOXdsxRfCZCuvGqNksYfYj0saeOKi5kqFjXR9e5DT8v/9CUD8DNGkDPJOI//S+jW7ipg3ODxJh+ZfVB2w1w==}
+  expo-image-manipulator@14.0.8:
+    resolution: {integrity: sha512-sXsXjm7rIxLWZe0j2A41J/Ph53PpFJRdyzJ3EQ/qetxLUvS2m3K1sP5xy37px43qCf0l79N/i6XgFgenFV36/Q==}
     peerDependencies:
       expo: '*'
 
-  expo-image-picker@55.0.13:
-    resolution: {integrity: sha512-G+W11rcoUi3rK+6cnKWkTfZilMkGVZnYe90TiM3R98nPSlzGBoto3a/TkGGTJXedz/dmMzr49L+STlWhuKKIFw==}
+  expo-image-picker@17.0.10:
+    resolution: {integrity: sha512-a2xrowp2trmvXyUWgX3O6Q2rZaa2C59AqivKI7+bm+wLvMfTEbZgldLX4rEJJhM8xtmEDTNU+lzjtObwzBRGaw==}
     peerDependencies:
       expo: '*'
 
@@ -4590,6 +4587,14 @@ packages:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
 
+  heic-convert@2.1.0:
+    resolution: {integrity: sha512-1qDuRvEHifTVAj3pFIgkqGgJIr0M3X7cxEPjEp0oG4mo8GFjq99DpCo8Eg3kg17Cy0MTjxpFdoBHOatj7ZVKtg==}
+    engines: {node: '>=12.0.0'}
+
+  heic-decode@2.1.0:
+    resolution: {integrity: sha512-0fB3O3WMk38+PScbHLVp66jcNhsZ/ErtQ6u2lMYu/YxXgbBtl+oKOhGQHa4RpvE68k8IzbWkABzHnyAIjR758A==}
+    engines: {node: '>=8.0.0'}
+
   hermes-estree@0.29.1:
     resolution: {integrity: sha512-jl+x31n4/w+wEqm0I2r4CMimukLbLQEYpisys5oCre611CI5fc9TxhqkBBCJ1edDG4Kza0f7CgNz8xVMLZQOmQ==}
 
@@ -4892,6 +4897,9 @@ packages:
   jose@6.1.0:
     resolution: {integrity: sha512-TTQJyoEoKcC1lscpVDCSsVgYzUDg/0Bt3WE//WiTPK6uOCQC2KZS4MpugbMWt/zyjkopgZoXhZuCi00gLudfUA==}
 
+  jpeg-js@0.4.4:
+    resolution: {integrity: sha512-WZzeDOEtTOBK4Mdsar0IqEU5sMr3vSV2RqkAIzUEV2BHnUfKGyswWFPFwK5EeDo93K3FohSHbLAjj0s1Wzd+dg==}
+
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
 
@@ -4963,6 +4971,10 @@ packages:
   levn@0.4.1:
     resolution: {integrity: sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ==}
     engines: {node: '>= 0.8.0'}
+
+  libheif-js@1.19.8:
+    resolution: {integrity: sha512-vQJWusIxO7wavpON1dusciL8Go9jsIQ+EUrckauFYAiSTjcmLAsuJh3SszLpvkwPci3JcL41ek2n+LUZGFpPIQ==}
+    engines: {node: '>=8.0.0'}
 
   lighthouse-logger@1.4.2:
     resolution: {integrity: sha512-gPWxznF6TKmUHrOQjlVo2UbaL2EJ71mb2CCeRs/2qBpi4L/g4LUVc9+3lKQ6DTUZwJswfM7ainGrLO1+fOqa2g==}
@@ -5668,6 +5680,10 @@ packages:
     resolution: {integrity: sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw==}
     engines: {node: '>=10.13.0'}
 
+  pngjs@6.0.0:
+    resolution: {integrity: sha512-TRzzuFRRmEoSW/p1KVAmiOgPco2Irlah+bGFCeNfJXxxYGwSw7YwAOAcd7X28K/m5bjBWKsC29KyoMfHbypayg==}
+    engines: {node: '>=12.13.0'}
+
   point-in-polygon@1.1.0:
     resolution: {integrity: sha512-3ojrFwjnnw8Q9242TzgXuTD+eKiutbzyslcq1ydfu82Db2y+Ogbmyrkpv0Hgj31qwT3lbS9+QAAO/pIQM35XRw==}
 
@@ -6372,10 +6388,6 @@ packages:
     resolution: {integrity: sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==}
     engines: {node: '>= 0.4'}
 
-  tagged-tag@1.0.0:
-    resolution: {integrity: sha512-yEFYrVhod+hdNyx7g5Bnkkb0G6si8HJurOoOEgC8B/O0uXLHlaey/65KRv6cuWBNhBgHKAROVpc7QyYqE5gFng==}
-    engines: {node: '>=20'}
-
   tailwind-merge@2.6.0:
     resolution: {integrity: sha512-P+Vu1qXfzediirmHOC3xKGAYeZtPcV9g76X+xg2FD4tYgR71ewMA35Y3sCz3zhiN/dwefRpJX0yBcgwi1fXNQA==}
 
@@ -6491,10 +6503,6 @@ packages:
   type-fest@0.7.1:
     resolution: {integrity: sha512-Ne2YiiGN8bmrmJJEuTWTLJR32nh/JdL1+PSicowtNb0WFpn59GK8/lfD61bVtzguz7b3PBt74nxpv/Pw5po5Rg==}
     engines: {node: '>=8'}
-
-  type-fest@5.5.0:
-    resolution: {integrity: sha512-PlBfpQwiUvGViBNX84Yxwjsdhd1TUlXr6zjX7eoirtCPIr08NAmxwa+fcYBTeRQxHo9YC9wwF3m9i700sHma8g==}
-    engines: {node: '>=20'}
 
   type-is@1.6.18:
     resolution: {integrity: sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g==}
@@ -6886,11 +6894,6 @@ packages:
 
   zod@4.2.1:
     resolution: {integrity: sha512-0wZ1IRqGGhMP76gLqz8EyfBXKk0J2qo2+H3fi4mcUP/KtTocoX08nmIAHl1Z2kJIZbZee8KOpBCSNPRgauucjw==}
-
-  zxing-wasm@3.0.1:
-    resolution: {integrity: sha512-3CLj6iaGkpqPWXAB4pIWkFOR63MwqGekpMzaROFKto4dFowiPmLlC56KoMoOSXzqOCOpI5DAvMdB8ku2va6fUg==}
-    peerDependencies:
-      '@types/emscripten': '>=1.39.6'
 
 snapshots:
 
@@ -9887,8 +9890,6 @@ snapshots:
 
   '@types/cookie@0.6.0': {}
 
-  '@types/emscripten@1.41.5': {}
-
   '@types/estree@1.0.8': {}
 
   '@types/express-serve-static-core@4.19.7':
@@ -10505,12 +10506,6 @@ snapshots:
   badgin@1.2.3: {}
 
   balanced-match@1.0.2: {}
-
-  barcode-detector@3.1.1(@types/emscripten@1.41.5):
-    dependencies:
-      zxing-wasm: 3.0.1(@types/emscripten@1.41.5)
-    transitivePeerDependencies:
-      - '@types/emscripten'
 
   base64-js@1.5.1: {}
 
@@ -11492,16 +11487,14 @@ snapshots:
       expo: 54.0.29(@babel/core@7.28.5)(@expo/metro-runtime@6.1.2)(expo-router@6.0.19)(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
       semver: 7.7.3
 
-  expo-camera@55.0.11(@types/emscripten@1.41.5)(expo@54.0.29)(react-native-web@0.21.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0):
+  expo-camera@17.0.10(expo@54.0.29)(react-native-web@0.21.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0):
     dependencies:
-      barcode-detector: 3.1.1(@types/emscripten@1.41.5)
       expo: 54.0.29(@babel/core@7.28.5)(@expo/metro-runtime@6.1.2)(expo-router@6.0.19)(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
+      invariant: 2.2.4
       react: 19.1.0
       react-native: 0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0)
     optionalDependencies:
       react-native-web: 0.21.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
-    transitivePeerDependencies:
-      - '@types/emscripten'
 
   expo-constants@18.0.12(expo@54.0.29)(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0)):
     dependencies:
@@ -11557,19 +11550,19 @@ snapshots:
     dependencies:
       expo: 54.0.29(@babel/core@7.28.5)(@expo/metro-runtime@6.1.2)(expo-router@6.0.19)(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
 
-  expo-image-loader@55.0.0(expo@54.0.29):
+  expo-image-loader@6.0.0(expo@54.0.29):
     dependencies:
       expo: 54.0.29(@babel/core@7.28.5)(@expo/metro-runtime@6.1.2)(expo-router@6.0.19)(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
 
-  expo-image-manipulator@55.0.13(expo@54.0.29):
+  expo-image-manipulator@14.0.8(expo@54.0.29):
     dependencies:
       expo: 54.0.29(@babel/core@7.28.5)(@expo/metro-runtime@6.1.2)(expo-router@6.0.19)(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
-      expo-image-loader: 55.0.0(expo@54.0.29)
+      expo-image-loader: 6.0.0(expo@54.0.29)
 
-  expo-image-picker@55.0.13(expo@54.0.29):
+  expo-image-picker@17.0.10(expo@54.0.29):
     dependencies:
       expo: 54.0.29(@babel/core@7.28.5)(@expo/metro-runtime@6.1.2)(expo-router@6.0.19)(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
-      expo-image-loader: 55.0.0(expo@54.0.29)
+      expo-image-loader: 6.0.0(expo@54.0.29)
 
   expo-image@3.0.11(expo@54.0.29)(react-native-web@0.21.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0):
     dependencies:
@@ -12152,6 +12145,16 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
+  heic-convert@2.1.0:
+    dependencies:
+      heic-decode: 2.1.0
+      jpeg-js: 0.4.4
+      pngjs: 6.0.0
+
+  heic-decode@2.1.0:
+    dependencies:
+      libheif-js: 1.19.8
+
   hermes-estree@0.29.1: {}
 
   hermes-estree@0.32.0: {}
@@ -12500,6 +12503,8 @@ snapshots:
 
   jose@6.1.0: {}
 
+  jpeg-js@0.4.4: {}
+
   js-tokens@4.0.0: {}
 
   js-yaml@3.14.2:
@@ -12568,6 +12573,8 @@ snapshots:
     dependencies:
       prelude-ls: 1.2.1
       type-check: 0.4.0
+
+  libheif-js@1.19.8: {}
 
   lighthouse-logger@1.4.2:
     dependencies:
@@ -13422,6 +13429,8 @@ snapshots:
 
   pngjs@5.0.0: {}
 
+  pngjs@6.0.0: {}
+
   point-in-polygon@1.1.0: {}
 
   possible-typed-array-names@1.1.0: {}
@@ -14255,8 +14264,6 @@ snapshots:
 
   supports-preserve-symlinks-flag@1.0.0: {}
 
-  tagged-tag@1.0.0: {}
-
   tailwind-merge@2.6.0: {}
 
   tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.8.2):
@@ -14383,10 +14390,6 @@ snapshots:
   type-fest@0.21.3: {}
 
   type-fest@0.7.1: {}
-
-  type-fest@5.5.0:
-    dependencies:
-      tagged-tag: 1.0.0
 
   type-is@1.6.18:
     dependencies:
@@ -14793,8 +14796,3 @@ snapshots:
   yocto-queue@0.1.0: {}
 
   zod@4.2.1: {}
-
-  zxing-wasm@3.0.1(@types/emscripten@1.41.5):
-    dependencies:
-      '@types/emscripten': 1.41.5
-      type-fest: 5.5.0

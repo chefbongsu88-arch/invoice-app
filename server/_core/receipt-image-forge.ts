@@ -1,5 +1,7 @@
 import sharp from "sharp";
 
+import { heicBufferToJpeg, isLikelyHeicOrHeifBuffer } from "./heic-to-jpeg";
+
 /**
  * Progressive JPEG ladder — unknown incoming size/format always lands on a bounded JPEG.
  * Each step shrinks further; Forge/Gemini often accepts only smaller inline images.
@@ -37,6 +39,18 @@ export async function encodeReceiptImageForForgeStep(
   }
   if (raw.length < 32) {
     throw new Error("Image data too small after decode");
+  }
+
+  const mtLower = hintedMime.toLowerCase();
+  if (mtLower === "image/heic" || mtLower === "image/heif" || isLikelyHeicOrHeifBuffer(raw)) {
+    try {
+      raw = Buffer.from(await heicBufferToJpeg(raw));
+    } catch (err) {
+      console.error("[OCR] HEIC→JPEG failed before Forge encode:", err);
+      throw new Error(
+        "Could not read HEIC image. Export as JPEG from Photos or change iPhone camera format to Most Compatible.",
+      );
+    }
   }
 
   try {
