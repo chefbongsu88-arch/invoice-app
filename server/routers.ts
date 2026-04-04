@@ -7,9 +7,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import {
   ENV,
   getPublicServerBaseUrl,
-  isForgeStorageConfigured,
   resolvePublicBaseForReceiptImages,
-  useForgeForSheetsExport,
 } from "./_core/env";
 import { invokeLLM } from "./_core/llm";
 import {
@@ -777,7 +775,7 @@ export const appRouter = router({
         const { spreadsheetId, sheetName, rows, skipDuplicateCheck, publicApiBaseUrl } = input;
         const receiptPublicBase = resolvePublicBaseForReceiptImages(publicApiBaseUrl);
         console.log(
-          `[Export] Sheets row image: publicBase=${receiptPublicBase ? "ok" : "MISSING"} forgeFallback=${useForgeForSheetsExport() ? "on" : "off"}`,
+          `[Export] Sheets row image: publicBase=${receiptPublicBase ? receiptPublicBase.slice(0, 48) : "MISSING"}`,
         );
 
         // Get access token using OAuth Refresh Token
@@ -877,7 +875,7 @@ export const appRouter = router({
             let imageUrl = r.imageUrl ?? "";
             const userProvidedImage = Boolean(r.imageUrl?.trim());
 
-            // data:/file: → in-memory /api/receipt-share first (no Forge creds), then Forge if configured
+            // data:/file: → in-memory /api/receipt-share only (Sheets =IMAGE); Forge is not used here
             if (imageUrl && (imageUrl.startsWith("data:") || imageUrl.startsWith("file://"))) {
               try {
                 let base64Data = "";
@@ -898,12 +896,6 @@ export const appRouter = router({
                 }
 
                 if (base64Data && !imageUrl.startsWith("file://")) {
-                  const sanitizedInvoiceNum = ((r.invoiceNumber || "receipt")
-                    .split("/").pop() || "receipt")
-                    .replace(/[^a-zA-Z0-9-]/g, "")
-                    .substring(0, 50);
-                  const fileName = `${sanitizedInvoiceNum || "receipt"}-${Date.now()}.jpg`;
-
                   const tryReceiptShare = (): void => {
                     const buf = Buffer.from(base64Data, "base64");
                     const mime = detectMimeFromBuffer(buf) || mimeFromDataUrl;
@@ -926,20 +918,9 @@ export const appRouter = router({
                   };
 
                   tryReceiptShare();
-                  // Forge is opt-in for export (invalid keys spam logs). Receipt-share is enough for =IMAGE.
-                  if (
-                    !String(imageUrl ?? "").trim() &&
-                    useForgeForSheetsExport() &&
-                    isForgeStorageConfigured()
-                  ) {
-                    imageUrl = await uploadImageToStorage(base64Data, fileName);
-                    if (String(imageUrl ?? "").trim()) {
-                      console.log(`[Export] Forge image URL for ${r.vendor}: ${fileName}`);
-                    }
-                  }
                   if (!String(imageUrl ?? "").trim()) {
                     console.warn(
-                      `[Export] No receipt image URL for ${r.vendor}. Use app export with publicApiBaseUrl, or set PUBLIC_SERVER_URL / Forge.`,
+                      `[Export] No receipt image URL for ${r.vendor} (check /api/receipt-share token or 8 MiB limit).`,
                     );
                   }
                 }

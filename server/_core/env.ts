@@ -29,28 +29,14 @@ export function getPublicServerBaseUrl(): string {
 
 /**
  * Prefer client-provided API origin (same host as /api/receipt-share) when Railway env is empty.
+ * Always ends with a non-empty HTTPS origin for sheet export (defaults to PRODUCTION_API_ORIGIN).
  */
 export function resolvePublicBaseForReceiptImages(clientBaseUrl?: string | null): string {
   const c = clientBaseUrl?.trim().replace(/\/+$/, "") ?? "";
   if (c && /^https?:\/\//i.test(c)) {
     return c;
   }
-  const fromEnv = getPublicServerBaseUrl();
-  if (fromEnv) return fromEnv;
-  // Last resort: same origin as native PRODUCTION_API_FALLBACK (Sheets =IMAGE requires HTTPS)
-  if (process.env.NODE_ENV !== "development") {
-    return PRODUCTION_API_ORIGIN;
-  }
-  // Railway can mis-set NODE_ENV; still need a public HTTPS base for /api/receipt-share
-  if (process.env.RAILWAY_ENVIRONMENT?.trim() || process.env.RAILWAY_PROJECT_ID?.trim()) {
-    return PRODUCTION_API_ORIGIN;
-  }
-  return "";
-}
-
-/** Default off: Google Sheets export uses in-memory /api/receipt-share. Set to "1" to try Forge after share fails. */
-export function useForgeForSheetsExport(): boolean {
-  return process.env.USE_FORGE_FOR_SHEETS_EXPORT === "1";
+  return getPublicServerBaseUrl() || PRODUCTION_API_ORIGIN;
 }
 
 /** True when Forge storage env vars are set (may still fail at runtime if invalid). */
