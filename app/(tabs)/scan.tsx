@@ -2,7 +2,7 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,7 +21,12 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
-import type { Invoice, InvoiceCategory, MeatItem } from "@/shared/invoice-types";
+import {
+  type Invoice,
+  type InvoiceCategory,
+  type MeatItem,
+  isMeatCategory,
+} from "@/shared/invoice-types";
 import { getOcrAlertForUser } from "@/lib/ocr-user-message";
 import { trpc } from "@/lib/trpc";
 
@@ -247,6 +252,12 @@ export default function ScanScreen() {
 
   const ocrMutation = trpc.invoices.parseReceipt.useMutation();
 
+  useEffect(() => {
+    if (!isMeatCategory(category)) {
+      setItems([]);
+    }
+  }, [category]);
+
   const pickFromCamera = useCallback(async () => {
     if (Platform.OS === "web") {
       Alert.alert("Camera not available", "Please use a physical device to scan receipts.");
@@ -337,10 +348,18 @@ export default function ScanScreen() {
       }
 
       const parsed = await ocrMutation.mutateAsync({ imageBase64: b64Payload });
-      
-      // Extract items if present (for meat vendors)
-      if (parsed.items && Array.isArray(parsed.items)) {
+
+      const nextCategory = (parsed.category as InvoiceCategory) ?? "Other";
+      setCategory(nextCategory);
+      // 줄 단위 품목은 "Meat"로 분류된 영수증만 (야채·기타는 Meat_Monthly/ UI에 섞이지 않음)
+      if (
+        isMeatCategory(nextCategory) &&
+        parsed.items &&
+        Array.isArray(parsed.items)
+      ) {
         setItems(parsed.items);
+      } else {
+        setItems([]);
       }
 
       setInvoiceNumber(parsed.invoiceNumber ?? "");
@@ -350,7 +369,6 @@ export default function ScanScreen() {
       );
       setTotalAmount(parsed.totalAmount?.toString() ?? "");
       setIvaAmount(parsed.ivaAmount?.toString() ?? "");
-      setCategory((parsed.category as InvoiceCategory) ?? "Other");
       setTip(""); // Reset tip for manual entry
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setStep("review");
@@ -396,13 +414,12 @@ export default function ScanScreen() {
       notes: notes.trim(),
       tip: tipAmount > 0 ? tipAmount : undefined,
       imageUri: imageUrl ?? undefined,
-      items: items.length > 0 ? items : undefined,
+      items: isMeatCategory(category) && items.length > 0 ? items : undefined,
       exportedToSheets: false,
       createdAt: new Date().toISOString(),
     };
 
-    // Check for duplicates
-    const duplicate = checkDuplicate(invoice);
+    const duplicate = await checkDuplicate(invoice);
     if (duplicate) {
       setDuplicateWarning(duplicate);
       setPendingInvoice(invoice);
@@ -426,6 +443,7 @@ export default function ScanScreen() {
     imageBase64FromPicker,
     addInvoice,
     checkDuplicate,
+    items,
   ]);
 
   const resetScan = useCallback(() => {
@@ -688,7 +706,7 @@ export default function ScanScreen() {
             </View>
           )}
 
-          {items.length > 0 && (
+          {isMeatCategory(category) && items.length > 0 && (
             <View style={[styles.formCard, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 16 }]}>
               <Text style={[styles.fieldLabel, { color: colors.foreground, marginBottom: 12 }]}>Meat Items</Text>
               {items.map((item, idx) => (

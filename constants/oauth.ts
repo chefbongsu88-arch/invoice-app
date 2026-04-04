@@ -1,6 +1,8 @@
 import * as Linking from "expo-linking";
 import * as ReactNative from "react-native";
 
+import { PRODUCTION_API_ORIGIN } from "@/constants/receipt-api-origin";
+
 // Extract scheme from bundle ID (last segment timestamp, prefixed with "manus")
 // e.g., "space.manus.my.app.t20240115103045" -> "manus20240115103045"
 const bundleId = "space.manus.invoice.tracker.t20260325194257";
@@ -8,7 +10,7 @@ const timestamp = bundleId.split(".").pop()?.replace(/^t/, "") ?? "";
 const schemeFromBundleId = `manus${timestamp}`;
 
 /** Used when EXPO_PUBLIC_API_BASE_URL is unset (production device builds). */
-const PRODUCTION_API_FALLBACK = "https://invoice-app-production-18c0.up.railway.app";
+const PRODUCTION_API_FALLBACK = PRODUCTION_API_ORIGIN;
 
 const env = {
   portal: process.env.EXPO_PUBLIC_OAUTH_PORTAL_URL ?? "",

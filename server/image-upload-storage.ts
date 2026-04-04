@@ -109,16 +109,15 @@ export async function uploadImageToStorage(
       console.log(`[Image Upload] URL: ${url}`);
       return url;
     } catch (error) {
-      console.error(
-        `[Image Upload] ❌ Attempt ${attempt} failed:`,
-        error instanceof Error ? error.message : error
-      );
-      
-      // Wait before retrying (exponential backoff)
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`[Image Upload] ❌ Attempt ${attempt} failed:`, msg);
+      if (msg.includes("Storage proxy credentials missing")) {
+        break;
+      }
       if (attempt < maxRetries) {
-        const delayMs = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
+        const delayMs = Math.pow(2, attempt - 1) * 1000;
         console.log(`[Image Upload] Retrying in ${delayMs}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
   }

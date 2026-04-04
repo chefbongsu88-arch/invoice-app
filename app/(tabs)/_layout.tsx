@@ -71,6 +71,14 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="gearshape.fill" color={color} />,
         }}
       />
+      {/* Route stays available via router.push("/(tabs)/gmail"); hide tab so Scan is never crowded off the bar */}
+      <Tabs.Screen
+        name="gmail"
+        options={{
+          title: "Gmail",
+          tabBarButton: () => null,
+        }}
+      />
     </Tabs>
     </View>
   );

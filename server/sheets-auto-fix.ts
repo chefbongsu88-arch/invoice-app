@@ -3,6 +3,8 @@
  * Analyzes January as template and applies structure to all other months
  */
 
+import { encodeValuesRange } from "./sheets-automation";
+
 export interface MonthlySheetTemplate {
   sheetName: string;
   headers: string[];
@@ -27,7 +29,7 @@ async function getSheetData(
   sheetName: string,
   accessToken: string
 ): Promise<string[][]> {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:M`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A:M")}`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });

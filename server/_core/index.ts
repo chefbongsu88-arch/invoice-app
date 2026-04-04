@@ -7,7 +7,8 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { ENV } from "./env";
+import { ENV, getPublicServerBaseUrl } from "./env";
+import { getReceiptShareImage } from "../receipt-share-store";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -68,6 +69,18 @@ async function startServer() {
     res.json({ ok: true, timestamp: Date.now() });
   });
 
+  // Public receipt images for Google Sheets =IMAGE() when Forge upload is unavailable (in-memory fallback).
+  app.get("/api/receipt-share/:token", (req, res) => {
+    const got = getReceiptShareImage(String(req.params.token ?? ""));
+    if (!got) {
+      res.status(404).type("text/plain").send("Not found or expired");
+      return;
+    }
+    res.setHeader("Content-Type", got.mime);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.send(got.buffer);
+  });
+
   app.use(
     "/api/trpc",
     createExpressMiddleware({
@@ -101,6 +114,10 @@ async function startServer() {
     );
     console.log(
       "[boot] Receipt OCR order: Gemini first when both keys → else Claude / Gemini-only / Forge.",
+    );
+    const pub = getPublicServerBaseUrl();
+    console.log(
+      `[boot] Receipt =IMAGE base URL: ${pub || "NOT SET — set PUBLIC_SERVER_URL=https://<your-app-host> (Railway: RAILWAY_PUBLIC_DOMAIN often works)"}`,
     );
   });
 }

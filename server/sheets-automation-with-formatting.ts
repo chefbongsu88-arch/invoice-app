@@ -4,6 +4,8 @@
  * Applies currency formatting to ensure consistent display
  */
 
+import { encodeValuesRange } from "./sheets-automation";
+
 interface SheetAutomationConfig {
   spreadsheetId: string;
   accessToken: string;
@@ -67,7 +69,7 @@ async function clearSheet(
   accessToken: string
 ): Promise<boolean> {
   try {
-    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:Z?valueInputOption=RAW`;
+    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A:Z")}?valueInputOption=RAW`;
     const clearRes = await fetch(clearUrl, {
       method: "DELETE",
       headers: {
@@ -98,7 +100,7 @@ async function updateSheet(
   values: (string | number)[][]
 ): Promise<boolean> {
   try {
-    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:Z1000?valueInputOption=USER_ENTERED`;
+    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:Z1000")}?valueInputOption=USER_ENTERED`;
     const updateRes = await fetch(updateUrl, {
       method: "PUT",
       headers: {

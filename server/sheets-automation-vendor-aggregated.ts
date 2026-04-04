@@ -1,3 +1,6 @@
+import { isMeatCategory } from "../shared/invoice-types";
+import { encodeValuesRange, ensureSheetExists } from "./sheets-automation";
+
 export interface SheetAutomationConfig {
   spreadsheetId: string;
   accessToken: string;
@@ -100,7 +103,11 @@ function aggregateByVendor(invoices: any[]) {
     vendorData.ivaAmount += parseAmount(invoice.ivaAmount);
     vendorData.baseAmount += parseAmount(invoice.baseAmount);
     vendorData.tip += parseAmount(invoice.tip);
-    
+    const img = String(invoice.imageUrl ?? "").trim();
+    if (img && !String(vendorData.imageUrl ?? "").trim()) {
+      vendorData.imageUrl = invoice.imageUrl;
+    }
+
     console.log(`After aggregation: ${vendor} total=${vendorData.totalAmount}`);
   }
 
@@ -115,6 +122,18 @@ function parseAmount(value: any): number {
   if (!value) return 0;
   const cleaned = String(value).replace(/[€$£¥₩,\s]/g, "");
   return parseFloat(cleaned) || 0;
+}
+
+/** L column: keep Sheets formulas; wrap bare https URLs for =IMAGE */
+function receiptCellForAggregatedSheet(imageUrl: string | undefined): string {
+  const s = String(imageUrl ?? "").trim();
+  if (!s) return "";
+  if (s.startsWith("=")) return s;
+  if (/^https?:\/\//i.test(s)) {
+    const safe = s.replace(/"/g, '""');
+    return `=IMAGE("${safe}", 1)`;
+  }
+  return s;
 }
 
 /**
@@ -158,8 +177,14 @@ async function createMonthlySheets(
     // Build sheet rows
     const header = [
       "Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)",
-      "Category", "Currency", "Notes", "Image URL", "Exported At"
+      "Category", "Currency", "Notes", "Receipt", "Exported At"
     ];
+
+    const ok = await ensureSheetExists(spreadsheetId, month, accessToken, header);
+    if (!ok) {
+      console.warn(`⚠️ Could not ensure sheet "${month}" — skipping`);
+      continue;
+    }
 
     const sheetRows: any[] = [header];
 
@@ -194,21 +219,19 @@ async function createMonthlySheets(
         vendor.category,         // I: Category
         vendor.currency,         // J: Currency
         vendor.notes,            // K: Notes
-        vendor.imageUrl,         // L: Image URL
+        receiptCellForAggregatedSheet(vendor.imageUrl), // L: same formula as main tracker when possible
         ""                       // M: Exported At
       ];
       sheetRows.push(row);
     }
 
-    // Clear sheet (POST :clear is the correct Sheets API v4 method)
-    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(month + "!A:M")}:clear`;
+    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(month, "A:M")}:clear`;
     await fetch(clearUrl, {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }
     });
 
-    // Update sheet
-    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(month + "!A1:M" + sheetRows.length)}?valueInputOption=USER_ENTERED`;
+    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(month, `A1:M${sheetRows.length}`)}?valueInputOption=USER_ENTERED`;
     await fetch(updateUrl, {
       method: "PUT",
       headers: {
@@ -250,11 +273,16 @@ async function createQuarterlySheets(
     const quarterInvoices = invoicesByQuarter[quarter];
     const aggregated = aggregateByVendor(quarterInvoices);
 
-    // Build sheet rows
     const header = [
       "Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)",
-      "Category", "Currency", "Notes", "Image URL", "Exported At"
+      "Category", "Currency", "Notes", "Receipt", "Exported At"
     ];
+
+    const ok = await ensureSheetExists(spreadsheetId, quarter, accessToken, header);
+    if (!ok) {
+      console.warn(`⚠️ Could not ensure sheet "${quarter}" — skipping`);
+      continue;
+    }
 
     const sheetRows: any[] = [header];
 
@@ -289,21 +317,19 @@ async function createQuarterlySheets(
         vendor.category,         // I: Category
         vendor.currency,         // J: Currency
         vendor.notes,            // K: Notes
-        vendor.imageUrl,         // L: Image URL
+        receiptCellForAggregatedSheet(vendor.imageUrl),
         ""                       // M: Exported At
       ];
       sheetRows.push(row);
     }
 
-    // Clear sheet (POST :clear is the correct Sheets API v4 method)
-    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(quarter + "!A:M")}:clear`;
+    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(quarter, "A:M")}:clear`;
     await fetch(clearUrl, {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }
     });
 
-    // Update sheet
-    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(quarter + "!A1:M" + sheetRows.length)}?valueInputOption=USER_ENTERED`;
+    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(quarter, `A1:M${sheetRows.length}`)}?valueInputOption=USER_ENTERED`;
     await fetch(updateUrl, {
       method: "PUT",
       headers: {
@@ -373,16 +399,19 @@ export async function updateMeatMonthlySheet(
 ): Promise<void> {
   const SHEET = "Meat_Monthly";
 
-  // Filter to only meat vendor invoices with items
+  // 고기 벤더 + 카테고리가 Meat일 때만 줄항목 반영 (야채 영수증이 같은 매장이어도 제외)
   const meatInvoices = newInvoices.filter(
-    inv => inv.items && inv.items.length > 0 && isMeatVendor(inv.vendor || "")
+    (inv) =>
+      inv.items &&
+      inv.items.length > 0 &&
+      isMeatVendor(inv.vendor || "") &&
+      isMeatCategory(inv.category),
   );
   if (meatInvoices.length === 0) {
     console.log("ℹ️  No meat invoices with items — Meat_Monthly not updated");
     return;
   }
 
-  const { ensureSheetExists } = await import("./sheets-automation");
   const meatHeader = buildMeatHeader();
   const ensured = await ensureSheetExists(spreadsheetId, SHEET, accessToken, meatHeader);
   if (!ensured) {
@@ -391,7 +420,7 @@ export async function updateMeatMonthlySheet(
   }
 
   // ── 1. Read existing sheet data ────────────────────────────────────────────
-  const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(SHEET + "!A:AZ")}`;
+  const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(SHEET, "A:AZ")}`;
   const readRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
   let existingRows: any[][] = [];
   if (readRes.ok) {
@@ -476,13 +505,13 @@ export async function updateMeatMonthlySheet(
   const sheetData = [headerRow, ...dataRows];
 
   // ── 5. Clear and rewrite sheet ─────────────────────────────────────────────
-  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(SHEET + "!A:AZ")}:clear`;
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(SHEET, "A:AZ")}:clear`;
   await fetch(clearUrl, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
   });
 
-  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(SHEET + "!A1")}?valueInputOption=USER_ENTERED`;
+  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(SHEET, "A1")}?valueInputOption=USER_ENTERED`;
   const writeRes = await fetch(writeUrl, {
     method: "PUT",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },

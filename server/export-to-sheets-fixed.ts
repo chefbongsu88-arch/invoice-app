@@ -7,6 +7,7 @@
  */
 
 import { uploadImageToStorage } from "./image-upload-storage";
+import { encodeValuesRange } from "./sheets-automation";
 
 // Generate JWT for Google Sheets API
 async function generateJWT(serviceAccount: any): Promise<string> {
@@ -369,7 +370,7 @@ async function clearSheet(
   sheetName: string,
   accessToken: string
 ): Promise<void> {
-  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A2:M`;
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A2:M")}`;
   
   await fetch(clearUrl, {
     method: "DELETE",
@@ -388,7 +389,7 @@ async function writeSheet(
   rows: any[][],
   accessToken: string
 ): Promise<void> {
-  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1?valueInputOption=USER_ENTERED`;
+  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1")}?valueInputOption=USER_ENTERED`;
   
   const res = await fetch(writeUrl, {
     method: "PUT",

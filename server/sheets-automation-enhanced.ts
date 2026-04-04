@@ -3,6 +3,8 @@
  * Handles monthly, quarterly, and meat-specific sheet creation with vendor aggregation and percentages
  */
 
+import { encodeValuesRange } from "./sheets-automation";
+
 interface SheetAutomationConfig {
   spreadsheetId: string;
   accessToken: string;
@@ -66,7 +68,7 @@ export async function ensureSheetExists(
   headers: string[]
 ): Promise<boolean> {
   try {
-    const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:Z1`;
+    const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:Z1")}`;
     const checkRes = await fetch(checkUrl, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -104,7 +106,7 @@ export async function ensureSheetExists(
     // Add headers if they don't exist
     const checkData = await checkRes.json() as { values?: string[][] };
     if (!checkData.values || checkData.values.length === 0) {
-      const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:Z1?valueInputOption=RAW`;
+      const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:Z1")}?valueInputOption=RAW`;
       await fetch(headerUrl, {
         method: "PUT",
         headers: {

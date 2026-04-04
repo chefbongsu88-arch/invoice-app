@@ -51,6 +51,11 @@ export function getYear(dateStr: string): number {
   return new Date(dateStr).getFullYear();
 }
 
+/** Full A1 range for Google Sheets `/values/{range}` — must encode `Sheet!A1:Z1` as one segment. */
+export function encodeValuesRange(sheetName: string, a1: string): string {
+  return encodeURIComponent(`${sheetName}!${a1}`);
+}
+
 /**
  * Create or update a sheet with headers
  */
@@ -61,7 +66,8 @@ export async function ensureSheetExists(
   headers: string[]
 ): Promise<boolean> {
   try {
-    const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:Z1`;
+    const topLeft = "A1:Z1";
+    const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, topLeft)}`;
     const checkRes = await fetch(checkUrl, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -69,7 +75,6 @@ export async function ensureSheetExists(
     });
 
     if (!checkRes.ok) {
-      // Sheet might not exist, try to create it
       const batchUpdateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`;
       const createRes = await fetch(batchUpdateUrl, {
         method: "POST",
@@ -91,16 +96,23 @@ export async function ensureSheetExists(
       });
 
       if (!createRes.ok) {
-        console.error("Failed to create sheet:", sheetName);
-        return false;
+        const createText = await createRes.text();
+        if (!/already exists|duplicate/i.test(createText)) {
+          console.error("Failed to create sheet:", sheetName, createText);
+          return false;
+        }
       }
     }
 
-    // Add headers if they don't exist
-    const checkData = await checkRes.json() as { values?: string[][] };
-    if (!checkData.values || checkData.values.length === 0) {
-      const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:Z1?valueInputOption=RAW`;
-      await fetch(headerUrl, {
+    let hasHeaderRow = false;
+    if (checkRes.ok) {
+      const checkData = (await checkRes.json()) as { values?: string[][] };
+      hasHeaderRow = !!(checkData.values && checkData.values.length > 0);
+    }
+
+    if (!hasHeaderRow) {
+      const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, topLeft)}?valueInputOption=RAW`;
+      const putRes = await fetch(headerUrl, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -108,6 +120,10 @@ export async function ensureSheetExists(
         },
         body: JSON.stringify({ values: [headers] }),
       });
+      if (!putRes.ok) {
+        console.error("Failed to write headers to", sheetName, await putRes.text());
+        return false;
+      }
     }
 
     return true;

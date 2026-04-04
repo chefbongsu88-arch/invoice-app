@@ -1,3 +1,4 @@
+import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
@@ -147,6 +148,12 @@ export default function ReceiptsScreen() {
     await reload();
     setRefreshing(false);
   }, [reload]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void reload();
+    }, [reload]),
+  );
 
   const filtered = invoices.filter((inv) => {
     const matchSearch =
@@ -380,7 +387,7 @@ export default function ReceiptsScreen() {
               </Text>
               {!hasActiveFilters && (
                 <Pressable
-                  onPress={() => router.push("/(tabs)/scan" as never)}
+                  onPress={() => router.navigate("/scan")}
                   style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
                 >
                   <Text style={styles.emptyBtnText}>Scan Receipt</Text>

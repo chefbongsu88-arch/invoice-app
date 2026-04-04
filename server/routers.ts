@@ -2,8 +2,14 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { COOKIE_NAME } from "../shared/const.js";
 import { DEFAULT_MAIN_TRACKER_SHEET_NAME } from "../shared/sheets-defaults.js";
+import { isMeatCategory } from "../shared/invoice-types.js";
 import { getSessionCookieOptions } from "./_core/cookies";
-import { ENV } from "./_core/env";
+import {
+  ENV,
+  getPublicServerBaseUrl,
+  isForgeStorageConfigured,
+  resolvePublicBaseForReceiptImages,
+} from "./_core/env";
 import { invokeLLM } from "./_core/llm";
 import {
   heicBufferToJpeg,
@@ -18,6 +24,11 @@ import { parseReceiptWithGoogleGemini } from "./_core/receipt-gemini-google";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { uploadImageToStorage } from "./image-upload-storage";
+import { encodeValuesRange } from "./sheets-automation";
+import {
+  detectMimeFromBuffer,
+  putReceiptShareImage,
+} from "./receipt-share-store";
 
 function looksLikeJpegMagic(buf: Buffer): boolean {
   return buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xd8;
@@ -399,7 +410,7 @@ category — one exact string:
 Use "Meat" for butchers, carnicería, deli, embutidos, charcutería, names containing CARNS or similar.
 Use "Restaurant" for bars, cafés, menús.
 
-items: [{partName, quantity, unit:"kg", pricePerUnit, total}] when line items with weights/prices are visible (e.g. meat tickets); otherwise [].
+items: [{partName, quantity, unit:"kg", pricePerUnit, total}] ONLY when category is "Meat" AND the ticket shows weighted line items (carnicería / butcher style); for supermarkets with vegetables, fish, or mixed groceries use []. Otherwise [].
 
 Numbers in JSON must be JSON numbers for totalAmount, ivaAmount, tipAmount (not strings). Output ONLY the JSON object, no markdown.`;
 
@@ -757,10 +768,13 @@ export const appRouter = router({
           ),
           automateSheets: z.boolean().optional().default(false),
           skipDuplicateCheck: z.boolean().optional().default(false),
+          /** App sends EXPO_PUBLIC_API_BASE_URL so /api/receipt-share URLs work when Railway has no PUBLIC_SERVER_URL */
+          publicApiBaseUrl: z.string().max(512).optional(),
         })
       )
       .mutation(async ({ input }) => {
-        const { spreadsheetId, sheetName, rows, skipDuplicateCheck } = input;
+        const { spreadsheetId, sheetName, rows, skipDuplicateCheck, publicApiBaseUrl } = input;
+        const receiptPublicBase = resolvePublicBaseForReceiptImages(publicApiBaseUrl);
         
         // Get access token using OAuth Refresh Token
         const accessToken = await getGoogleAccessToken();
@@ -768,11 +782,11 @@ export const appRouter = router({
         // First, ensure header row exists
         // ✅ Column order (English labels for Sheets): Source, Invoice#, Vendor, Date, Total, VAT, Base, Tip, ...
         const headerValues = [
-          ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"],
+          ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Receipt", "Exported At"],
         ];
 
         // Check if sheet exists and has headers
-        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:M1`;
+        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:M1")}`;
         const checkRes = await fetch(checkUrl, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -784,7 +798,7 @@ export const appRouter = router({
           if (!checkData.values || checkData.values.length === 0) {
             // Add headers
             await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:M1?valueInputOption=RAW`,
+              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:M1")}?valueInputOption=RAW`,
               {
                 method: "PUT",
                 headers: {
@@ -800,7 +814,7 @@ export const appRouter = router({
         // Check for duplicates before appending (skip if skipDuplicateCheck is true)
         let newRows = rows;
         if (!skipDuplicateCheck) {
-        const existingUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:L`;
+        const existingUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A:L")}`;
         const existingRes = await fetch(existingUrl, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -858,41 +872,72 @@ export const appRouter = router({
           newRows.map(async (r) => {
             let imageUrl = r.imageUrl ?? "";
             const userProvidedImage = Boolean(r.imageUrl?.trim());
-            
-            // If imageUrl is a base64 string or local file path, upload it to storage
+
+            // data:/file: → try Forge/Manus storage, then in-memory /api/receipt-share (HTTPS for =IMAGE)
             if (imageUrl && (imageUrl.startsWith("data:") || imageUrl.startsWith("file://"))) {
               try {
-                // Extract base64 if it's a data URL
                 let base64Data = "";
+                let mimeFromDataUrl = "image/jpeg";
                 if (imageUrl.startsWith("data:")) {
-                  // Format: data:image/jpeg;base64,{base64data}
+                  const mimeMatch = imageUrl.match(/^data:([^;]+);base64,/i);
+                  if (mimeMatch?.[1]) mimeFromDataUrl = mimeMatch[1];
                   const match = imageUrl.match(/base64,(.+)$/);
-                  if (match && match[1]) {
+                  if (match?.[1]) {
                     base64Data = match[1].trim();
                   } else {
                     console.warn("[Export] Failed to extract base64 from data URL");
                     imageUrl = "";
                   }
                 } else if (imageUrl.startsWith("file://")) {
-                  // For local file paths, we'll skip upload (client should send base64)
                   console.warn("[Export] Skipping local file path upload:", imageUrl);
                   imageUrl = "";
                 }
-                
+
                 if (base64Data && !imageUrl.startsWith("file://")) {
-                  // Generate filename from invoice number or timestamp
-                  // Sanitize invoice number: remove folder separators and special characters
                   const sanitizedInvoiceNum = ((r.invoiceNumber || "receipt")
-                    .split("/").pop() || "receipt")  // Extract only the last part (remove folder path)
-                    .replace(/[^a-zA-Z0-9-]/g, "")  // Remove special characters
-                    .substring(0, 50);  // Limit length
+                    .split("/").pop() || "receipt")
+                    .replace(/[^a-zA-Z0-9-]/g, "")
+                    .substring(0, 50);
                   const fileName = `${sanitizedInvoiceNum || "receipt"}-${Date.now()}.jpg`;
-                  imageUrl = await uploadImageToStorage(base64Data, fileName);
-                  console.log(`[Export] Image uploaded for ${r.vendor}: fileName=${fileName}, url=${imageUrl}`);
+
+                  const tryReceiptShare = (): void => {
+                    const buf = Buffer.from(base64Data, "base64");
+                    const mime = detectMimeFromBuffer(buf) || mimeFromDataUrl;
+                    const token = putReceiptShareImage(buf, mime);
+                    const base = receiptPublicBase;
+                    if (token && base) {
+                      imageUrl = `${base}/api/receipt-share/${token}`;
+                      console.log(
+                        `[Export] Receipt image for Sheets (/api/receipt-share): ${r.vendor}`,
+                      );
+                    } else if (!base) {
+                      console.warn(
+                        "[Export] No public API base URL — pass publicApiBaseUrl from the app (getApiBaseUrl) or set PUBLIC_SERVER_URL / RECEIPT_IMAGE_PUBLIC_BASE_URL on the server.",
+                      );
+                    } else if (!token) {
+                      console.warn(
+                        `[Export] /api/receipt-share skipped (max 8 MiB per image): ${r.vendor}`,
+                      );
+                    }
+                  };
+
+                  if (receiptPublicBase) {
+                    tryReceiptShare();
+                  }
+                  if (!String(imageUrl ?? "").trim() && isForgeStorageConfigured()) {
+                    imageUrl = await uploadImageToStorage(base64Data, fileName);
+                    if (String(imageUrl ?? "").trim()) {
+                      console.log(`[Export] Forge image URL for ${r.vendor}: ${fileName}`);
+                    }
+                  }
+                  if (!String(imageUrl ?? "").trim()) {
+                    console.warn(
+                      `[Export] No receipt image URL for ${r.vendor}. Use app export with publicApiBaseUrl, or set PUBLIC_SERVER_URL / Forge.`,
+                    );
+                  }
                 }
               } catch (error) {
                 console.error(`[Export] Failed to upload image for ${r.vendor}:`, error);
-                // Continue without image URL if upload fails
                 imageUrl = "";
               }
             }
@@ -908,9 +953,9 @@ export const appRouter = router({
               formattedDate = `'${dd}/${mm}/${yyyy}`;
             }
 
-            // L: embed preview in the cell when we have a public HTTPS URL (storage upload succeeded)
+            // L: in-cell preview via =IMAGE (Google fetches the URL; Forge or our /api/receipt-share)
             let imageColumnValue: string = imageUrl;
-            if (imageUrl && /^https:\/\//i.test(imageUrl)) {
+            if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
               const safe = imageUrl.replace(/"/g, '""');
               imageColumnValue = `=IMAGE("${safe}", 1)`;
             }
@@ -962,7 +1007,8 @@ export const appRouter = router({
             const { automateGoogleSheets, updateMeatMonthlySheet } = await import("./sheets-automation-vendor-aggregated");
             
             // Fetch ALL data from 2026 Invoice tracker sheet for complete monthly/quarterly aggregation
-            const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A2:M`;
+            // FORMULA so L column returns =IMAGE("https://...") for automation (display values are often empty)
+            const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A2:M")}?valueRenderOption=FORMULA`;
             const trackerRes = await fetch(trackerSheetUrl, {
               headers: { Authorization: `Bearer ${accessToken}` },
             });
@@ -1020,8 +1066,10 @@ export const appRouter = router({
               invoiceData: allInvoiceData,
             }, ["La Portenia", "Es Cuco"]);
 
-            // Update Meat_Monthly pivot table for invoices with items[]
-            const meatRows = newRows.filter((r) => r.items && r.items.length > 0);
+            // Meat_Monthly: 줄항목 + 카테고리 Meat만 (벤더 필터는 updateMeatMonthlySheet 내부)
+            const meatRows = newRows.filter(
+              (r) => Boolean(r.items?.length) && isMeatCategory(r.category),
+            );
             if (meatRows.length > 0) {
               await updateMeatMonthlySheet(accessToken, spreadsheetId, meatRows);
             }

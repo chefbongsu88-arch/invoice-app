@@ -1,6 +1,7 @@
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import * as FileSystem from "expo-file-system/legacy";
+import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -17,6 +18,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
+import { getApiBaseUrl } from "@/constants/oauth";
 import { displayInvoiceNumber } from "@/lib/invoice-display";
 import { getSheetsExportTarget } from "@/lib/sheets-settings";
 import { trpc } from "@/lib/trpc";
@@ -71,10 +73,16 @@ export default function ReceiptDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
   const router = useRouter();
-  const { invoices, deleteInvoice, updateInvoice } = useInvoices();
+  const { invoices, deleteInvoice, updateInvoice, reload } = useInvoices();
   const [exporting, setExporting] = useState(false);
 
   const exportMutation = trpc.invoices.exportToSheets.useMutation();
+
+  useFocusEffect(
+    useCallback(() => {
+      void reload();
+    }, [reload]),
+  );
 
   const invoice = invoices.find((inv) => inv.id === id);
 
@@ -112,6 +120,7 @@ export default function ReceiptDetailScreen() {
       const result = await exportMutation.mutateAsync({
         spreadsheetId,
         sheetName,
+        publicApiBaseUrl: getApiBaseUrl(),
         rows: [
           {
             source: invoice.source === "camera" ? "Camera" : "Email",
@@ -125,6 +134,7 @@ export default function ReceiptDetailScreen() {
             currency: invoice.currency,
             tip: invoice.tip,
             notes: invoice.notes ?? "",
+            items: invoice.items,
             imageUrl: imageBase64 ? `data:image/jpeg;base64,${imageBase64}` : "",
           },
         ],
@@ -132,15 +142,20 @@ export default function ReceiptDetailScreen() {
         skipDuplicateCheck,
       });
 
-      // Duplicate detected — show warning with option to force upload
+      // Server skips append when this invoice already matches a row — app used to leave "Pending" forever
       if (result.rowsAdded === 0) {
+        await updateInvoice(id, {
+          exportedToSheets: true,
+          exportedAt: new Date().toISOString(),
+        });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert(
           "Already in Google Sheets",
-          `A row with the same invoice number or the same store, date, and total is already in your spreadsheet.\n\n${displayInvoiceNumber(invoice.invoiceNumber)} · ${invoice.vendor}`,
+          `A row with the same invoice number or the same store, date, and total is already in your spreadsheet — nothing new was added. This receipt is now marked Exported in the app.\n\n${displayInvoiceNumber(invoice.invoiceNumber)} · ${invoice.vendor}`,
           [
-            { text: "Cancel", style: "cancel" },
+            { text: "OK", style: "cancel" },
             {
-              text: "Upload anyway",
+              text: "Upload duplicate row",
               onPress: () => handleExport(true),
             },
           ],
@@ -284,8 +299,8 @@ export default function ReceiptDetailScreen() {
           />
         </View>
 
-        {/* Receipt Image */}
-        {invoice.imageUri && (
+        {/* Receipt Image — local scan; Sheets uses Receipt column + server-hosted URL for =IMAGE */}
+        {invoice.imageUri ? (
           <View>
             <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Receipt Image</Text>
             <Image
@@ -293,6 +308,13 @@ export default function ReceiptDetailScreen() {
               style={[styles.receiptImage, { borderColor: colors.border }]}
               contentFit="contain"
             />
+          </View>
+        ) : (
+          <View style={[styles.hintBox, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+            <Text style={[styles.hintTitle, { color: colors.foreground }]}>Receipt photo</Text>
+            <Text style={[styles.hintBody, { color: colors.muted }]}>
+              This invoice has no photo saved in the app (for example, it was entered manually or from email). To see a picture in Google Sheets, export from a camera scan so the server can attach an image to the Receipt column when hosting is configured.
+            </Text>
           </View>
         )}
 
@@ -388,6 +410,14 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
   },
+  hintBox: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    gap: 6,
+  },
+  hintTitle: { fontSize: 15, fontWeight: "600" },
+  hintBody: { fontSize: 13, lineHeight: 19 },
   exportBtn: {
     flexDirection: "row",
     alignItems: "center",

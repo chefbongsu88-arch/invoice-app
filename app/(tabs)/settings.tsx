@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Pressable,
@@ -174,6 +175,7 @@ function EditableField({
 
 export default function SettingsScreen() {
   const colors = useColors();
+  const router = useRouter();
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const { reload: reloadInvoices } = useInvoices();
   const resetAllDataMutation = trpc.invoices.resetAllData.useMutation();
@@ -257,6 +259,17 @@ export default function SettingsScreen() {
             onToggle={(v) => saveSettings({ ...settings, autoExportToSheets: v })}
             hint="Automatically export to all Google Sheets tabs"
           />
+          <Pressable
+            onPress={() => router.navigate("/gmail")}
+            style={({ pressed }) => [
+              styles.viewSheetsBtn,
+              { backgroundColor: colors.primary },
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            <IconSymbol name="envelope.fill" size={18} color="#fff" />
+            <Text style={styles.viewSheetsBtnText}>Gmail connection & import</Text>
+          </Pressable>
         </View>
 
         {/* Spreadsheet Configuration */}
@@ -414,7 +427,8 @@ export default function SettingsScreen() {
             <View style={styles.stepContent}>
               <Text style={[styles.stepTitle, { color: colors.foreground }]}>Connect Gmail</Text>
               <Text style={[styles.stepDesc, { color: colors.muted }]}>
-                Go to Gmail tab and enter your email address to automatically fetch invoice emails.
+                In Settings → Gmail Automation, tap &quot;Gmail connection & import&quot; and sign in to fetch invoice
+                emails.
               </Text>
             </View>
           </View>

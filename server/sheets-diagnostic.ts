@@ -4,6 +4,8 @@
  * Uses Google Sheets API via fetch (no external googleapis library needed)
  */
 
+import { encodeValuesRange } from "./sheets-automation";
+
 export interface SheetDiagnosis {
   sheetName: string;
   rowCount: number;
@@ -55,7 +57,7 @@ export async function diagnoseSheetsComprehensive(
     for (const sheetName of sheetNames) {
       console.log(`[Diagnosis] Analyzing sheet: ${sheetName}`);
 
-      const valuesUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:M`;
+      const valuesUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A:M")}`;
       const valuesRes = await fetch(valuesUrl, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
@@ -196,7 +198,7 @@ export async function analyzeSheetStructure(
   };
 }> {
   try {
-    const valuesUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:M`;
+    const valuesUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A:M")}`;
     const valuesRes = await fetch(valuesUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });

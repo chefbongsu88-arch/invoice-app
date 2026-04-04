@@ -1,3 +1,4 @@
+import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { FlatList, Linking, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
@@ -128,6 +129,12 @@ export default function HomeScreen() {
     setRefreshing(false);
   }, [reload]);
 
+  useFocusEffect(
+    useCallback(() => {
+      void reload();
+    }, [reload]),
+  );
+
   const recent = invoices.slice(0, 5);
 
   return (
@@ -136,6 +143,8 @@ export default function HomeScreen() {
         style={{ flex: 1, backgroundColor: colors.background }}
         data={recent}
         keyExtractor={(item) => item.id}
+        keyboardShouldPersistTaps="handled"
+        removeClippedSubviews={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
@@ -148,7 +157,7 @@ export default function HomeScreen() {
                 <Text style={[styles.title, { color: colors.foreground }]}>Invoice Tracker</Text>
               </View>
               <Pressable
-                onPress={() => router.push("/(tabs)/settings" as never)}
+                onPress={() => router.navigate("/settings")}
                 style={({ pressed }) => [pressed && { opacity: 0.6 }]}
               >
                 <IconSymbol name="gearshape.fill" size={24} color={colors.muted} />
@@ -187,7 +196,7 @@ export default function HomeScreen() {
                 icon="camera.fill"
                 label="Scan Receipt"
                 color={colors.camera}
-                onPress={() => router.push("/(tabs)/scan" as never)}
+                onPress={() => router.navigate("/scan")}
               />
               <QuickAction
                 icon="tablecells"
@@ -199,7 +208,7 @@ export default function HomeScreen() {
                 icon="doc.text.fill"
                 label="All Receipts"
                 color={colors.primary}
-                onPress={() => router.push("/(tabs)/receipts" as never)}
+                onPress={() => router.navigate("/receipts")}
               />
             </View>
 
@@ -209,7 +218,7 @@ export default function HomeScreen() {
                 <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
                   Recent Invoices
                 </Text>
-                <Pressable onPress={() => router.push("/(tabs)/receipts" as never)}>
+                <Pressable onPress={() => router.navigate("/receipts")}>
                   <Text style={[styles.seeAll, { color: colors.primary }]}>See all</Text>
                 </Pressable>
               </View>
