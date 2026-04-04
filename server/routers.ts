@@ -19,47 +19,6 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { uploadImageToStorage } from "./image-upload-storage";
 
-/** Include nested Anthropic `error` payload — `.message` alone can miss "Could not process image". */
-function stringifyAnthropicStyleError(err: unknown): string {
-  if (err == null) return "";
-  if (err instanceof Error) {
-    const any = err as Error & { status?: number; error?: unknown };
-    const bits = [any.name, any.message];
-    if (typeof any.status === "number") bits.push(`http:${any.status}`);
-    if (any.error !== undefined) {
-      try {
-        bits.push(JSON.stringify(any.error));
-      } catch {
-        bits.push(String(any.error));
-      }
-    }
-    return bits.join(" ");
-  }
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return String(err);
-  }
-}
-
-/** Full message + `Error.cause` chain (libvips often nests `heif:` under `cause`). */
-function stringifyErrorChain(err: unknown): string {
-  const parts: string[] = [];
-  let e: unknown = err;
-  let depth = 0;
-  while (e != null && depth < 12) {
-    if (e instanceof Error) {
-      parts.push(e.name, e.message, e.stack ?? "");
-      e = (e as Error & { cause?: unknown }).cause;
-    } else {
-      parts.push(String(e));
-      break;
-    }
-    depth++;
-  }
-  return parts.join(" ");
-}
-
 function looksLikeJpegMagic(buf: Buffer): boolean {
   return buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xd8;
 }
@@ -446,6 +405,53 @@ Numbers in JSON must be JSON numbers for totalAmount, ivaAmount, tipAmount (not 
 
 const RECEIPT_PARSE_USER = `Read only text visible on this receipt image (totals, tax, vendor header, factura number, printed date). Ignore any idea of "today". Return the JSON object now.`;
 
+/** Forge-encode to JPEG, then Gemini; on failure try raw JPEG/PNG or HEIC→JPEG. */
+async function runGoogleGeminiReceiptOcr(
+  normalized: string,
+  mimeType: string,
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<string> {
+  try {
+    const jpeg = await encodeReceiptImageForForgeStep(normalized, mimeType, 0);
+    return await parseReceiptWithGoogleGemini(
+      jpeg.base64,
+      jpeg.mimeType,
+      systemPrompt,
+      userPrompt,
+    );
+  } catch (forgeErr) {
+    console.warn(
+      "[OCR] Forge encode for Gemini failed; trying direct JPEG/PNG or HEIC→JPEG:",
+      forgeErr instanceof Error ? forgeErr.message : forgeErr,
+    );
+    const rawBuf = Buffer.from(normalized, "base64");
+    let geminiB64 = normalized;
+    let geminiMime: "image/jpeg" | "image/png" = "image/jpeg";
+    if (looksLikeJpegMagic(rawBuf)) {
+      geminiMime = "image/jpeg";
+    } else if (looksLikePngMagic(rawBuf)) {
+      geminiMime = "image/png";
+    } else if (isLikelyHeicOrHeifBuffer(rawBuf)) {
+      geminiB64 = (await heicBufferToJpeg(rawBuf, 0.75)).toString("base64");
+      geminiMime = "image/jpeg";
+    } else {
+      try {
+        geminiB64 = (await heicBufferToJpeg(rawBuf, 0.75)).toString("base64");
+        geminiMime = "image/jpeg";
+      } catch {
+        throw forgeErr instanceof Error ? forgeErr : new Error(String(forgeErr));
+      }
+    }
+    return await parseReceiptWithGoogleGemini(
+      geminiB64,
+      geminiMime,
+      systemPrompt,
+      userPrompt,
+    );
+  }
+}
+
 const EMAIL_PARSE_PROMPT = `You are an expert at extracting invoice data from email content.
 Analyze the provided email text and extract invoice information.
 Return ONLY a valid JSON object with these exact keys:
@@ -508,70 +514,39 @@ export const appRouter = router({
           );
 
           let text: string;
-          if (useClaude) {
+          if (useGeminiGoogle && useClaude) {
             try {
+              text = await runGoogleGeminiReceiptOcr(
+                normalized,
+                mimeType,
+                RECEIPT_PARSE_SYSTEM,
+                RECEIPT_PARSE_USER,
+              );
+              console.log("[OCR] Primary: Google Gemini (both API keys set — avoids Claude 'Could not process image' on picky photos)");
+            } catch (geminiErr) {
+              console.warn(
+                "[OCR] Gemini failed; trying Anthropic Claude:",
+                geminiErr instanceof Error ? geminiErr.message : geminiErr,
+              );
               text = await parseReceiptWithClaude(
                 normalized,
                 mimeType,
                 RECEIPT_PARSE_SYSTEM,
                 RECEIPT_PARSE_USER,
               );
-            } catch (claudeErr) {
-              const cm = `${stringifyAnthropicStyleError(claudeErr)} ${stringifyErrorChain(claudeErr)}`;
-              // Any Claude failure (incl. sharp/HEIC before the API call): try Gemini when configured.
-              if (useGeminiGoogle) {
-                console.warn(
-                  "[OCR] Claude path failed; falling back to Google Gemini. First error:",
-                  cm.slice(0, 500),
-                );
-                try {
-                  const jpeg = await encodeReceiptImageForForgeStep(normalized, mimeType, 0);
-                  text = await parseReceiptWithGoogleGemini(
-                    jpeg.base64,
-                    jpeg.mimeType,
-                    RECEIPT_PARSE_SYSTEM,
-                    RECEIPT_PARSE_USER,
-                  );
-                } catch (forgeErr) {
-                  console.warn(
-                    "[OCR] Forge encode for Gemini failed; trying direct JPEG/PNG or HEIC→JPEG:",
-                    forgeErr instanceof Error ? forgeErr.message : forgeErr,
-                  );
-                  const rawBuf = Buffer.from(normalized, "base64");
-                  let geminiB64 = normalized;
-                  let geminiMime: "image/jpeg" | "image/png" = "image/jpeg";
-                  if (looksLikeJpegMagic(rawBuf)) {
-                    geminiMime = "image/jpeg";
-                  } else if (looksLikePngMagic(rawBuf)) {
-                    geminiMime = "image/png";
-                  } else if (isLikelyHeicOrHeifBuffer(rawBuf)) {
-                    geminiB64 = (await heicBufferToJpeg(rawBuf, 0.75)).toString("base64");
-                    geminiMime = "image/jpeg";
-                  } else {
-                    try {
-                      geminiB64 = (await heicBufferToJpeg(rawBuf, 0.75)).toString("base64");
-                      geminiMime = "image/jpeg";
-                    } catch {
-                      throw forgeErr instanceof Error ? forgeErr : new Error(String(forgeErr));
-                    }
-                  }
-                  text = await parseReceiptWithGoogleGemini(
-                    geminiB64,
-                    geminiMime,
-                    RECEIPT_PARSE_SYSTEM,
-                    RECEIPT_PARSE_USER,
-                  );
-                }
-              } else {
-                throw claudeErr;
-              }
             }
           } else if (useGeminiGoogle) {
-            const jpeg = await encodeReceiptImageForForgeStep(normalized, mimeType, 0);
-            console.log(`[OCR] Using Google Gemini API directly (${jpeg.jpegBytes} bytes JPEG)`);
-            text = await parseReceiptWithGoogleGemini(
-              jpeg.base64,
-              jpeg.mimeType,
+            text = await runGoogleGeminiReceiptOcr(
+              normalized,
+              mimeType,
+              RECEIPT_PARSE_SYSTEM,
+              RECEIPT_PARSE_USER,
+            );
+            console.log("[OCR] Using Google Gemini API only (no Anthropic key)");
+          } else if (useClaude) {
+            text = await parseReceiptWithClaude(
+              normalized,
+              mimeType,
               RECEIPT_PARSE_SYSTEM,
               RECEIPT_PARSE_USER,
             );
