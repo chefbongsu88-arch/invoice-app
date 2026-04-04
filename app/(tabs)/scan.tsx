@@ -1,5 +1,4 @@
 import * as Haptics from "expo-haptics";
-import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useRouter } from "expo-router";
@@ -48,6 +47,22 @@ function approxDecodedBytesFromBase64(b64: string): number {
   return Math.floor((s.length * 3) / 4);
 }
 
+/**
+ * Load only when resizing — avoids crashing the whole Scan tab if the dev client was built
+ * without the native `ExpoImageManipulator` module (rebuild with EAS after adding the package).
+ */
+async function loadImageManipulator(): Promise<typeof import("expo-image-manipulator") | null> {
+  try {
+    return await import("expo-image-manipulator");
+  } catch (e) {
+    console.warn(
+      "[Scan] expo-image-manipulator native module missing. Rebuild your iOS/Android app (EAS development build). Using picker/file base64 only.",
+      e,
+    );
+    return null;
+  }
+}
+
 /** Downscale before OCR — avoids 400 "image exceeds 5 MB maximum" from Claude. */
 async function encodeReceiptImageForServer(
   uri: string,
@@ -56,27 +71,30 @@ async function encodeReceiptImageForServer(
   let best: string | undefined;
   let bestDecoded = Number.POSITIVE_INFINITY;
 
-  for (const { width, compress } of OCR_COMPRESSION_STEPS) {
-    try {
-      const manipulated = await ImageManipulator.manipulateAsync(
-        uri,
-        [{ resize: { width } }],
-        {
-          compress,
-          format: ImageManipulator.SaveFormat.JPEG,
-          base64: true,
-        },
-      );
-      const b = manipulated.base64?.replace(/\s/g, "") ?? "";
-      if (b.length < 64) continue;
-      const dec = approxDecodedBytesFromBase64(b);
-      if (dec <= RECEIPT_OCR_TARGET_DECODED_BYTES) return b;
-      if (dec < bestDecoded) {
-        bestDecoded = dec;
-        best = b;
+  const IM = await loadImageManipulator();
+  if (IM) {
+    for (const { width, compress } of OCR_COMPRESSION_STEPS) {
+      try {
+        const manipulated = await IM.manipulateAsync(
+          uri,
+          [{ resize: { width } }],
+          {
+            compress,
+            format: IM.SaveFormat.JPEG,
+            base64: true,
+          },
+        );
+        const b = manipulated.base64?.replace(/\s/g, "") ?? "";
+        if (b.length < 64) continue;
+        const dec = approxDecodedBytesFromBase64(b);
+        if (dec <= RECEIPT_OCR_TARGET_DECODED_BYTES) return b;
+        if (dec < bestDecoded) {
+          bestDecoded = dec;
+          best = b;
+        }
+      } catch (e) {
+        console.warn("[Scan] Resize for OCR failed:", width, e);
       }
-    } catch (e) {
-      console.warn("[Scan] Resize for OCR failed:", width, e);
     }
   }
 
@@ -716,7 +734,7 @@ export default function ScanScreen() {
           <Text style={[styles.primaryBtnText, styles.primaryBtnLabel, { color: "#FFFFFF" }]}>Scan Another</Text>
         </Pressable>
         <Pressable
-          onPress={() => router.push("/(tabs)/receipts" as never)}
+          onPress={() => router.navigate("/receipts")}
           style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
         >
           <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>View All Receipts</Text>
