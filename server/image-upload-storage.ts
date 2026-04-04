@@ -1,9 +1,10 @@
 /**
  * Image Upload Handler using Manus Platform Storage
  * Uploads receipt images to the platform's built-in storage and returns public URLs
- * This is the safe, recommended approach - no external API configuration needed
+ * Requires BUILT_IN_FORGE_API_URL + BUILT_IN_FORGE_API_KEY (Railway) for public HTTPS URLs in Sheets.
  */
 
+import { ENV } from "./_core/env";
 import { storagePut } from "./storage";
 
 /**
@@ -18,6 +19,13 @@ export async function uploadImageToStorage(
   fileName: string,
   maxRetries = 3
 ): Promise<string> {
+  if (!ENV.forgeApiUrl?.trim() || !ENV.forgeApiKey?.trim()) {
+    console.warn(
+      `[Image Upload] Skipped (${fileName}): set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY on the server for hosted receipt image links in Google Sheets. Rows still export; the image column will be empty.`,
+    );
+    return "";
+  }
+
   // Validate inputs
   if (!imageBase64 || imageBase64.trim().length === 0) {
     console.error("[Image Upload] Error: Empty image data");

@@ -382,6 +382,14 @@ export async function updateMeatMonthlySheet(
     return;
   }
 
+  const { ensureSheetExists } = await import("./sheets-automation");
+  const meatHeader = buildMeatHeader();
+  const ensured = await ensureSheetExists(spreadsheetId, SHEET, accessToken, meatHeader);
+  if (!ensured) {
+    console.warn("⚠️  Meat_Monthly sheet could not be created; skipping meat pivot update");
+    return;
+  }
+
   // ── 1. Read existing sheet data ────────────────────────────────────────────
   const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(SHEET + "!A:AZ")}`;
   const readRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${accessToken}` } });

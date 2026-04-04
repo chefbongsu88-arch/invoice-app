@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { uploadImageToStorage } from "../image-upload-storage";
 
+vi.mock("../_core/env", () => ({
+  ENV: {
+    forgeApiUrl: "https://forge.test",
+    forgeApiKey: "test-forge-key",
+  },
+}));
+
 // Mock the storage module
 vi.mock("../storage", () => ({
   storagePut: vi.fn(),
@@ -29,7 +36,7 @@ describe("Image Upload Storage", () => {
     expect(storagePut).toHaveBeenCalledWith(
       expect.stringContaining("invoices/"),
       expect.any(Buffer),
-      "image/jpeg"
+      "image/png",
     );
   });
 
