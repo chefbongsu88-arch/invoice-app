@@ -873,7 +873,7 @@ export const appRouter = router({
             let imageUrl = r.imageUrl ?? "";
             const userProvidedImage = Boolean(r.imageUrl?.trim());
 
-            // data:/file: → try Forge/Manus storage, then in-memory /api/receipt-share (HTTPS for =IMAGE)
+            // data:/file: → in-memory /api/receipt-share first (no Forge creds), then Forge if configured
             if (imageUrl && (imageUrl.startsWith("data:") || imageUrl.startsWith("file://"))) {
               try {
                 let base64Data = "";
@@ -921,9 +921,7 @@ export const appRouter = router({
                     }
                   };
 
-                  if (receiptPublicBase) {
-                    tryReceiptShare();
-                  }
+                  tryReceiptShare();
                   if (!String(imageUrl ?? "").trim() && isForgeStorageConfigured()) {
                     imageUrl = await uploadImageToStorage(base64Data, fileName);
                     if (String(imageUrl ?? "").trim()) {

@@ -19,7 +19,9 @@ export function getPublicServerBaseUrl(): string {
   }
   // Same host as constants/receipt-api-origin (native app fallback). Override with PUBLIC_SERVER_URL
   // or RECEIPT_IMAGE_PUBLIC_BASE_URL if you deploy under a different domain.
-  if (process.env.NODE_ENV === "production") {
+  // Railway sometimes omits NODE_ENV=production — treat any non-dev, non-test runtime as deployed.
+  const nodeEnv = process.env.NODE_ENV;
+  if (nodeEnv !== "development" && nodeEnv !== "test") {
     return PRODUCTION_API_ORIGIN;
   }
   return "";
@@ -33,7 +35,13 @@ export function resolvePublicBaseForReceiptImages(clientBaseUrl?: string | null)
   if (c && /^https?:\/\//i.test(c)) {
     return c;
   }
-  return getPublicServerBaseUrl();
+  const fromEnv = getPublicServerBaseUrl();
+  if (fromEnv) return fromEnv;
+  // Last resort: same origin as native PRODUCTION_API_FALLBACK (Sheets =IMAGE requires HTTPS)
+  if (process.env.NODE_ENV !== "development") {
+    return PRODUCTION_API_ORIGIN;
+  }
+  return "";
 }
 
 /** True when Forge storage env vars are set (may still fail at runtime if invalid). */
