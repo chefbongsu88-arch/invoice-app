@@ -450,12 +450,35 @@ export const appRouter = router({
 
           let text: string;
           if (useClaude) {
-            text = await parseReceiptWithClaude(
-              normalized,
-              mimeType,
-              RECEIPT_PARSE_SYSTEM,
-              RECEIPT_PARSE_USER,
-            );
+            try {
+              text = await parseReceiptWithClaude(
+                normalized,
+                mimeType,
+                RECEIPT_PARSE_SYSTEM,
+                RECEIPT_PARSE_USER,
+              );
+            } catch (claudeErr) {
+              const cm = claudeErr instanceof Error ? claudeErr.message : String(claudeErr);
+              const claudeImageRejected =
+                /Could not process image|invalid_request_error|BadRequestError|status:\s*400|"type":"error"/i.test(
+                  cm,
+                );
+              if (useGeminiGoogle && claudeImageRejected) {
+                console.warn(
+                  "[OCR] Claude rejected the image; falling back to Google Gemini. First error:",
+                  cm.slice(0, 280),
+                );
+                const jpeg = await encodeReceiptImageForForgeStep(normalized, mimeType, 0);
+                text = await parseReceiptWithGoogleGemini(
+                  jpeg.base64,
+                  jpeg.mimeType,
+                  RECEIPT_PARSE_SYSTEM,
+                  RECEIPT_PARSE_USER,
+                );
+              } else {
+                throw claudeErr;
+              }
+            }
           } else if (useGeminiGoogle) {
             const jpeg = await encodeReceiptImageForForgeStep(normalized, mimeType, 0);
             console.log(`[OCR] Using Google Gemini API directly (${jpeg.jpegBytes} bytes JPEG)`);

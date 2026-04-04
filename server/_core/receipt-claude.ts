@@ -8,32 +8,24 @@ import { heicBufferToJpeg, isLikelyHeicOrHeifBuffer } from "./heic-to-jpeg";
 const CLAUDE_IMAGE_BYTE_TARGET = 4_000_000;
 const ANTHROPIC_IMAGE_MAX_BYTES = 5_242_880;
 
-function mimeToAnthropicMediaType(mime: string): "image/jpeg" | "image/png" | "image/gif" | "image/webp" {
-  if (mime === "image/png") return "image/png";
-  if (mime === "image/webp") return "image/webp";
-  if (mime === "image/gif") return "image/gif";
-  return "image/jpeg";
-}
-
 /**
- * Downscale / re-encode to JPEG so decoded size stays under Anthropic's 5 MiB cap.
- * Always runs through sharp when the decoded buffer is large or non-JPEG, so we never send a 5.4MB+ payload by mistake.
+ * Decode HEIC if needed, then always re-encode with sharp to baseline JPEG.
+ * Anthropic often returns "Could not process image" for HEIC-convert output or exotic PNG/WebP
+ * if we skip this step — even when the file is under 4 MiB.
  */
 async function shrinkImageForClaudeIfNeeded(
   normalizedBase64: string,
   mimeType: string,
-): Promise<{ data: string; mediaType: ReturnType<typeof mimeToAnthropicMediaType> }> {
+): Promise<{ data: string; mediaType: "image/jpeg" }> {
   let raw = Buffer.from(normalizedBase64, "base64");
   if (!raw.length) {
     throw new Error("Receipt image decoded to an empty buffer.");
   }
 
-  let effectiveMime = mimeType;
   const mtLower = mimeType.toLowerCase();
   if (mtLower === "image/heic" || mtLower === "image/heif" || isLikelyHeicOrHeifBuffer(raw)) {
     try {
       raw = Buffer.from(await heicBufferToJpeg(raw));
-      effectiveMime = "image/jpeg";
     } catch (e) {
       console.error("[OCR] HEIC→JPEG failed (iPhone photos are often HEIC):", e);
       throw new Error(
@@ -42,11 +34,22 @@ async function shrinkImageForClaudeIfNeeded(
     }
   }
 
-  if (raw.length <= CLAUDE_IMAGE_BYTE_TARGET) {
-    return {
-      data: raw.toString("base64"),
-      mediaType: mimeToAnthropicMediaType(effectiveMime),
-    };
+  let working: Buffer;
+  try {
+    working = await sharp(raw, { failOn: "none" })
+      .rotate()
+      .resize({ width: 2048, height: 2048, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 85, mozjpeg: true, chromaSubsampling: "4:2:0" })
+      .toBuffer();
+  } catch (e) {
+    console.error("[OCR] sharp normalize (→JPEG) failed for Claude:", e);
+    throw new Error(
+      "Could not prepare the receipt image for OCR. Try a smaller or clearer photo.",
+    );
+  }
+
+  if (working.length <= CLAUDE_IMAGE_BYTE_TARGET) {
+    return { data: working.toString("base64"), mediaType: "image/jpeg" };
   }
 
   let quality = 76;
@@ -55,10 +58,9 @@ async function shrinkImageForClaudeIfNeeded(
   for (let attempt = 0; attempt < 22; attempt++) {
     let out: Buffer;
     try {
-      out = await sharp(raw, { failOn: "none" })
-        .rotate()
+      out = await sharp(working, { failOn: "none" })
         .resize({ width: maxWidth, height: maxWidth, fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality, mozjpeg: true })
+        .jpeg({ quality, mozjpeg: true, chromaSubsampling: "4:2:0" })
         .toBuffer();
     } catch (e) {
       console.error("[OCR] sharp failed while resizing receipt for Claude:", e);
@@ -75,10 +77,9 @@ async function shrinkImageForClaudeIfNeeded(
     maxWidth = Math.max(480, Math.floor(maxWidth * 0.86));
   }
 
-  const last = await sharp(raw, { failOn: "none" })
-    .rotate()
+  const last = await sharp(working, { failOn: "none" })
     .resize({ width: 480, height: 480, fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 26, mozjpeg: true })
+    .jpeg({ quality: 26, mozjpeg: true, chromaSubsampling: "4:2:0" })
     .toBuffer();
 
   if (last.length > ANTHROPIC_IMAGE_MAX_BYTES) {
