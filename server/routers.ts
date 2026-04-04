@@ -9,6 +9,7 @@ import {
   getPublicServerBaseUrl,
   isForgeStorageConfigured,
   resolvePublicBaseForReceiptImages,
+  useForgeForSheetsExport,
 } from "./_core/env";
 import { invokeLLM } from "./_core/llm";
 import {
@@ -775,7 +776,10 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const { spreadsheetId, sheetName, rows, skipDuplicateCheck, publicApiBaseUrl } = input;
         const receiptPublicBase = resolvePublicBaseForReceiptImages(publicApiBaseUrl);
-        
+        console.log(
+          `[Export] Sheets row image: publicBase=${receiptPublicBase ? "ok" : "MISSING"} forgeFallback=${useForgeForSheetsExport() ? "on" : "off"}`,
+        );
+
         // Get access token using OAuth Refresh Token
         const accessToken = await getGoogleAccessToken();
 
@@ -922,7 +926,12 @@ export const appRouter = router({
                   };
 
                   tryReceiptShare();
-                  if (!String(imageUrl ?? "").trim() && isForgeStorageConfigured()) {
+                  // Forge is opt-in for export (invalid keys spam logs). Receipt-share is enough for =IMAGE.
+                  if (
+                    !String(imageUrl ?? "").trim() &&
+                    useForgeForSheetsExport() &&
+                    isForgeStorageConfigured()
+                  ) {
                     imageUrl = await uploadImageToStorage(base64Data, fileName);
                     if (String(imageUrl ?? "").trim()) {
                       console.log(`[Export] Forge image URL for ${r.vendor}: ${fileName}`);

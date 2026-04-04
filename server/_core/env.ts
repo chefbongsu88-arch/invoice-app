@@ -41,7 +41,16 @@ export function resolvePublicBaseForReceiptImages(clientBaseUrl?: string | null)
   if (process.env.NODE_ENV !== "development") {
     return PRODUCTION_API_ORIGIN;
   }
+  // Railway can mis-set NODE_ENV; still need a public HTTPS base for /api/receipt-share
+  if (process.env.RAILWAY_ENVIRONMENT?.trim() || process.env.RAILWAY_PROJECT_ID?.trim()) {
+    return PRODUCTION_API_ORIGIN;
+  }
   return "";
+}
+
+/** Default off: Google Sheets export uses in-memory /api/receipt-share. Set to "1" to try Forge after share fails. */
+export function useForgeForSheetsExport(): boolean {
+  return process.env.USE_FORGE_FOR_SHEETS_EXPORT === "1";
 }
 
 /** True when Forge storage env vars are set (may still fail at runtime if invalid). */
