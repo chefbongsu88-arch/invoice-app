@@ -259,6 +259,14 @@ export default function ScanScreen() {
         }
       }
 
+      if (!base64) {
+        Alert.alert(
+          "Could not read image",
+          "This photo could not be loaded for scanning. Try the camera, or pick one photo at a time.",
+        );
+        return;
+      }
+
       const b64Payload = base64.replace(/\s/g, "");
       if (b64Payload.length < 64) {
         Alert.alert(
