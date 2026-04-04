@@ -208,7 +208,7 @@ export default function GmailScreen() {
   const handleGoogleLogin = useCallback(async () => {
     try {
       const apiBase = getApiBaseUrl();
-      const clientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? "174596473104-1lbjcc0450cbg53lfhhl5eghu7vida1r.apps.googleusercontent.com";
+      const clientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? "614052249025-n9uf9hirmtop9phdl1bjsdod8d6sfhg2.apps.googleusercontent.com";
       const redirectUri = `${apiBase}/auth/gmail/callback`;
       const successUri = `${apiBase}/auth/gmail/success`;
       const scope = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/spreadsheets";

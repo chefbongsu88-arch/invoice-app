@@ -110,7 +110,7 @@ export type ResponseFormat =
 const ensureArray = (value: MessageContent | MessageContent[]): MessageContent[] =>
   Array.isArray(value) ? value : [value];
 
-const normalizeContentPart = (part: MessageContent): TextContent | ImageContent | FileContent => {
+const normalizeContentPart = (part: MessageContent): any => {
   if (typeof part === "string") {
     return { type: "text", text: part };
   }
@@ -120,7 +120,26 @@ const normalizeContentPart = (part: MessageContent): TextContent | ImageContent 
   }
 
   if (part.type === "image_url") {
-    return part;
+    const url = part.image_url.url;
+    if (url.startsWith("data:")) {
+      const [header, data] = url.split(",");
+      const mediaType = header.split(":")[1].split(";")[0];
+      return {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: mediaType,
+          data: data,
+        },
+      };
+    }
+    return {
+      type: "image",
+      source: {
+        type: "url",
+        url: url,
+      },
+    };
   }
 
   if (part.type === "file_url") {
@@ -201,55 +220,12 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = () =>
-  ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
-    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
-    : "https://forge.manus.im/v1/chat/completions";
+const resolveApiUrl = () => "https://api.anthropic.com/v1/messages";
 
 const assertApiKey = () => {
-  if (!ENV.forgeApiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY is not configured");
   }
-};
-
-const normalizeResponseFormat = ({
-  responseFormat,
-  response_format,
-  outputSchema,
-  output_schema,
-}: {
-  responseFormat?: ResponseFormat;
-  response_format?: ResponseFormat;
-  outputSchema?: OutputSchema;
-  output_schema?: OutputSchema;
-}):
-  | { type: "json_schema"; json_schema: JsonSchema }
-  | { type: "text" }
-  | { type: "json_object" }
-  | undefined => {
-  const explicitFormat = responseFormat || response_format;
-  if (explicitFormat) {
-    if (explicitFormat.type === "json_schema" && !explicitFormat.json_schema?.schema) {
-      throw new Error("responseFormat json_schema requires a defined schema object");
-    }
-    return explicitFormat;
-  }
-
-  const schema = outputSchema || output_schema;
-  if (!schema) return undefined;
-
-  if (!schema.name || !schema.schema) {
-    throw new Error("outputSchema requires both name and schema");
-  }
-
-  return {
-    type: "json_schema",
-    json_schema: {
-      name: schema.name,
-      schema: schema.schema,
-      ...(typeof schema.strict === "boolean" ? { strict: schema.strict } : {}),
-    },
-  };
 };
 
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
@@ -260,14 +236,11 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     tools,
     toolChoice,
     tool_choice,
-    outputSchema,
-    output_schema,
-    responseFormat,
-    response_format,
   } = params;
 
   const payload: Record<string, unknown> = {
-    model: "gemini-2.5-flash",
+    model: "claude-sonnet-4-5",
+    max_tokens: 4096,
     messages: messages.map(normalizeMessage),
   };
 
@@ -280,24 +253,15 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.tool_choice = normalizedToolChoice;
   }
 
-  payload.max_tokens = 4096;
-
-  const normalizedResponseFormat = normalizeResponseFormat({
-    responseFormat,
-    response_format,
-    outputSchema,
-    output_schema,
-  });
-
-  if (normalizedResponseFormat) {
-    payload.response_format = normalizedResponseFormat;
-  }
+  // Anthropic API는 response_format 미지원 — JSON은 프롬프트로 처리
+  // response_format 파라미터 제거
 
   const response = await fetch(resolveApiUrl(), {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${ENV.forgeApiKey}`,
+      "x-api-key": process.env.ANTHROPIC_API_KEY!,
+      "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify(payload),
   });
@@ -307,5 +271,24 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     throw new Error(`LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`);
   }
 
-  return (await response.json()) as InvokeResult;
+  // Anthropic API 응답을 OpenAI 형식으로 변환
+  const data = await response.json() as any;
+  return {
+    id: data.id || "",
+    created: Date.now(),
+    model: data.model || "",
+    choices: [{
+      index: 0,
+      message: {
+        role: "assistant" as Role,
+        content: data.content?.[0]?.text || "",
+      },
+      finish_reason: data.stop_reason || null,
+    }],
+    usage: {
+      prompt_tokens: data.usage?.input_tokens || 0,
+      completion_tokens: data.usage?.output_tokens || 0,
+      total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
+    },
+  };
 }
