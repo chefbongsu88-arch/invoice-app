@@ -1,4 +1,5 @@
 import "dotenv/config";
+import fs from "fs";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
@@ -94,14 +95,30 @@ async function startServer() {
     }),
   );
 
-  // Serve Expo web app static files from dist/
+  // Serve Expo web app static files from dist/ (only if `pnpm build:web` was run)
   const webDist = path.join(process.cwd(), "dist");
+  const webIndexPath = path.join(webDist, "index.html");
+
+  // Railway often runs `build:server` only — no index.html. Root "/" would otherwise show plain "Not found".
+  app.get("/", (_req, res, next) => {
+    if (!fs.existsSync(webIndexPath)) {
+      res.redirect(302, "/api/health");
+      return;
+    }
+    next();
+  });
+
   app.use(express.static(webDist));
 
   // SPA fallback — return index.html for any non-API route
   app.get("*", (_req, res) => {
-    res.sendFile(path.join(webDist, "index.html"), (err) => {
-      if (err) res.status(404).send("Not found");
+    res.sendFile(webIndexPath, (err) => {
+      if (err) {
+        res
+          .status(404)
+          .type("text/plain")
+          .send("Not found (no web build). Try GET /api/health for API status.");
+      }
     });
   });
 
