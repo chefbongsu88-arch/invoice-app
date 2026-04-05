@@ -1,10 +1,19 @@
-// CJS package — no bundled types
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const heicConvert = require("heic-convert") as (opts: {
+// CJS package — must use dynamic import so `node dist/index.mjs` (ESM) never hits `require()`.
+type HeicConvertFn = (opts: {
   buffer: Buffer;
   format: "JPEG";
   quality?: number;
 }) => Promise<ArrayBuffer | Uint8Array | Buffer>;
+
+let heicConvertCached: HeicConvertFn | null = null;
+
+async function getHeicConvert(): Promise<HeicConvertFn> {
+  if (heicConvertCached) return heicConvertCached;
+  const mod = await import("heic-convert");
+  const fn = (mod as { default?: HeicConvertFn }).default ?? (mod as unknown as HeicConvertFn);
+  heicConvertCached = fn;
+  return fn;
+}
 
 /**
  * ISO BMFF `ftyp` + HEIF/HEIC brands (iPhone photos are often HEIC).
@@ -57,6 +66,7 @@ export function isLibvipsHeifDecodeError(err: unknown): boolean {
 
 /** Decode HEIC/HEIF to JPEG bytes so `sharp` (no libheif on Railway) can resize. */
 export async function heicBufferToJpeg(buf: Buffer, quality = 0.88): Promise<Buffer> {
+  const heicConvert = await getHeicConvert();
   const out = await heicConvert({
     buffer: buf,
     format: "JPEG",
