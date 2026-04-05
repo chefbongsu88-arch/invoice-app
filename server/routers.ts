@@ -779,6 +779,8 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const { spreadsheetId, sheetName, rows, skipDuplicateCheck, publicApiBaseUrl } = input;
         const receiptPublicBase = resolvePublicBaseForReceiptImages(publicApiBaseUrl);
+        // If Deploy logs never show this line, the server is still running an old bundle (Forge export).
+        console.log("[Export] image_pipeline=receipt-share-v2");
         console.log(
           `[Export] Sheets row image: publicBase=${receiptPublicBase ? receiptPublicBase.slice(0, 48) : "MISSING"}`,
         );
@@ -879,6 +881,16 @@ export const appRouter = router({
           newRows.map(async (r) => {
             let imageUrl = r.imageUrl ?? "";
             const userProvidedImage = Boolean(r.imageUrl?.trim());
+            if (
+              userProvidedImage &&
+              !imageUrl.startsWith("data:") &&
+              !imageUrl.startsWith("file://") &&
+              !/^https?:\/\//i.test(imageUrl)
+            ) {
+              console.warn(
+                `[Export] Skipping image for ${r.vendor}: expected data:image/…;base64 from the app (got non-URL prefix).`,
+              );
+            }
 
             // data:/file: → in-memory /api/receipt-share only (Sheets =IMAGE); Forge is not used here
             if (imageUrl && (imageUrl.startsWith("data:") || imageUrl.startsWith("file://"))) {

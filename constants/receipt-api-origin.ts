@@ -5,3 +5,9 @@
  */
 export const PRODUCTION_API_ORIGIN =
   "https://invoice-app-production-18c0.up.railway.app";
+
+/**
+ * Shown in GET /api/health as `sheetsExportBuild`.
+ * If missing on production, the server is still running an old deploy (Forge-only sheet images).
+ */
+export const API_SHEETS_EXPORT_BUILD = "receipt-share-v2";

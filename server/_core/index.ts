@@ -7,6 +7,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import { API_SHEETS_EXPORT_BUILD } from "../../constants/receipt-api-origin";
 import { ENV, getPublicServerBaseUrl } from "./env";
 import { getReceiptShareImage } from "../receipt-share-store";
 
@@ -66,7 +67,11 @@ async function startServer() {
   registerOAuthRoutes(app);
 
   app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, timestamp: Date.now() });
+    res.json({
+      ok: true,
+      timestamp: Date.now(),
+      sheetsExportBuild: API_SHEETS_EXPORT_BUILD,
+    });
   });
 
   // Public receipt images for Google Sheets =IMAGE() when Forge upload is unavailable (in-memory fallback).

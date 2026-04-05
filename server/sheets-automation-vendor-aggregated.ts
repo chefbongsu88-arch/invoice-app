@@ -7,6 +7,11 @@ import {
   TRACKER_COLUMN_COUNT,
 } from "./sheets-automation";
 
+/** Per-vendor lines are noisy in Railway; set VERBOSE_SHEETS_AGG_LOG=1 to enable. */
+const verboseSheetsAggLog =
+  process.env.VERBOSE_SHEETS_AGG_LOG === "1" ||
+  process.env.NODE_ENV === "development";
+
 export interface SheetAutomationConfig {
   spreadsheetId: string;
   accessToken: string;
@@ -84,9 +89,13 @@ function aggregateByVendor(invoices: any[]) {
 
   for (const invoice of invoices) {
     const vendor = invoice.vendor || "Unknown";
-    
-    console.log(`Processing invoice: ${vendor}, totalAmount=${invoice.totalAmount} (type: ${typeof invoice.totalAmount})`);
-    
+
+    if (verboseSheetsAggLog) {
+      console.log(
+        `Processing invoice: ${vendor}, totalAmount=${invoice.totalAmount} (type: ${typeof invoice.totalAmount})`,
+      );
+    }
+
     if (!vendorMap.has(vendor)) {
       vendorMap.set(vendor, {
         source: invoice.source,
@@ -114,7 +123,9 @@ function aggregateByVendor(invoices: any[]) {
       vendorData.imageUrl = invoice.imageUrl;
     }
 
-    console.log(`After aggregation: ${vendor} total=${vendorData.totalAmount}`);
+    if (verboseSheetsAggLog) {
+      console.log(`After aggregation: ${vendor} total=${vendorData.totalAmount}`);
+    }
   }
 
   return Array.from(vendorMap.values());
