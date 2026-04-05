@@ -60,11 +60,15 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: true,
     bundleIdentifier: env.iosBundleId,
-    "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
-      }
+    infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
+      /** Default bundle language so system-provided strings favor English where applicable. */
+      CFBundleDevelopmentRegion: "en",
+    },
   },
   android: {
+    /** Lets the window shrink when the keyboard opens so buttons below the field stay tappable. */
+    softwareKeyboardLayoutMode: "resize",
     adaptiveIcon: {
       backgroundColor: "#E6F4FE",
       foregroundImage: "./assets/images/android-icon-foreground.png",
@@ -140,6 +144,14 @@ const config: ExpoConfig = {
           buildArchs: ["armeabi-v7a", "arm64-v8a"],
           minSdkVersion: 24,
         },
+      },
+    ],
+    [
+      "@react-native-google-signin/google-signin",
+      {
+        // Reversed Web client ID — required for iOS native Google Sign-In (no custom Manus bounce URL).
+        iosUrlScheme:
+          "com.googleusercontent.apps.614052249025-n9uf9hirmtop9phdl1bjsdod8d6sfhg2",
       },
     ],
   ],

@@ -1,11 +1,15 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from "expo-constants";
 import * as Haptics from "expo-haptics";
+import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
-import { useCallback, useEffect, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -19,11 +23,48 @@ import { useInvoices } from "@/hooks/use-invoices";
 import type { Invoice, InvoiceCategory } from "@/shared/invoice-types";
 import { trpc } from "@/lib/trpc";
 import { getApiBaseUrl } from "@/constants/oauth";
+import { PRODUCTION_API_ORIGIN } from "@/constants/receipt-api-origin";
 import { displayInvoiceNumber } from "@/lib/invoice-display";
+import { getSheetsExportTarget } from "@/lib/sheets-settings";
+import {
+  GMAIL_EMAIL_KEY,
+  GMAIL_OAUTH_RETURN_HOST,
+  GMAIL_TOKEN_KEY,
+  getGmailOAuthRedirectBaseUrl,
+  parseGmailAuthReturnUrl,
+  persistGmailOAuthFromParsed,
+} from "@/lib/gmail-oauth";
+import {
+  NATIVE_GOOGLE_SIGNIN_UNAVAILABLE,
+  configureGoogleSignInForGmail,
+  isGoogleSignInCancelled,
+  signInWithGoogleForGmailAndSheets,
+  signOutGoogleNative,
+} from "@/lib/google-native-sign-in";
+import { isExpoGo } from "@/lib/is-expo-go";
 
-const GMAIL_TOKEN_KEY = "gmail_oauth_token";
-const GMAIL_EMAIL_KEY = "gmail_email_address";
 const SETTINGS_KEY = "app_settings_v1";
+
+const WEB_GOOGLE_CLIENT_ID =
+  process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ??
+  "614052249025-n9uf9hirmtop9phdl1bjsdod8d6sfhg2.apps.googleusercontent.com";
+
+function getNativeAppScheme(): string {
+  const s = Constants.expoConfig?.scheme;
+  if (typeof s === "string" && s.length > 0) return s;
+  if (Array.isArray(s) && typeof s[0] === "string") return s[0];
+  return "manus20260325194257";
+}
+
+function encodeGmailOAuthState(scheme: string): string {
+  const json = JSON.stringify({ v: 1, scheme });
+  if (typeof globalThis.btoa === "function") {
+    return globalThis.btoa(json);
+  }
+  const Buf = (globalThis as unknown as { Buffer?: { from: (s: string, e: string) => { toString: (e: string) => string } } }).Buffer;
+  if (Buf) return Buf.from(json, "utf-8").toString("base64");
+  return json;
+}
 
 interface EmailMessage {
   id: string;
@@ -44,8 +85,25 @@ interface EmailMessage {
   };
 }
 
-function LoginCard({ onLogin }: { onLogin: () => void }) {
+function normalizeApiHost(url: string): string {
+  return url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+}
+
+function LoginCard({
+  onLogin,
+  apiBase,
+  oauthRedirectBase,
+}: {
+  onLogin: () => void;
+  apiBase: string;
+  /** Web only — native iOS/Android use system Google Sign-In (no Railway redirect page). */
+  oauthRedirectBase: string | null;
+}) {
   const colors = useColors();
+  const hostMismatch =
+    normalizeApiHost(apiBase) !== normalizeApiHost(PRODUCTION_API_ORIGIN);
+  const oauthDiffers =
+    oauthRedirectBase != null && normalizeApiHost(oauthRedirectBase) !== normalizeApiHost(apiBase);
   return (
     <View style={styles.connectCard}>
       <View style={[styles.connectIcon, { backgroundColor: colors.email + "15" }]}>
@@ -55,6 +113,33 @@ function LoginCard({ onLogin }: { onLogin: () => void }) {
       <Text style={[styles.connectDesc, { color: colors.muted }]}>
         Sign in with your Google account to automatically fetch and parse invoice emails from your inbox.
       </Text>
+      <Text style={[styles.apiBaseHint, { color: colors.muted }]} selectable>
+        API: {apiBase}
+      </Text>
+      {oauthRedirectBase == null ? (
+        <Text style={[styles.apiBaseHint, { color: colors.muted, marginTop: 6 }]}>
+          On iPhone and Android, sign-in uses Google’s system dialog — no browser redirect. Your data still goes
+          through the API above.
+        </Text>
+      ) : oauthDiffers ? (
+        <Text style={[styles.apiBaseHint, { color: colors.muted, marginTop: 6 }]} selectable>
+          Web Gmail sign-in redirect: {oauthRedirectBase}
+        </Text>
+      ) : null}
+      {hostMismatch ? (
+        <Text style={[styles.apiBaseWarn, { color: colors.warning }]}>
+          This app is using a different API host than the project default. For Gmail sign-in to work, the browser
+          should show{" "}
+          <Text style={{ fontWeight: "700" }}>{normalizeApiHost(PRODUCTION_API_ORIGIN)}</Text>
+          .{"\n\n"}
+          App now: {normalizeApiHost(apiBase)}
+          {"\n"}
+          Expected: {normalizeApiHost(PRODUCTION_API_ORIGIN)}
+          {"\n\n"}
+          Rebuild the app with EAS, or deploy the latest code to your Railway service (including legacy
+          app-production-… if you still use it).
+        </Text>
+      ) : null}
       <Pressable
         onPress={onLogin}
         style={({ pressed }) => [
@@ -176,7 +261,7 @@ function EmailCard({
 
 export default function GmailScreen() {
   const colors = useColors();
-  const { addInvoice } = useInvoices();
+  const { addInvoice, updateInvoice } = useInvoices();
   const [emails, setEmails] = useState<EmailMessage[]>([]);
   const [fetching, setFetching] = useState(false);
   const [parsingId, setParsingId] = useState<string | null>(null);
@@ -184,9 +269,29 @@ export default function GmailScreen() {
   const [userEmail, setUserEmail] = useState("");
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
+  const [autoExportEnabled, setAutoExportEnabled] = useState(false);
+  const [gmailPreparingLabel, setGmailPreparingLabel] = useState("");
+  const autoSaveStartedRef = useRef<Set<string>>(new Set());
 
   const fetchMutation = trpc.invoices.fetchGmailInvoices.useMutation();
   const parseMutation = trpc.invoices.parseEmailInvoice.useMutation();
+  const exportMutation = trpc.invoices.exportToSheets.useMutation();
+  const relabelMutation = trpc.invoices.gmailRelabelMessage.useMutation();
+
+  const refreshAutomationSettings = useCallback(() => {
+    AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
+      if (!raw) return;
+      const settings = JSON.parse(raw) as {
+        autoSaveGmailEmails?: boolean;
+        autoExportToSheets?: boolean;
+        gmailPreparingLabel?: string;
+        gmailCompleteLabel?: string;
+      };
+      setAutoSaveEnabled(settings.autoSaveGmailEmails ?? false);
+      setAutoExportEnabled(settings.autoExportToSheets ?? false);
+      setGmailPreparingLabel(settings.gmailPreparingLabel?.trim() ?? "");
+    });
+  }, []);
 
   useEffect(() => {
     // Load saved token on mount
@@ -199,22 +304,74 @@ export default function GmailScreen() {
     AsyncStorage.getItem(GMAIL_EMAIL_KEY).then((email) => {
       if (email) setUserEmail(email);
     });
-    // Load auto-save setting
-    AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
-      if (raw) {
-        const settings = JSON.parse(raw);
-        setAutoSaveEnabled(settings.autoSaveGmailEmails ?? false);
+    refreshAutomationSettings();
+  }, [refreshAutomationSettings]);
+
+  // Fallback: some iOS builds deliver `scheme://gmail-auth?token=…` via Linking instead of WebBrowser result
+  useEffect(() => {
+    const applyGmailAuthUrl = async (url: string) => {
+      if (!url.includes("://gmail-auth")) return;
+      const parsed = parseGmailAuthReturnUrl(url);
+      if (parsed.error) {
+        Alert.alert("Error", `OAuth failed: ${parsed.error}`);
+        return;
       }
+      const saved = await persistGmailOAuthFromParsed(parsed);
+      if (!saved.ok) return;
+      setAccessToken(parsed.token ?? "");
+      setUserEmail(parsed.email ?? "");
+      setIsLoggedIn(true);
+      try {
+        WebBrowser.dismissAuthSession();
+      } catch {
+        /* iOS only; ignore if already closed */
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert("Success", "Google account connected!");
+    };
+
+    const sub = Linking.addEventListener("url", (e) => {
+      void applyGmailAuthUrl(e.url);
     });
+    void Linking.getInitialURL().then((url) => {
+      if (url) void applyGmailAuthUrl(url);
+    });
+    return () => sub.remove();
   }, []);
 
+  useFocusEffect(
+    useCallback(() => {
+      refreshAutomationSettings();
+      void AsyncStorage.getItem(GMAIL_TOKEN_KEY).then((t) => {
+        if (t) {
+          setAccessToken(t);
+          setIsLoggedIn(true);
+        }
+      });
+      void AsyncStorage.getItem(GMAIL_EMAIL_KEY).then((e) => {
+        if (e) setUserEmail(e);
+      });
+    }, [refreshAutomationSettings]),
+  );
+
   const handleGoogleLogin = useCallback(async () => {
-    try {
-      const apiBase = getApiBaseUrl();
-      const clientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? "614052249025-n9uf9hirmtop9phdl1bjsdod8d6sfhg2.apps.googleusercontent.com";
-      const redirectUri = `${apiBase}/auth/gmail/callback`;
-      const successUri = `${apiBase}/auth/gmail/success`;
-      const scope = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/spreadsheets";
+    const runWebBrowserOAuth = async () => {
+      /* OAuth in browser (Safari / in-app browser) + deep link back. */
+      const oauthBase = getGmailOAuthRedirectBaseUrl();
+      const scheme = getNativeAppScheme();
+      const appAuthRedirectUri = `${scheme}://${GMAIL_OAUTH_RETURN_HOST}`;
+      const statePayload = encodeGmailOAuthState(scheme);
+
+      const clientId = WEB_GOOGLE_CLIENT_ID;
+      const redirectUri = `${oauthBase}/auth/gmail/callback`;
+      if (__DEV__) {
+        console.log(
+          "[Gmail OAuth] redirect_uri (must be in Google Cloud + match this deploy):",
+          redirectUri,
+        );
+      }
+      const scope =
+        "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/spreadsheets";
 
       const oauthUrl =
         `https://accounts.google.com/o/oauth2/v2/auth` +
@@ -223,63 +380,121 @@ export default function GmailScreen() {
         `&response_type=code` +
         `&scope=${encodeURIComponent(scope)}` +
         `&access_type=offline` +
-        `&prompt=consent`;
+        `&prompt=consent` +
+        `&state=${encodeURIComponent(statePayload)}`;
 
-      // openAuthSessionAsync closes the browser when it detects a navigation to successUri
-      const result = await WebBrowser.openAuthSessionAsync(oauthUrl, successUri);
+      const result = await WebBrowser.openAuthSessionAsync(oauthUrl, appAuthRedirectUri, {
+        preferEphemeralSession: false,
+      });
 
-      if (result.type === "success") {
-        const url = new URL(result.url);
-        const error = url.searchParams.get("error");
+      if (result.type === "success" && result.url) {
+        const { token, email, error } = parseGmailAuthReturnUrl(result.url);
         if (error) {
-          Alert.alert("Error", `OAuth failed: ${error}`);
+          const hint =
+            error === "access_denied"
+              ? "Google sign-in was cancelled or blocked."
+              : error === "missing_code"
+                ? "The login page did not return a code. Close the browser and try again from the app."
+                : error === "token_exchange_failed"
+                  ? "Server could not exchange the login code. Check Railway env GOOGLE_CLIENT_ID / SECRET and GMAIL_OAUTH_REDIRECT_URI."
+                  : error;
+          Alert.alert("Gmail sign-in", hint);
           return;
         }
-
-        const token = url.searchParams.get("token");
-        const email = url.searchParams.get("email") ?? "";
-
         if (token) {
-          await AsyncStorage.setItem(GMAIL_TOKEN_KEY, token);
-          if (email) await AsyncStorage.setItem(GMAIL_EMAIL_KEY, email);
+          const saved = await persistGmailOAuthFromParsed({ token, email, error });
+          if (!saved.ok) {
+            Alert.alert("Error", "Could not save Gmail connection.");
+            return;
+          }
           setAccessToken(token);
-          setUserEmail(email);
+          setUserEmail(email ?? "");
           setIsLoggedIn(true);
-
+          try {
+            WebBrowser.dismissAuthSession();
+          } catch {
+            /* noop */
+          }
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           Alert.alert("Success", "Google account connected!");
+          return;
+        }
+        Alert.alert("Error", "No token returned. Try signing in again.");
+        return;
+      }
 
-          setTimeout(() => fetchEmails(token), 500);
+      if (result.type === "cancel" || result.type === "dismiss") {
+        Alert.alert(
+          "Sign-in not finished",
+          "The app did not receive the login token. Try again and wait until the app opens automatically after Google (do not close the browser first).",
+        );
+      }
+    };
+
+    try {
+      /** Prefer native Sign-In when the binary includes RNGoogleSignin (not Expo Go). */
+      if (Platform.OS !== "web" && !isExpoGo()) {
+        try {
+          configureGoogleSignInForGmail(WEB_GOOGLE_CLIENT_ID);
+          const { accessToken: token, email } = await signInWithGoogleForGmailAndSheets();
+          const saved = await persistGmailOAuthFromParsed({ token, email });
+          if (!saved.ok) {
+            Alert.alert("Error", "Could not save Gmail connection.");
+            return;
+          }
+          setAccessToken(token);
+          setUserEmail(email ?? "");
+          setIsLoggedIn(true);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Alert.alert("Success", "Google account connected!");
+          return;
+        } catch (inner) {
+          if (
+            inner instanceof Error &&
+            inner.message === NATIVE_GOOGLE_SIGNIN_UNAVAILABLE
+          ) {
+            await runWebBrowserOAuth();
+            return;
+          }
+          throw inner;
         }
       }
+
+      await runWebBrowserOAuth();
     } catch (err) {
+      if (isGoogleSignInCancelled(err)) return;
       Alert.alert("Error", "Failed to connect Google account");
     }
   }, []);
 
-  const fetchEmails = useCallback(async (token?: string) => {
-    const tokenToUse = token || accessToken;
-    if (!tokenToUse) return;
-    
-    setFetching(true);
-    try {
-      const result = await fetchMutation.mutateAsync({
-        accessToken: tokenToUse,
-        maxResults: 20,
-      });
-      setEmails((result.messages as EmailMessage[]) ?? []);
-    } catch (err) {
-      Alert.alert("Error", "Failed to fetch Gmail messages. Please try again.");
-    } finally {
-      setFetching(false);
-    }
-  }, [accessToken, fetchMutation]);
+  const fetchEmails = useCallback(
+    async (token?: string) => {
+      const tokenToUse = token || accessToken;
+      if (!tokenToUse) return;
+
+      setFetching(true);
+      try {
+        const prep = gmailPreparingLabel.trim();
+        const result = await fetchMutation.mutateAsync({
+          accessToken: tokenToUse,
+          maxResults: 50,
+          preparingLabelName: prep || undefined,
+        });
+        setEmails((result.messages as EmailMessage[]) ?? []);
+      } catch (err) {
+        Alert.alert("Error", "Failed to fetch Gmail messages. Please try again.");
+      } finally {
+        setFetching(false);
+      }
+    },
+    [accessToken, fetchMutation, gmailPreparingLabel],
+  );
 
   useEffect(() => {
     if (isLoggedIn && accessToken) {
       fetchEmails();
     }
-  }, [isLoggedIn, accessToken]);
+  }, [isLoggedIn, accessToken, gmailPreparingLabel, fetchEmails]);
 
   const handleParse = useCallback(
     async (email: EmailMessage) => {
@@ -307,7 +522,7 @@ export default function GmailScreen() {
   );
 
   const handleSave = useCallback(
-    async (email: EmailMessage) => {
+    async (email: EmailMessage, opts?: { quiet?: boolean }) => {
       if (!email.parsedData) return;
       const pd = email.parsedData;
       const invoice: Invoice = {
@@ -327,23 +542,112 @@ export default function GmailScreen() {
         createdAt: new Date().toISOString(),
       };
       await addInvoice(invoice);
+
+      let exportOutcome: "none" | "ok" | "duplicate" | "failed" = "none";
+      if (autoExportEnabled) {
+        try {
+          const { spreadsheetId, sheetName } = await getSheetsExportTarget();
+          const result = await exportMutation.mutateAsync({
+            spreadsheetId,
+            sheetName,
+            publicApiBaseUrl: getApiBaseUrl(),
+            rows: [
+              {
+                source: "Email",
+                invoiceNumber: invoice.invoiceNumber,
+                vendor: invoice.vendor,
+                date: invoice.date,
+                totalAmount: invoice.totalAmount,
+                ivaAmount: invoice.ivaAmount,
+                baseAmount: invoice.baseAmount,
+                category: invoice.category,
+                currency: invoice.currency,
+                tip: invoice.tip,
+                notes: invoice.notes ?? "",
+                items: invoice.items,
+                imageUrl: "",
+              },
+            ],
+            automateSheets: true,
+          });
+          await updateInvoice(invoice.id, {
+            exportedToSheets: true,
+            exportedAt: new Date().toISOString(),
+          });
+          exportOutcome = result.rowsAdded === 0 ? "duplicate" : "ok";
+        } catch (err) {
+          console.error("[Gmail] exportToSheets failed:", err);
+          exportOutcome = "failed";
+        }
+      }
+
+      if (
+        autoExportEnabled &&
+        (exportOutcome === "ok" || exportOutcome === "duplicate") &&
+        accessToken
+      ) {
+        try {
+          const rawSettings = await AsyncStorage.getItem(SETTINGS_KEY);
+          const parsed = rawSettings ? JSON.parse(rawSettings) : {};
+          const prep = String(parsed.gmailPreparingLabel ?? "").trim();
+          const done = String(parsed.gmailCompleteLabel ?? "").trim();
+          if (prep && done) {
+            await relabelMutation.mutateAsync({
+              accessToken,
+              messageId: email.id,
+              removeLabelName: prep,
+              addLabelName: done,
+            });
+          }
+        } catch (relErr) {
+          console.error("[Gmail] Relabel after export failed:", relErr);
+        }
+      }
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert("Saved!", `Invoice from ${invoice.vendor} has been saved to your receipts.`);
       setEmails((prev) => prev.filter((e) => e.id !== email.id));
+
+      if (opts?.quiet) {
+        if (exportOutcome === "failed") {
+          Alert.alert(
+            "Sheets export failed",
+            `${invoice.vendor} was saved to Receipts. Open it and tap Export.`,
+          );
+        }
+        return;
+      }
+
+      if (exportOutcome === "failed") {
+        Alert.alert(
+          "Saved",
+          `${invoice.vendor}: saved to Receipts, but Google Sheets export failed. Open the receipt and tap Export.`,
+        );
+      } else if (exportOutcome === "ok") {
+        Alert.alert("Saved & exported", `${invoice.vendor} is in Receipts and your spreadsheet.`);
+      } else if (exportOutcome === "duplicate") {
+        Alert.alert(
+          "Saved",
+          `${invoice.vendor}: saved to Receipts. A matching row was already in Sheets — marked as exported.`,
+        );
+      } else {
+        Alert.alert("Saved!", `Invoice from ${invoice.vendor} has been saved to your receipts.`);
+      }
     },
-    [addInvoice]
+    [accessToken, addInvoice, autoExportEnabled, exportMutation, relabelMutation, updateInvoice],
   );
 
   // Auto-save parsed emails if enabled
   useEffect(() => {
     if (!autoSaveEnabled) return;
-    
-    emails.forEach(async (email) => {
-      if (email.parsedData && !email.parsed) {
-        // Auto-save this email
-        await handleSave(email);
-      }
-    });
+
+    for (const email of emails) {
+      if (!email.parsedData || !email.parsed) continue;
+      if (autoSaveStartedRef.current.has(email.id)) continue;
+      autoSaveStartedRef.current.add(email.id);
+      void handleSave(email, { quiet: true }).finally(() => {
+        autoSaveStartedRef.current.delete(email.id);
+      });
+    }
   }, [emails, autoSaveEnabled, handleSave]);
 
   const handleDisconnect = useCallback(() => {
@@ -353,6 +657,7 @@ export default function GmailScreen() {
         text: "Disconnect",
         style: "destructive",
         onPress: async () => {
+          await signOutGoogleNative();
           await AsyncStorage.removeItem(GMAIL_TOKEN_KEY);
           await AsyncStorage.removeItem(GMAIL_EMAIL_KEY);
           setAccessToken("");
@@ -368,7 +673,13 @@ export default function GmailScreen() {
   if (!isLoggedIn) {
     return (
       <ScreenContainer containerClassName="bg-background">
-        <LoginCard onLogin={handleGoogleLogin} />
+        <LoginCard
+          onLogin={handleGoogleLogin}
+          apiBase={getApiBaseUrl()}
+          oauthRedirectBase={
+            Platform.OS === "web" || isExpoGo() ? getGmailOAuthRedirectBaseUrl() : null
+          }
+        />
       </ScreenContainer>
     );
   }
@@ -386,6 +697,11 @@ export default function GmailScreen() {
                 <Text style={[styles.title, { color: colors.foreground }]}>Gmail Invoices</Text>
                 <Text style={[styles.subtitle, { color: colors.muted }]}>
                   {emails.length} invoice email{emails.length !== 1 ? "s" : ""} found
+                </Text>
+                <Text style={[styles.sourceHint, { color: colors.muted }]}>
+                  {gmailPreparingLabel.trim()
+                    ? `Source: label “${gmailPreparingLabel.trim()}” (read + unread, up to 50)`
+                    : "Source: keyword search in inbox (up to 50)"}
                 </Text>
               </View>
               <View style={styles.headerActions}>
@@ -483,6 +799,8 @@ const styles = StyleSheet.create({
   },
   connectTitle: { fontSize: 24, fontWeight: "700" },
   connectDesc: { fontSize: 14, textAlign: "center", lineHeight: 22 },
+  apiBaseHint: { fontSize: 11, textAlign: "center", marginTop: 10, lineHeight: 16 },
+  apiBaseWarn: { fontSize: 12, textAlign: "left", marginTop: 10, lineHeight: 18, paddingHorizontal: 4 },
   connectBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -497,6 +815,7 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
   title: { fontSize: 26, fontWeight: "700" },
   subtitle: { fontSize: 13, marginTop: 2 },
+  sourceHint: { fontSize: 11, marginTop: 4, lineHeight: 15 },
   headerActions: { flexDirection: "row", gap: 8, alignItems: "center" },
   refreshBtn: {
     width: 38,

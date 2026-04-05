@@ -1,6 +1,6 @@
 export type InvoiceSource = "camera" | "email";
 
-/** Line-item rows (Meat_Monthly 등)은 카테고리가 고기일 때만 사용합니다. */
+/** Line-item rows (e.g. Meat_Monthly) are only used when the category is meat. */
 export function isMeatCategory(
   category: InvoiceCategory | string | undefined | null,
 ): boolean {

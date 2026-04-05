@@ -2,7 +2,7 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -197,7 +197,9 @@ export default function ScanScreen() {
   const [duplicateWarning, setDuplicateWarning] = useState<Invoice | null>(null);
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [pendingInvoice, setPendingInvoice] = useState<Invoice | null>(null);
-  const [duplicateAction, setDuplicateAction] = useState<"skip" | "continue" | null>(null);
+  /** Prevents double Save / Continue / Process from creating duplicate rows (rapid taps). */
+  const persistScanRef = useRef(false);
+  const processScanRef = useRef(false);
 
   const ocrMutation = trpc.invoices.parseReceipt.useMutation();
 
@@ -255,6 +257,8 @@ export default function ScanScreen() {
 
   const processImage = useCallback(async () => {
     if (!imageUri) return;
+    if (processScanRef.current) return;
+    processScanRef.current = true;
     setProcessing(true);
     try {
       let base64 = await encodeReceiptImageForServer(imageUri, imageBase64FromPicker);
@@ -300,7 +304,7 @@ export default function ScanScreen() {
 
       const nextCategory = (parsed.category as InvoiceCategory) ?? "Other";
       setCategory(nextCategory);
-      // 줄 단위 품목은 "Meat"로 분류된 영수증만 (야채·기타는 Meat_Monthly/ UI에 섞이지 않음)
+      // Line items: only receipts categorized as Meat (exclude veg/other from Meat_Monthly UI)
       if (
         isMeatCategory(nextCategory) &&
         parsed.items &&
@@ -327,6 +331,7 @@ export default function ScanScreen() {
       setStep("review");
       Alert.alert(title, message);
     } finally {
+      processScanRef.current = false;
       setProcessing(false);
     }
   }, [imageUri, ocrMutation, imageBase64FromPicker]);
@@ -336,49 +341,55 @@ export default function ScanScreen() {
       Alert.alert("Required", "Please enter the vendor name.");
       return;
     }
-    const total = parseFloat(totalAmount) || 0;
-    const iva = parseFloat(ivaAmount) || 0;
-    const tipAmount = parseFloat(tip) || 0;
-    
-    // Same resize path as OCR — smaller payload for storage upload + Sheets.
-    let imageUrl: string | undefined = undefined;
-    if (imageUri) {
-      const b64 = await encodeReceiptImageForServer(imageUri, imageBase64FromPicker);
-      if (b64) {
-        imageUrl = `data:image/jpeg;base64,${b64}`;
+    if (persistScanRef.current) return;
+    persistScanRef.current = true;
+    try {
+      const total = parseFloat(totalAmount) || 0;
+      const iva = parseFloat(ivaAmount) || 0;
+      const tipAmount = parseFloat(tip) || 0;
+
+      // Same resize path as OCR — smaller payload for storage upload + Sheets.
+      let imageUrl: string | undefined = undefined;
+      if (imageUri) {
+        const b64 = await encodeReceiptImageForServer(imageUri, imageBase64FromPicker);
+        if (b64) {
+          imageUrl = `data:image/jpeg;base64,${b64}`;
+        }
       }
-    }
-    
-    const invoice: Invoice = {
-      id: `cam_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-      source: "camera",
-      invoiceNumber: invoiceNumber.trim() || `AUTO-${Date.now()}`,
-      vendor: vendor.trim(),
-      date: date.trim() || new Date().toISOString().split("T")[0],
-      totalAmount: total,
-      ivaAmount: iva,
-      baseAmount: total - iva,
-      currency: "EUR",
-      category,
-      notes: notes.trim(),
-      tip: tipAmount > 0 ? tipAmount : undefined,
-      imageUri: imageUrl ?? undefined,
-      items: isMeatCategory(category) && items.length > 0 ? items : undefined,
-      exportedToSheets: false,
-      createdAt: new Date().toISOString(),
-    };
 
-    const duplicate = await checkDuplicate(invoice);
-    if (duplicate) {
-      setDuplicateWarning(duplicate);
-      setPendingInvoice(invoice);
-      setShowDuplicateDialog(true);
-      return;
-    }
+      const invoice: Invoice = {
+        id: `cam_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        source: "camera",
+        invoiceNumber: invoiceNumber.trim() || `AUTO-${Date.now()}`,
+        vendor: vendor.trim(),
+        date: date.trim() || new Date().toISOString().split("T")[0],
+        totalAmount: total,
+        ivaAmount: iva,
+        baseAmount: total - iva,
+        currency: "EUR",
+        category,
+        notes: notes.trim(),
+        tip: tipAmount > 0 ? tipAmount : undefined,
+        imageUri: imageUrl ?? undefined,
+        items: isMeatCategory(category) && items.length > 0 ? items : undefined,
+        exportedToSheets: false,
+        createdAt: new Date().toISOString(),
+      };
 
-    await addInvoice(invoice);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setStep("done");
+      const duplicate = await checkDuplicate(invoice);
+      if (duplicate) {
+        setDuplicateWarning(duplicate);
+        setPendingInvoice(invoice);
+        setShowDuplicateDialog(true);
+        return;
+      }
+
+      await addInvoice(invoice);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setStep("done");
+    } finally {
+      persistScanRef.current = false;
+    }
   }, [
     vendor,
     totalAmount,
@@ -418,9 +429,19 @@ export default function ScanScreen() {
       setShowDuplicateDialog(false);
 
       if (action === "continue" && pendingInvoice) {
-        await addInvoice(pendingInvoice);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setStep("done");
+        if (persistScanRef.current) {
+          setPendingInvoice(null);
+          setDuplicateWarning(null);
+          return;
+        }
+        persistScanRef.current = true;
+        try {
+          await addInvoice(pendingInvoice);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          setStep("done");
+        } finally {
+          persistScanRef.current = false;
+        }
       } else {
         resetScan();
       }

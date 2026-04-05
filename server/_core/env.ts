@@ -63,6 +63,6 @@ export const ENV = {
     process.env.ANTHROPIC_RECEIPT_MODEL ?? "claude-sonnet-4-20250514",
   /** Google AI Studio — bypasses Forge when set. https://aistudio.google.com/apikey */
   googleGeminiApiKey: process.env.GOOGLE_GEMINI_API_KEY ?? process.env.GEMINI_API_KEY ?? "",
-  /** e.g. gemini-1.5-flash, gemini-2.0-flash */
-  googleGeminiModel: process.env.GOOGLE_GEMINI_MODEL ?? "gemini-1.5-flash",
+  /** e.g. gemini-2.0-flash (1.5 names often 404 on current v1beta) */
+  googleGeminiModel: process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash",
 };

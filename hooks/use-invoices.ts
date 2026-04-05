@@ -80,8 +80,11 @@ export function useInvoices() {
   const checkDuplicate = useCallback(
     async (invoice: Invoice): Promise<Invoice | null> => {
       const list = await readStoredInvoices();
-      if (invoice.invoiceNumber && invoice.invoiceNumber !== "AUTO-" + Date.now()) {
-        const byNumber = list.find((inv) => inv.invoiceNumber === invoice.invoiceNumber);
+      const num = String(invoice.invoiceNumber ?? "").trim();
+      // Skip invoice# match for auto ids (was broken: compared to Date.now() at check time, not creation time).
+      const isAutoNumber = /^AUTO-\d+$/.test(num);
+      if (num && !isAutoNumber) {
+        const byNumber = list.find((inv) => inv.invoiceNumber === num);
         if (byNumber) return byNumber;
       }
       const byVendorAmountDate = list.find(

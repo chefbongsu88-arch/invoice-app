@@ -72,6 +72,7 @@
     "expo-system-ui": "~6.0.9",
     "expo-video": "~3.0.15",
     "expo-web-browser": "~15.0.10",
+    "@react-native-google-signin/google-signin": "^16.1.2",
     "express": "^4.22.1",
     "googleapis": "^171.4.0",
     "heic-convert": "^2.1.0",

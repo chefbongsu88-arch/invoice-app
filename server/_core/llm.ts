@@ -251,8 +251,8 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.tool_choice = normalizedToolChoice;
   }
 
-  // Anthropic API는 response_format 미지원 — JSON은 프롬프트로 처리
-  // response_format 파라미터 제거
+  // Anthropic API has no response_format — steer JSON via the prompt instead
+  // (no response_format parameter)
 
   const response = await fetch(resolveApiUrl(), {
     method: "POST",
@@ -277,7 +277,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     throw new Error(`LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}${hint}`);
   }
 
-  // Anthropic API 응답을 OpenAI 형식으로 변환
+  // Map Anthropic API response into an OpenAI-shaped object
   const data = await response.json() as any;
   return {
     id: data.id || "",

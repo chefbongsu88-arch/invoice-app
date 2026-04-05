@@ -16,7 +16,8 @@ export async function parseReceiptWithGoogleGemini(
     throw new Error("GOOGLE_GEMINI_API_KEY is not set");
   }
 
-  const model = ENV.googleGeminiModel?.trim() || "gemini-1.5-flash";
+  /** Must match v1beta `generateContent` — `gemini-1.5-flash` often 404s on current API. */
+  const model = ENV.googleGeminiModel?.trim() || "gemini-2.0-flash";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
   const fullText = `${systemPrompt}\n\n${userPrompt}`;

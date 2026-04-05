@@ -60,17 +60,24 @@ function getQuarterFromDate(dateStr: string): string {
       const year = parseInt(ddmmyyyyMatch[3], 10);
       date = new Date(year, month, day);
     }
-    // Try "2026. 3. 25" format
-    else if (cleanStr.includes(".")) {
-      const parts = cleanStr.replace(/\./g, "").split(/\s+/);
-      if (parts.length >= 3) {
-        date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    // YYYY-MM-DD — use local y/m/d (avoid new Date(iso) UTC vs local month shift)
+    else if (/^(\d{4})-(\d{2})-(\d{2})$/.test(cleanStr)) {
+      const m = cleanStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) {
+        date = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
       } else {
         return "";
       }
     }
-    // Try YYYY-MM-DD format
-    else {
+    // Try "2026. 3. 25" format
+    else if (cleanStr.includes(".")) {
+      const parts = cleanStr.replace(/\./g, "").split(/\s+/);
+      if (parts.length >= 3) {
+        date = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      } else {
+        return "";
+      }
+    } else {
       date = new Date(cleanStr);
     }
     
@@ -83,25 +90,56 @@ function getQuarterFromDate(dateStr: string): string {
 }
 
 /**
- * Aggregate invoices by vendor
+ * Key for merging the same business across months in a quarter (and month tabs) even when
+ * spelling/case/punctuation differs: "MERCADONA, S.A." vs "MERCADONA S.A." vs "mercadona s.a.".
+ */
+function vendorAggregateKey(vendor: string): string {
+  const s = String(vendor ?? "Unknown")
+    .trim()
+    .toLowerCase()
+    .replace(/,/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return s || "unknown";
+}
+
+/** Pick newer-looking date string for aggregated row (ISO or DD/MM/YYYY). */
+function pickNewerDateString(a: unknown, b: unknown): string {
+  const sa = String(a ?? "").trim();
+  const sb = String(b ?? "").trim();
+  if (!sa) return sb;
+  if (!sb) return sa;
+  const toSort = (s: string) => {
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) return `${iso[1]}${iso[2]}${iso[3]}`;
+    const eu = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (eu) return `${eu[3]}${eu[2].padStart(2, "0")}${eu[1].padStart(2, "0")}`;
+    return s;
+  };
+  return toSort(sb) >= toSort(sa) ? sb : sa;
+}
+
+/**
+ * Aggregate invoices by vendor (normalized name so Q1–Q4 sums one row per business across 3 months).
  */
 function aggregateByVendor(invoices: any[]) {
   const vendorMap = new Map<string, any>();
 
   for (const invoice of invoices) {
-    const vendor = invoice.vendor || "Unknown";
+    const rawVendor = String(invoice.vendor ?? "Unknown").trim() || "Unknown";
+    const key = vendorAggregateKey(rawVendor);
 
     if (verboseSheetsAggLog) {
       console.log(
-        `Processing invoice: ${vendor}, totalAmount=${invoice.totalAmount} (type: ${typeof invoice.totalAmount})`,
+        `Processing invoice: ${rawVendor}, totalAmount=${invoice.totalAmount} (type: ${typeof invoice.totalAmount})`,
       );
     }
 
-    if (!vendorMap.has(vendor)) {
-      vendorMap.set(vendor, {
+    if (!vendorMap.has(key)) {
+      vendorMap.set(key, {
         source: invoice.source,
         invoiceNumber: invoice.invoiceNumber,
-        vendor: vendor,
+        vendor: rawVendor,
         date: invoice.date,
         totalAmount: 0,
         ivaAmount: 0,
@@ -111,22 +149,36 @@ function aggregateByVendor(invoices: any[]) {
         currency: invoice.currency,
         notes: invoice.notes,
         imageUrl: invoice.imageUrl,
+        _mergeCount: 0,
       });
     }
 
-    const vendorData = vendorMap.get(vendor)!;
+    const vendorData = vendorMap.get(key)!;
+    vendorData._mergeCount += 1;
     vendorData.totalAmount += parseAmount(invoice.totalAmount);
     vendorData.ivaAmount += parseAmount(invoice.ivaAmount);
     vendorData.baseAmount += parseAmount(invoice.baseAmount);
     vendorData.tip += parseAmount(invoice.tip);
+    vendorData.date = pickNewerDateString(vendorData.date, invoice.date);
+    // Prefer the longest display name (often the fuller legal name on the ticket).
+    if (rawVendor.length > String(vendorData.vendor).length) {
+      vendorData.vendor = rawVendor;
+    }
     const img = String(invoice.imageUrl ?? "").trim();
     if (img && !String(vendorData.imageUrl ?? "").trim()) {
       vendorData.imageUrl = invoice.imageUrl;
     }
 
     if (verboseSheetsAggLog) {
-      console.log(`After aggregation: ${vendor} total=${vendorData.totalAmount}`);
+      console.log(`After aggregation: ${vendorData.vendor} total=${vendorData.totalAmount}`);
     }
+  }
+
+  for (const v of vendorMap.values()) {
+    if (v._mergeCount > 1) {
+      v.invoiceNumber = "";
+    }
+    delete v._mergeCount;
   }
 
   return Array.from(vendorMap.values());
@@ -436,7 +488,7 @@ export async function updateMeatMonthlySheet(
 ): Promise<void> {
   const SHEET = "Meat_Monthly";
 
-  // 고기 벤더 + 카테고리가 Meat일 때만 줄항목 반영 (야채 영수증이 같은 매장이어도 제외)
+  // Line items only when vendor is meat and category is Meat (exclude veg receipts from same store)
   const meatInvoices = newInvoices.filter(
     (inv) =>
       inv.items &&

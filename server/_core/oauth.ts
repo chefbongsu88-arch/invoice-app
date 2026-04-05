@@ -61,6 +61,58 @@ function buildUserResponse(
   };
 }
 
+/** App scheme from Gmail OAuth `state` (base64 JSON { scheme }). Fallback for old clients. */
+function resolveAppSchemeForGmailCallback(stateParam: string | undefined): string {
+  const fallback = process.env.GMAIL_OAUTH_APP_SCHEME ?? "manus20260325194257";
+  if (!stateParam) return fallback;
+  try {
+    const json = Buffer.from(stateParam, "base64").toString("utf8");
+    const o = JSON.parse(json) as { scheme?: string };
+    if (typeof o.scheme === "string" && /^[a-z][a-z0-9+.-]+$/i.test(o.scheme)) {
+      return o.scheme;
+    }
+  } catch {
+    // ignore
+  }
+  return fallback;
+}
+
+/**
+ * Return HTML that navigates to the app custom scheme. Some proxies strip `Location: manus://…` on 302;
+ * an in-page redirect is more reliable for ASWebAuthenticationSession to receive the callback URL.
+ */
+function gmailOAuthAppBouncePage(appUrl: string): string {
+  const escAttr = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Invoice Tracker — return to app</title>
+<meta http-equiv="refresh" content="0;url=${escAttr(appUrl)}"/>
+</head>
+<body style="font-family:system-ui,-apple-system,sans-serif;padding:24px;max-width:420px;margin:0 auto;line-height:1.5;color:#111">
+<p style="margin:0 0 8px;font-size:17px"><strong>Authentication complete</strong></p>
+<p style="margin:0 0 16px;font-size:15px;color:#444">Opening the app… If nothing happens, tap the button below.</p>
+<p style="margin:0"><a id="open" href=${JSON.stringify(appUrl)} style="display:inline-block;padding:12px 18px;background:#0b57d0;color:#fff;border-radius:10px;font-weight:600;text-decoration:none">Open Invoice Tracker</a></p>
+<script>
+(function(){
+  var u = ${JSON.stringify(appUrl)};
+  function go() {
+    try { window.location.replace(u); } catch (e) {}
+    try { window.location.href = u; } catch (e2) {}
+  }
+  go();
+  setTimeout(go, 100);
+  setTimeout(go, 500);
+  setTimeout(function(){ var el = document.getElementById("open"); if (el) el.style.boxShadow = "0 0 0 3px rgba(11,87,208,0.35)"; }, 4000);
+})();
+</script>
+</body>
+</html>`;
+}
+
 function getRailwayBaseUrl(req: Request): string {
   // Railway sets RAILWAY_PUBLIC_DOMAIN automatically
   if (process.env.RAILWAY_PUBLIC_DOMAIN) {
@@ -73,23 +125,40 @@ function getRailwayBaseUrl(req: Request): string {
 }
 
 export function registerOAuthRoutes(app: Express) {
-  // Gmail OAuth callback — exchanges code for access token then redirects to success page
+  // Gmail OAuth callback — exchanges code for access token, then HTML bounce to manus://gmail-auth?…
   app.get("/auth/gmail/callback", async (req: Request, res: Response) => {
+    const state = getQueryParam(req, "state");
+    const appScheme = resolveAppSchemeForGmailCallback(state);
+
+    /** Google sends ?error=&error_description= when user cancels or consent fails — no `code`. */
+    const oauthError = getQueryParam(req, "error");
+    if (oauthError) {
+      const appUrl = `${appScheme}://gmail-auth?error=${encodeURIComponent(oauthError)}`;
+      console.warn("[Gmail OAuth] Google error param:", oauthError, getQueryParam(req, "error_description") ?? "");
+      res.status(200).type("html").send(gmailOAuthAppBouncePage(appUrl));
+      return;
+    }
+
     const code = getQueryParam(req, "code");
     if (!code) {
-      res.status(400).send("Missing authorization code");
+      // Prefetch, double-open, or bad link — still return HTML so ASWebAuthenticationSession can close into the app.
+      const appUrl = `${appScheme}://gmail-auth?error=${encodeURIComponent("missing_code")}`;
+      console.warn("[Gmail OAuth] callback without code; path:", req.path, "query:", req.url);
+      res.status(200).type("html").send(gmailOAuthAppBouncePage(appUrl));
       return;
     }
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) {
-      res.status(500).send("Google OAuth credentials not configured on server");
+      const appUrl = `${appScheme}://gmail-auth?error=${encodeURIComponent("server_misconfigured")}`;
+      res.status(200).type("html").send(gmailOAuthAppBouncePage(appUrl));
       return;
     }
 
     const baseUrl = getRailwayBaseUrl(req);
-    const redirectUri = `${baseUrl}/auth/gmail/callback`;
+    const redirectUri =
+      process.env.GMAIL_OAUTH_REDIRECT_URI?.trim() || `${baseUrl}/auth/gmail/callback`;
 
     try {
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -106,8 +175,9 @@ export function registerOAuthRoutes(app: Express) {
 
       if (!tokenRes.ok) {
         const err = await tokenRes.text();
-        console.error("[Gmail OAuth] Token exchange failed:", err);
-        res.redirect(`${baseUrl}/auth/gmail/success?error=token_exchange_failed`);
+        console.error("[Gmail OAuth] Token exchange failed:", err, "redirect_uri used:", redirectUri);
+        const appUrl = `${appScheme}://gmail-auth?error=${encodeURIComponent("token_exchange_failed")}`;
+        res.status(200).type("html").send(gmailOAuthAppBouncePage(appUrl));
         return;
       }
 
@@ -128,18 +198,38 @@ export function registerOAuthRoutes(app: Express) {
 
       const params = new URLSearchParams({ token: tokenData.access_token });
       if (email) params.set("email", email);
-      res.redirect(`${baseUrl}/auth/gmail/success?${params.toString()}`);
+      // iOS ASWebAuthenticationSession only returns to the app with a custom URL scheme — not https
+      // (unless Universal Links are configured). Redirect into the app so the token is delivered.
+      const appLoc = `${appScheme}://gmail-auth?${params.toString()}`;
+      res.status(200).type("html").send(gmailOAuthAppBouncePage(appLoc));
     } catch (err) {
       console.error("[Gmail OAuth] Callback error:", err);
-      res.redirect(`${getRailwayBaseUrl(req)}/auth/gmail/success?error=server_error`);
+      const appUrl = `${appScheme}://gmail-auth?error=${encodeURIComponent("server_error")}`;
+      res.status(200).type("html").send(gmailOAuthAppBouncePage(appUrl));
     }
   });
 
-  // Landing page that the app's openAuthSessionAsync intercepts
+  // Landing page that the app's openAuthSessionAsync intercepts (user often must tap browser "Done"/X)
   app.get("/auth/gmail/success", (_req: Request, res: Response) => {
-    res.send(
-      "<!DOCTYPE html><html><body><p>Authentication complete. You may return to the app.</p></body></html>",
-    );
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Done</title>
+<style>
+body{font-family:system-ui,sans-serif;padding:24px;max-width:420px;margin:0 auto;line-height:1.5;color:#111}
+h1{font-size:1.1rem;margin:0 0 12px}
+p{margin:0 0 10px;font-size:15px}
+strong{color:#0b57d0}
+</style>
+</head>
+<body>
+<h1>Old sign-in page</h1>
+<p>If you see this after Google login, the server is still using an old deploy. Redeploy the latest API so sign-in returns you to the app automatically.</p>
+<p style="font-size:13px;color:#444">You can close this tab (X / Done). Then update Railway and try Gmail sign-in again.</p>
+</body>
+</html>`);
   });
 
 

@@ -259,6 +259,33 @@ function normalizeReceiptDateToIso(raw: unknown): string {
   return "";
 }
 
+/**
+ * Prefer DD/MM/YYYY (or DD-MM-YYYY) from any merged field before trusting a bare ISO `date`.
+ * Models often mis-read 11/03/2026 as US → "2026-11-03"; slash forms on the receipt are authoritative.
+ */
+function resolveReceiptDateIso(parsed: Record<string, unknown>): string {
+  const candidates: unknown[] = [
+    parsed.fecha,
+    parsed.fechaFactura,
+    parsed.fecha_factura,
+    parsed.fechaEmision,
+    parsed.fecha_emision,
+    parsed.fechaExpedicion,
+    parsed.dateDocument,
+    parsed.date,
+  ];
+  for (const v of candidates) {
+    if (v === undefined || v === null) continue;
+    const s = String(v).trim();
+    if (!s) continue;
+    if (/^\d{1,2}[/.-]\d{1,2}[/.-](\d{4}|\d{2})$/.test(s)) {
+      const iso = normalizeReceiptDateToIso(s);
+      if (iso) return iso;
+    }
+  }
+  return normalizeReceiptDateToIso(parsed.date);
+}
+
 /** LLMs often return Spanish/alternate keys; map into our schema before reading fields. */
 function normalizeReceiptParsedFields(raw: Record<string, unknown>): Record<string, unknown> {
   const merged = { ...raw };
@@ -394,8 +421,9 @@ async function getGoogleAccessToken(): Promise<string> {
 
 const RECEIPT_PARSE_SYSTEM = `You read printed receipt and ticket photos from Spain, Europe, and elsewhere. Text may be Spanish or English. Copy every readable business name, date, and money amount into JSON. Photos may be blurry, angled, or on pink/thermal paper — still try hard.
 
-You MUST output exactly one JSON object. Use ONLY these English key names (do not use Spanish keys like importe or emisor — read Spanish text from the image but put values under the keys below):
+You MUST output exactly one JSON object. Use these English key names (read Spanish text from the image but put values under the keys below; do not use other Spanish keys like importe or emisor):
 invoiceNumber, vendor, date, totalAmount, ivaAmount, tipAmount, category, items
+Optional extra key "fecha" (string): the date exactly as printed on the ticket when it shows slashes or dashes (e.g. "11/03/2026"). Helps verify DD/MM order alongside ISO in "date".
 
 CRITICAL — amounts (European style):
 - Spain often uses comma as decimal separator: 114,32 means 114.32 in JSON (use JSON number 114.32). Same for 69,50 → 69.5.
@@ -409,6 +437,7 @@ Vendor:
 Date (critical — read ONLY what is printed on the paper):
 - Do NOT use today's date, do NOT use the phone/camera/gallery file date, do NOT guess a year. Copy the date from the receipt text only.
 - Spanish facturas almost always use DAY/MONTH/YEAR order (DD/MM/YYYY). Example printed 03/04/2026 = 3 April 2026 → date "2026-04-03". Another: 15/01/2025 = 15 January 2025 → "2025-01-15".
+- Printed 11/03/2026 (or 11-03-2026) is 11 March 2026 → "2026-03-11". NEVER treat as US MM/DD (that would wrongly give November).
 - If the printed date uses slashes or dashes (03-04-2026), apply the same DD/MM/YYYY rule before outputting ISO YYYY-MM-DD.
 - If no legible date is on the receipt, use "" (empty string). Never invent a date.
 
@@ -659,7 +688,7 @@ export const appRouter = router({
           const rawParsed = JSON.parse(jsonStr) as Record<string, unknown>;
           const parsed = normalizeReceiptParsedFields(rawParsed);
 
-          const dateOut = normalizeReceiptDateToIso(parsed.date);
+          const dateOut = resolveReceiptDateIso(parsed);
 
           return {
             invoiceNumber: String(parsed.invoiceNumber ?? "").trim(),
@@ -1127,22 +1156,30 @@ export const appRouter = router({
         };
       }),
 
-    // Fetch Gmail messages with invoice keywords
+    // Fetch Gmail: optional user label (read + unread) or legacy keyword search
     fetchGmailInvoices: publicProcedure
       .input(
         z.object({
           accessToken: z.string(),
-          maxResults: z.number().default(20),
+          maxResults: z.number().min(1).max(100).default(50),
           pageToken: z.string().optional(),
-        })
+          /** If set, search is only label:"…" (must match Gmail label name). */
+          preparingLabelName: z.string().optional(),
+        }),
       )
       .mutation(async ({ input }) => {
-        const { accessToken, maxResults, pageToken } = input;
+        const { accessToken, maxResults, pageToken, preparingLabelName } = input;
 
-        // Search for invoice-related emails
-        const query = encodeURIComponent(
-          "subject:(factura OR invoice OR recibo OR receipt OR albarán) has:attachment OR subject:(factura OR invoice OR recibo)"
-        );
+        const trimmedLabel = preparingLabelName?.trim() ?? "";
+        let searchQuery: string;
+        if (trimmedLabel) {
+          const safe = trimmedLabel.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+          searchQuery = `label:"${safe}"`;
+        } else {
+          searchQuery =
+            "subject:(factura OR invoice OR recibo OR receipt OR albarán) has:attachment OR subject:(factura OR invoice OR recibo)";
+        }
+        const query = encodeURIComponent(searchQuery);
         let listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=${maxResults}`;
         if (pageToken) listUrl += `&pageToken=${pageToken}`;
 
@@ -1158,61 +1195,136 @@ export const appRouter = router({
         const listData = await listRes.json() as { messages?: { id: string }[]; nextPageToken?: string };
         const messages = listData.messages ?? [];
 
-        // Fetch details for each message (limit to 10 at a time)
-        const details = await Promise.all(
-          messages.slice(0, 10).map(async (msg) => {
-            const detailRes = await fetch(
-              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`,
-              { headers: { Authorization: `Bearer ${accessToken}` } }
-            );
-            if (!detailRes.ok) return null;
-            const detail = await detailRes.json() as {
-              id: string;
-              payload?: {
-                headers?: { name: string; value: string }[];
-                parts?: { mimeType: string; body?: { data?: string } }[];
-                body?: { data?: string };
-              };
-              snippet?: string;
-              internalDate?: string;
+        async function fetchOneMessage(msg: { id: string }) {
+          const detailRes = await fetch(
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`,
+            { headers: { Authorization: `Bearer ${accessToken}` } },
+          );
+          if (!detailRes.ok) return null;
+          const detail = await detailRes.json() as {
+            id: string;
+            payload?: {
+              headers?: { name: string; value: string }[];
+              parts?: { mimeType: string; body?: { data?: string } }[];
+              body?: { data?: string };
             };
+            snippet?: string;
+            internalDate?: string;
+          };
 
-            const headers = detail.payload?.headers ?? [];
-            const subject = headers.find((h) => h.name === "Subject")?.value ?? "";
-            const from = headers.find((h) => h.name === "From")?.value ?? "";
-            const dateHeader = headers.find((h) => h.name === "Date")?.value ?? "";
+          const headers = detail.payload?.headers ?? [];
+          const subject = headers.find((h) => h.name === "Subject")?.value ?? "";
+          const from = headers.find((h) => h.name === "From")?.value ?? "";
+          const dateHeader = headers.find((h) => h.name === "Date")?.value ?? "";
 
-            // Extract body text
-            let bodyText = "";
-            const parts = detail.payload?.parts ?? [];
-            for (const part of parts) {
-              if (part.mimeType === "text/plain" && part.body?.data) {
-                bodyText = Buffer.from(part.body.data, "base64").toString("utf-8");
-                break;
-              }
+          let bodyText = "";
+          const parts = detail.payload?.parts ?? [];
+          for (const part of parts) {
+            if (part.mimeType === "text/plain" && part.body?.data) {
+              bodyText = Buffer.from(part.body.data, "base64").toString("utf-8");
+              break;
             }
-            if (!bodyText && detail.payload?.body?.data) {
-              bodyText = Buffer.from(detail.payload.body.data, "base64").toString("utf-8");
-            }
-            if (!bodyText) bodyText = detail.snippet ?? "";
+          }
+          if (!bodyText && detail.payload?.body?.data) {
+            bodyText = Buffer.from(detail.payload.body.data, "base64").toString("utf-8");
+          }
+          if (!bodyText) bodyText = detail.snippet ?? "";
 
-            return {
-              id: msg.id,
-              subject,
-              from,
-              date: dateHeader,
-              internalDate: detail.internalDate,
-              bodyText: bodyText.slice(0, 3000), // Limit for LLM
-              snippet: detail.snippet ?? "",
-            };
-          })
-        );
+          return {
+            id: msg.id,
+            subject,
+            from,
+            date: dateHeader,
+            internalDate: detail.internalDate,
+            bodyText: bodyText.slice(0, 3000),
+            snippet: detail.snippet ?? "",
+          };
+        }
+
+        const batchSize = 15;
+        const details: NonNullable<Awaited<ReturnType<typeof fetchOneMessage>>>[] = [];
+        for (let i = 0; i < messages.length; i += batchSize) {
+          const chunk = messages.slice(i, i + batchSize);
+          const batch = await Promise.all(chunk.map((msg) => fetchOneMessage(msg)));
+          for (const d of batch) {
+            if (d) details.push(d);
+          }
+        }
 
         return {
-          messages: details.filter(Boolean),
+          messages: details,
           nextPageToken: listData.nextPageToken,
         };
       }),
+
+    /** Remove "preparing" label and add "complete" after Sheets export (needs gmail.modify scope). */
+    gmailRelabelMessage: publicProcedure
+      .input(
+        z.object({
+          accessToken: z.string(),
+          messageId: z.string(),
+          removeLabelName: z.string().optional(),
+          addLabelName: z.string().optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { accessToken, messageId, removeLabelName, addLabelName } = input;
+        const listRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!listRes.ok) {
+          throw new Error(`Gmail labels list failed: ${await listRes.text()}`);
+        }
+        const listJson = (await listRes.json()) as { labels?: { id: string; name: string }[] };
+        const labels = listJson.labels?.map((l) => ({ id: l.id, name: l.name })) ?? [];
+
+        const resolveId = (name: string | undefined): string | undefined => {
+          const t = name?.trim() ?? "";
+          if (!t) return undefined;
+          const exact = labels.find((l) => l.name === t);
+          if (exact) return exact.id;
+          const lower = t.toLowerCase();
+          return labels.find((l) => l.name.toLowerCase() === lower)?.id;
+        };
+
+        const addLabelIds: string[] = [];
+        const removeLabelIds: string[] = [];
+        if (addLabelName?.trim()) {
+          const id = resolveId(addLabelName);
+          if (!id) {
+            throw new Error(`Gmail label not found: "${addLabelName.trim()}"`);
+          }
+          addLabelIds.push(id);
+        }
+        if (removeLabelName?.trim()) {
+          const id = resolveId(removeLabelName);
+          if (!id) {
+            throw new Error(`Gmail label not found: "${removeLabelName.trim()}"`);
+          }
+          removeLabelIds.push(id);
+        }
+
+        if (addLabelIds.length === 0 && removeLabelIds.length === 0) {
+          return { success: true, skipped: true as const };
+        }
+
+        const modRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ addLabelIds, removeLabelIds }),
+          },
+        );
+        if (!modRes.ok) {
+          throw new Error(`Gmail modify failed: ${await modRes.text()}`);
+        }
+        return { success: true, skipped: false as const };
+      }),
+
     // Delete a single invoice row from the main tracker sheet
     deleteInvoiceFromSheets: publicProcedure
       .input(

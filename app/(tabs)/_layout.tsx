@@ -1,6 +1,5 @@
 import { Tabs } from "expo-router";
 import { Platform, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { HapticTab } from "@/components/haptic-tab";
 import { OfflineBanner } from "@/components/offline-banner";
@@ -9,9 +8,26 @@ import { useColors } from "@/hooks/use-colors";
 
 export default function TabLayout() {
   const colors = useColors();
-  const insets = useSafeAreaInsets();
-  const bottomPadding = Platform.OS === "web" ? 12 : Math.max(insets.bottom, 8);
-  const tabBarHeight = 56 + bottomPadding;
+  /**
+   * Do not set height / paddingBottom from safe-area here — @react-navigation/bottom-tabs already
+   * applies `insets.bottom` inside BottomTabBar. Adding both caused a visible empty strip under the bar on iOS.
+   */
+  const tabBarStyle =
+    Platform.OS === "web"
+      ? {
+          paddingTop: 8,
+          paddingBottom: 12,
+          minHeight: 56 + 12,
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
+          borderTopWidth: 0.5,
+        }
+      : {
+          paddingTop: 6,
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
+          borderTopWidth: 0.5,
+        };
 
   return (
     <View style={{ flex: 1 }}>
@@ -22,14 +38,9 @@ export default function TabLayout() {
         tabBarInactiveTintColor: colors.muted,
         headerShown: false,
         tabBarButton: HapticTab,
-        tabBarStyle: {
-          paddingTop: 8,
-          paddingBottom: bottomPadding,
-          height: tabBarHeight,
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
-          borderTopWidth: 0.5,
-        },
+        tabBarStyle,
+        /** Equal width per tab so the bar doesn’t leave a dead zone on the right (iOS). */
+        tabBarItemStyle: Platform.OS === "web" ? undefined : { flex: 1 },
         tabBarLabelStyle: {
           fontSize: 10,
           fontWeight: "600",

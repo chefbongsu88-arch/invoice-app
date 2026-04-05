@@ -11,6 +11,8 @@ import {
   Linking,
   Alert,
 } from "react-native";
+import { applyApiUrlFromAppSettings, requestTrpcClientRecreate } from "@/constants/oauth";
+import { PRODUCTION_API_ORIGIN } from "@/constants/receipt-api-origin";
 import { trpc } from "@/lib/trpc";
 import { DEFAULT_MAIN_TRACKER_SHEET_NAME } from "@/shared/sheets-defaults";
 
@@ -26,6 +28,12 @@ interface AppSettings {
   sheetName: string;
   autoSaveGmailEmails?: boolean;
   autoExportToSheets?: boolean;
+  /** Gmail label to list in the app (read + unread). Empty = keyword search in inbox. */
+  gmailPreparingLabel?: string;
+  /** After a successful Sheets export, this label is added and preparing label removed. */
+  gmailCompleteLabel?: string;
+  /** Override API host (https://…, no trailing slash). Empty = auto (fixes legacy app-production Railway hostname). */
+  apiBaseUrlOverride?: string;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -34,6 +42,22 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoSaveGmailEmails: false,
   autoExportToSheets: false,
 };
+
+/** Receipts tab + export/offline queue keys; does not touch app_settings_v1 or auth tokens. */
+async function clearLocalInvoiceStorage(): Promise<void> {
+  const allKeys = await AsyncStorage.getAllKeys();
+  const keysToDelete = allKeys.filter(
+    (key) =>
+      key.startsWith("invoice_") ||
+      key.startsWith("exported_") ||
+      key === "exported_invoices" ||
+      key === "invoices_v1" ||
+      key === "offline_invoices",
+  );
+  if (keysToDelete.length > 0) {
+    await AsyncStorage.multiRemove(keysToDelete);
+  }
+}
 
 function SectionHeader({ title }: { title: string }) {
   const colors = useColors();
@@ -189,48 +213,25 @@ export default function SettingsScreen() {
   const saveSettings = async (updated: AppSettings) => {
     await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
     setSettings(updated);
+    applyApiUrlFromAppSettings(updated);
+    requestTrpcClientRecreate();
   };
 
   const handleClearCache = async () => {
     Alert.alert(
-      "Clear All Data",
-      "This will delete:\n- All invoices from Receipts\n- All data from Google Sheets\n- All local cache\n\nYou can start fresh after this.",
+      "Clear Local Cache",
+      "This removes invoice data stored on this device only (Receipts list, pending offline queue). Google Sheets is not changed.\n\nUse “Reset All Data” to clear the spreadsheet.",
       [
         { text: "Cancel", onPress: () => {}, style: "cancel" },
         {
-          text: "Clear All",
+          text: "Clear",
           onPress: async () => {
             try {
-              // 1. Clear ALL local AsyncStorage invoice-related keys
-              const allKeys = await AsyncStorage.getAllKeys();
-              const keysToDelete = allKeys.filter(
-                (key) => key.startsWith("invoice_") || key.startsWith("exported_") || key === "exported_invoices" || key === "invoices_v1"
-              );
-              if (keysToDelete.length > 0) {
-                await AsyncStorage.multiRemove(keysToDelete);
-              }
-              
-              // 2. Clear Google Sheets data via server endpoint
-              try {
-                const response = await fetch("http://localhost:3000/trpc/invoices.resetAllData", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({})
-                });
-                
-                if (!response.ok) {
-                  console.warn("Failed to clear Google Sheets data");
-                }
-              } catch (err) {
-                console.warn("Could not connect to server for Google Sheets clear:", err);
-              }
-              
-              // 3. Reload app state to clear memory cache
+              await clearLocalInvoiceStorage();
               await reloadInvoices();
-              
-              Alert.alert("Success", "All data cleared! You can now start fresh.");
+              Alert.alert("Done", "Local invoice cache cleared.");
             } catch (error) {
-              Alert.alert("Error", "Failed to clear data: " + String(error));
+              Alert.alert("Error", "Failed to clear local data: " + String(error));
             }
           },
           style: "destructive",
@@ -259,8 +260,22 @@ export default function SettingsScreen() {
             onToggle={(v) => saveSettings({ ...settings, autoExportToSheets: v })}
             hint="Automatically export to all Google Sheets tabs"
           />
+          <EditableField
+            label="Gmail: Preparing label"
+            value={settings.gmailPreparingLabel ?? ""}
+            placeholder="e.g. 2026 Preparing Invoices"
+            onSave={(v) => saveSettings({ ...settings, gmailPreparingLabel: v })}
+            hint="Exact name of the label whose messages to import (read or unread). Leave empty to use keyword search instead."
+          />
+          <EditableField
+            label="Gmail: Complete label"
+            value={settings.gmailCompleteLabel ?? ""}
+            placeholder="e.g. 2026 Invoice Complete"
+            onSave={(v) => saveSettings({ ...settings, gmailCompleteLabel: v })}
+            hint="After a successful export to Sheets, the message is moved here (preparing label removed). Re-login to Gmail after first setup so the app can change labels."
+          />
           <Pressable
-            onPress={() => router.navigate("/gmail")}
+            onPress={() => router.navigate("/(tabs)/gmail")}
             style={({ pressed }) => [
               styles.viewSheetsBtn,
               { backgroundColor: colors.primary },
@@ -275,6 +290,13 @@ export default function SettingsScreen() {
         {/* Spreadsheet Configuration */}
         <SectionHeader title="Google Sheets Configuration" />
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <EditableField
+            label="API server URL (optional)"
+            value={settings.apiBaseUrlOverride ?? ""}
+            placeholder={PRODUCTION_API_ORIGIN}
+            onSave={(v) => saveSettings({ ...settings, apiBaseUrlOverride: v })}
+            hint="Leave empty: app uses your build default, or auto-switches from legacy app-production-… to invoice-app-production-…. Set manually only if you use a custom API host."
+          />
           <EditableField
             label="Spreadsheet ID"
             value={settings.spreadsheetId}
@@ -357,7 +379,7 @@ export default function SettingsScreen() {
             onPress={() => {
               Alert.alert(
                 "Reset All Data",
-                "This will delete all data from Google Sheets (main sheet, monthly, quarterly, Meat_Monthly). Headers will be preserved.\n\nAre you sure?",
+                "This will:\n• Clear Google Sheets (main, monthly, quarterly, Meat tabs). Row 1 headers stay.\n• Remove every invoice from this device’s Receipts list.\n\nAre you sure?",
                 [
                   { text: "Cancel", style: "cancel" },
                   {
@@ -367,8 +389,12 @@ export default function SettingsScreen() {
                       const spreadsheetId = settings.spreadsheetId || "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
                       try {
                         await resetAllDataMutation.mutateAsync({ spreadsheetId });
+                        await clearLocalInvoiceStorage();
                         await reloadInvoices();
-                        Alert.alert("Done", "All sheet data has been reset.");
+                        Alert.alert(
+                          "Done",
+                          "Check Google Sheets (data rows gone, headers kept) and the Receipts tab (empty).",
+                        );
                       } catch (err) {
                         Alert.alert("Error", "Reset failed: " + String(err));
                       }
@@ -386,7 +412,7 @@ export default function SettingsScreen() {
             <Text style={styles.resetBtnText}>Reset All Data</Text>
           </Pressable>
           <Text style={[styles.resetHint, { color: colors.muted }]}>
-            Deletes all data from Google Sheets. Headers (row 1) are preserved.
+            Clears the linked spreadsheet (headers preserved) and empties Receipts on this device.
           </Text>
 
           {/* Clear Local Cache */}
