@@ -51,9 +51,15 @@ export function getYear(dateStr: string): number {
   return new Date(dateStr).getFullYear();
 }
 
-/** Full A1 range for Google Sheets `/values/{range}` — must encode `Sheet!A1:Z1` as one segment. */
+/**
+ * Build encoded `Sheet!A1` segment for `/values/{range}` URLs.
+ * Wrap the title in single quotes (with '' for embedded quotes) so names like `Meat_Monthly`
+ * or `2026 Invoice tracker` parse reliably — avoids Google 400 "Unable to parse range".
+ */
 export function encodeValuesRange(sheetName: string, a1: string): string {
-  return encodeURIComponent(`${sheetName}!${a1}`);
+  const title = String(sheetName).trim();
+  const quoted = `'${title.replace(/'/g, "''")}'`;
+  return encodeURIComponent(`${quoted}!${a1}`);
 }
 
 /** Columns A–M for tracker-style sheets (13 columns). */

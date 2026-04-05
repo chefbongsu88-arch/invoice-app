@@ -1092,12 +1092,19 @@ export const appRouter = router({
               invoiceData: allInvoiceData,
             }, ["La Portenia", "Es Cuco"]);
 
-            // Meat_Monthly: 줄항목 + 카테고리 Meat만 (벤더 필터는 updateMeatMonthlySheet 내부)
+            // Meat_Monthly: optional pivot — failure must not mark all automation as failed
             const meatRows = newRows.filter(
               (r) => Boolean(r.items?.length) && isMeatCategory(r.category),
             );
             if (meatRows.length > 0) {
-              await updateMeatMonthlySheet(accessToken, spreadsheetId, meatRows);
+              try {
+                await updateMeatMonthlySheet(accessToken, spreadsheetId, meatRows);
+              } catch (meatErr) {
+                console.error("❌ Meat_Monthly update failed:", meatErr);
+                console.warn(
+                  "⚠️ Main sheet + month/quarter sheets are still updated; only Meat_Monthly failed.",
+                );
+              }
             }
 
             console.log("✅ Automation completed successfully");
