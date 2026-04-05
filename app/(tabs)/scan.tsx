@@ -608,7 +608,7 @@ export default function ScanScreen() {
             />
             <FieldRow label="Date (YYYY-MM-DD)" value={date} onChange={setDate} placeholder="2024-01-15" />
             <FieldRow label="Total Amount (€)" value={totalAmount} onChange={setTotalAmount} keyboardType="decimal-pad" placeholder="0.00" />
-            <FieldRow label="VAT amount (€)" value={ivaAmount} onChange={setIvaAmount} keyboardType="decimal-pad" placeholder="0.00" />
+            <FieldRow label="IVA amount (€)" value={ivaAmount} onChange={setIvaAmount} keyboardType="decimal-pad" placeholder="0.00" />
             <FieldRow label="Tip (€) - optional" value={tip} onChange={setTip} keyboardType="decimal-pad" placeholder="0.00" />
             <FieldRow label="Notes (optional)" value={notes} onChange={setNotes} placeholder="Any additional notes" />
           </View>

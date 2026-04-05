@@ -1,4 +1,5 @@
 import { isMeatCategory } from "../shared/invoice-types";
+import { receiptImageSheetsFormula } from "../shared/sheets-defaults";
 import {
   applyThinTextFormatToGridRange,
   encodeValuesRange,
@@ -147,8 +148,7 @@ function receiptCellForAggregatedSheet(imageUrl: string | undefined): string {
   if (!s) return "";
   if (s.startsWith("=")) return s;
   if (/^https?:\/\//i.test(s)) {
-    const safe = s.replace(/"/g, '""');
-    return `=IMAGE("${safe}", 1)`;
+    return receiptImageSheetsFormula(s);
   }
   return s;
 }

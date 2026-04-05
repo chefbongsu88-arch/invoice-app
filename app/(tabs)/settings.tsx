@@ -319,7 +319,7 @@ export default function SettingsScreen() {
             ["C", "Vendor", "Business name"],
             ["D", "Date", "Receipt date"],
             ["E", "Total (€)", "Total amount"],
-            ["F", "VAT (€)", "VAT amount"],
+            ["F", "IVA (€)", "IVA amount"],
             ["G", "Base (€)", "Amount before tax"],
             ["H", "Category", "AI classification"],
             ["I", "Currency", "EUR"],
@@ -345,7 +345,7 @@ export default function SettingsScreen() {
           </View>
           <View style={[styles.settingRow, { borderBottomColor: "transparent" }]}>
             <Text style={[styles.settingLabel, { color: colors.foreground }]}>Region</Text>
-            <Text style={[styles.settingValue, { color: colors.muted }]}>Spain (EUR, VAT)</Text>
+            <Text style={[styles.settingValue, { color: colors.muted }]}>Spain (EUR, IVA)</Text>
           </View>
         </View>
 

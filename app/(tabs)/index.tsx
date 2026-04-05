@@ -178,7 +178,7 @@ export default function HomeScreen() {
                 accent={colors.primary}
               />
               <StatCard
-                label="Total VAT"
+                label="Total IVA"
                 value={`€${stats.totalIva.toFixed(0)}`}
                 accent={colors.warning}
               />

@@ -10,6 +10,7 @@
     "dev:expo": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start",
     "dev:expo:tunnel": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start --tunnel",
     "phone": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start --tunnel",
+    "phone:lan": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start --lan",
     "phone:clear": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start --tunnel --clear",
     "build:server": "esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist --out-extension:.js=.mjs",
     "build:web": "npx expo export --platform web",

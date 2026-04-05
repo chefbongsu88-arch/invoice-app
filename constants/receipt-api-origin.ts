@@ -10,4 +10,4 @@ export const PRODUCTION_API_ORIGIN =
  * Shown in GET /api/health as `sheetsExportBuild`.
  * If missing on production, the server is still running an old deploy (Forge-only sheet images).
  */
-export const API_SHEETS_EXPORT_BUILD = "receipt-share-v2";
+export const API_SHEETS_EXPORT_BUILD = "receipt-share-v3-hyperlink";

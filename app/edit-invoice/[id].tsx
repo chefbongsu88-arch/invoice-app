@@ -270,7 +270,7 @@ export default function EditInvoiceScreen() {
             placeholder="0.00"
           />
           <FieldRow
-            label="VAT / tax (€)"
+            label="IVA (€)"
             value={ivaAmount}
             onChange={setIvaAmount}
             keyboardType="decimal-pad"

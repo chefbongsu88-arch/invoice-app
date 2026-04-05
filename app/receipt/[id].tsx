@@ -256,7 +256,7 @@ export default function ReceiptDetailScreen() {
             </View>
             <View style={[styles.amountDivider, { backgroundColor: colors.border }]} />
             <View style={styles.amountItem}>
-              <Text style={[styles.amountLabel, { color: colors.muted }]}>VAT</Text>
+              <Text style={[styles.amountLabel, { color: colors.muted }]}>IVA</Text>
               <Text style={[styles.amountValue, { color: colors.warning }]}>
                 €{invoice.ivaAmount.toFixed(2)}
               </Text>

@@ -56,7 +56,7 @@ export default function StatisticsScreen() {
             </View>
             <View style={styles.cardRow}>
               <View style={[styles.statCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <Text style={[styles.statLabel, { color: colors.muted }]}>Total VAT</Text>
+                <Text style={[styles.statLabel, { color: colors.muted }]}>Total IVA</Text>
                 <Text style={[styles.statValue, { color: colors.warning }]}>€{stats.totalIVA.toFixed(2)}</Text>
               </View>
               <View style={[styles.statCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -131,7 +131,7 @@ export default function StatisticsScreen() {
                     </View>
                     <View style={styles.rowRight}>
                       <Text style={[styles.rowAmount, { color: colors.primary }]}>€{month.total.toFixed(2)}</Text>
-                      <Text style={[styles.rowSub, { color: colors.warning }]}>VAT: €{month.iva.toFixed(2)}</Text>
+                      <Text style={[styles.rowSub, { color: colors.warning }]}>IVA: €{month.iva.toFixed(2)}</Text>
                     </View>
                   </View>
                 ))}

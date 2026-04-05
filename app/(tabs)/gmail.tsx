@@ -123,7 +123,7 @@ function EmailCard({
             </Text>
           </View>
           <View style={styles.parsedRow}>
-            <Text style={[styles.parsedLabel, { color: colors.muted }]}>VAT</Text>
+            <Text style={[styles.parsedLabel, { color: colors.muted }]}>IVA</Text>
             <Text style={[styles.parsedValue, { color: colors.warning }]}>€{pd.ivaAmount.toFixed(2)}</Text>
           </View>
           <View style={styles.parsedRow}>

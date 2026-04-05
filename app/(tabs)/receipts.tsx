@@ -109,7 +109,7 @@ function InvoiceCard({
           <Text style={[styles.cardMetaText, { color: colors.muted }]}>{invoice.category}</Text>
         </View>
         <View style={styles.cardMeta}>
-          <Text style={[styles.ivaLabel, { color: colors.muted }]}>VAT</Text>
+          <Text style={[styles.ivaLabel, { color: colors.muted }]}>IVA</Text>
           <Text style={[styles.cardMetaText, { color: colors.warning }]}>
             €{invoice.ivaAmount.toFixed(2)}
           </Text>

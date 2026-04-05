@@ -1,7 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { COOKIE_NAME } from "../shared/const.js";
-import { DEFAULT_MAIN_TRACKER_SHEET_NAME } from "../shared/sheets-defaults.js";
+import {
+  DEFAULT_MAIN_TRACKER_SHEET_NAME,
+  receiptImageSheetsFormula,
+} from "../shared/sheets-defaults.js";
 import { isMeatCategory } from "../shared/invoice-types.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import {
@@ -780,7 +783,7 @@ export const appRouter = router({
         const { spreadsheetId, sheetName, rows, skipDuplicateCheck, publicApiBaseUrl } = input;
         const receiptPublicBase = resolvePublicBaseForReceiptImages(publicApiBaseUrl);
         // If Deploy logs never show this line, the server is still running an old bundle (Forge export).
-        console.log("[Export] image_pipeline=receipt-share-v2");
+        console.log("[Export] image_pipeline=receipt-share-v3-hyperlink");
         console.log(
           `[Export] Sheets row image: publicBase=${receiptPublicBase ? receiptPublicBase.slice(0, 48) : "MISSING"}`,
         );
@@ -958,11 +961,10 @@ export const appRouter = router({
               formattedDate = `'${dd}/${mm}/${yyyy}`;
             }
 
-            // L: in-cell preview via =IMAGE (Google fetches the URL; Forge or our /api/receipt-share)
+            // L: =IMAGE mode 4 = fixed pixel size (mode 1 fits cell → thumbnails too small)
             let imageColumnValue: string = imageUrl;
             if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
-              const safe = imageUrl.replace(/"/g, '""');
-              imageColumnValue = `=IMAGE("${safe}", 1)`;
+              imageColumnValue = receiptImageSheetsFormula(imageUrl);
             }
 
             if (userProvidedImage && !String(imageUrl ?? "").trim()) {
