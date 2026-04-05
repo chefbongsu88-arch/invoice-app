@@ -14,7 +14,7 @@
     "build:server": "esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist --out-extension:.js=.mjs",
     "build:web": "npx expo export --platform web",
     "build": "echo 'cache-bust-$(date)' && pnpm build:web && pnpm build:server",
-    "start": "NODE_ENV=production node dist/index.mjs",
+    "start": "node dist/index.mjs",
     "check": "tsc --noEmit",
     "lint": "expo lint",
     "format": "prettier --write .",
@@ -45,6 +45,7 @@
     "@trpc/client": "11.7.2",
     "@trpc/react-query": "11.7.2",
     "@trpc/server": "11.7.2",
+    "@anthropic-ai/sdk": "^0.39.0",
     "axios": "^1.13.2",
     "clsx": "^2.1.1",
     "cookie": "^1.1.1",
@@ -70,6 +71,8 @@
     "expo-system-ui": "~6.0.9",
     "expo-video": "~3.0.15",
     "expo-web-browser": "~15.0.10",
+    "express": "^4.22.1",
+    "googleapis": "^171.4.0",
     "heic-convert": "^2.1.0",
     "jose": "6.1.0",
     "nativewind": "^4.2.1",
@@ -84,19 +87,16 @@
     "react-native-svg": "15.12.1",
     "react-native-web": "~0.21.2",
     "react-native-worklets": "0.5.1",
+    "sharp": "^0.33.5",
     "superjson": "^1.13.3",
     "tailwind-merge": "^2.6.0",
     "zod": "^4.2.1"
   },
   "optionalDependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
     "@aws-sdk/client-s3": "^3.1019.0",
     "@aws-sdk/s3-request-presigner": "^3.1019.0",
     "drizzle-orm": "^0.44.7",
-    "express": "^4.22.1",
-    "googleapis": "^171.4.0",
-    "mysql2": "^3.16.0",
-    "sharp": "^0.33.5"
+    "mysql2": "^3.16.0"
   },
   "devDependencies": {
     "@expo/ngrok": "^4.1.3",
