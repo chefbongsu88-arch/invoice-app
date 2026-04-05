@@ -32,9 +32,6 @@ import { trpc } from "@/lib/trpc";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
-/** Keep decoded JPEG roughly under this so Anthropic (5 MiB) and mobile payloads stay safe. */
-const RECEIPT_OCR_TARGET_DECODED_BYTES = 3_800_000;
-
 /** iOS 15+ ImagePicker defaults to `.current` (keeps HEIC). Use `.compatible` so library/camera return JPEG when possible — avoids server sharp/heic issues. */
 const IOS_PICKER_HEIC_SAFE =
   Platform.OS === "ios"
@@ -44,17 +41,6 @@ const IOS_PICKER_HEIC_SAFE =
       }
     : {};
 
-const OCR_COMPRESSION_STEPS: { width: number; compress: number }[] = [
-  { width: 1536, compress: 0.7 },
-  { width: 1280, compress: 0.64 },
-  { width: 1152, compress: 0.58 },
-  { width: 1024, compress: 0.54 },
-  { width: 896, compress: 0.5 },
-  { width: 800, compress: 0.46 },
-  { width: 720, compress: 0.42 },
-  { width: 640, compress: 0.38 },
-];
-
 function approxDecodedBytesFromBase64(b64: string): number {
   const s = b64.replace(/\s/g, "");
   if (!s.length) return 0;
@@ -62,72 +48,35 @@ function approxDecodedBytesFromBase64(b64: string): number {
 }
 
 /**
- * Load only when resizing — avoids crashing the whole Scan tab if the dev client was built
- * without the native `ExpoImageManipulator` module (rebuild with EAS after adding the package).
+ * Max decoded size we send from the client (Express accepts 50mb; server shrinks for Claude).
+ * Avoids `expo-image-manipulator`, which requires native code and breaks on Web / some Expo Go setups.
  */
-async function loadImageManipulator(): Promise<typeof import("expo-image-manipulator") | null> {
-  try {
-    return await import("expo-image-manipulator");
-  } catch (e) {
-    console.warn(
-      "[Scan] expo-image-manipulator native module missing. Rebuild your iOS/Android app (EAS development build). Using picker/file base64 only.",
-      e,
-    );
-    return null;
-  }
-}
+const MAX_CLIENT_RECEIPT_DECODED_BYTES = 14_000_000;
 
-/** Downscale before OCR — avoids 400 "image exceeds 5 MB maximum" from Claude. */
+/** Encode image as base64 for OCR/upload — server-side sharp normalizes size & format. */
 async function encodeReceiptImageForServer(
   uri: string,
   fallbackBase64: string | null,
 ): Promise<string | undefined> {
-  let best: string | undefined;
-  let bestDecoded = Number.POSITIVE_INFINITY;
-
-  const IM = await loadImageManipulator();
-  if (IM) {
-    for (const { width, compress } of OCR_COMPRESSION_STEPS) {
-      try {
-        const manipulated = await IM.manipulateAsync(
-          uri,
-          [{ resize: { width } }],
-          {
-            compress,
-            format: IM.SaveFormat.JPEG,
-            base64: true,
-          },
-        );
-        const b = manipulated.base64?.replace(/\s/g, "") ?? "";
-        if (b.length < 64) continue;
-        const dec = approxDecodedBytesFromBase64(b);
-        if (dec <= RECEIPT_OCR_TARGET_DECODED_BYTES) return b;
-        if (dec < bestDecoded) {
-          bestDecoded = dec;
-          best = b;
-        }
-      } catch (e) {
-        console.warn("[Scan] Resize for OCR failed:", width, e);
-      }
-    }
-  }
-
-  if (best) return best;
+  const okPayload = (b64: string): string | undefined => {
+    const b = b64.replace(/\s/g, "");
+    if (b.length < 64) return undefined;
+    if (approxDecodedBytesFromBase64(b) > MAX_CLIENT_RECEIPT_DECODED_BYTES) return undefined;
+    return b;
+  };
 
   if (fallbackBase64) {
-    const b = fallbackBase64.replace(/\s/g, "");
-    if (b.length > 64 && approxDecodedBytesFromBase64(b) <= RECEIPT_OCR_TARGET_DECODED_BYTES) return b;
+    const v = okPayload(fallbackBase64);
+    if (v) return v;
   }
   try {
     const raw = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
     });
-    const b = raw.replace(/\s/g, "");
-    if (b.length > 64 && approxDecodedBytesFromBase64(b) <= RECEIPT_OCR_TARGET_DECODED_BYTES) return b;
+    return okPayload(raw);
   } catch {
-    /* handled below */
+    return undefined;
   }
-  return undefined;
 }
 
 type ScanStep = "capture" | "preview" | "review" | "done";

@@ -6,6 +6,7 @@ vi.mock("../_core/env", () => ({
     forgeApiUrl: "https://forge.test",
     forgeApiKey: "test-forge-key",
   },
+  isForgeStorageConfigured: () => true,
 }));
 
 // Mock the storage module

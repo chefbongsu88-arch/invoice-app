@@ -4,7 +4,7 @@
  * Requires BUILT_IN_FORGE_API_URL + BUILT_IN_FORGE_API_KEY (Railway) for public HTTPS URLs in Sheets.
  */
 
-import { ENV } from "./_core/env";
+import { isForgeStorageConfigured } from "./_core/env";
 import { storagePut } from "./storage";
 
 /**
@@ -19,9 +19,9 @@ export async function uploadImageToStorage(
   fileName: string,
   maxRetries = 3
 ): Promise<string> {
-  if (!ENV.forgeApiUrl?.trim() || !ENV.forgeApiKey?.trim()) {
+  if (!isForgeStorageConfigured()) {
     console.warn(
-      `[Image Upload] Skipped (${fileName}): set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY on the server for hosted receipt image links in Google Sheets. Rows still export; the image column will be empty.`,
+      `[Image Upload] Skipped (${fileName}): Forge storage not configured (BUILT_IN_FORGE_API_URL + BUILT_IN_FORGE_API_KEY). For Google Sheets receipt previews use the app’s latest export — it uses /api/receipt-share and does not need Forge.`,
     );
     return "";
   }
