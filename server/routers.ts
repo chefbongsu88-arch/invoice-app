@@ -1154,6 +1154,18 @@ function fallbackParseEmailInvoiceFromText(
   const totalTripleMatch = normalized.match(
     /\btotal\s*\(?(?:€|eur)?\)?\s*([0-9]{1,6}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,6}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,6}(?:[.,][0-9]{1,2})?)\b/i,
   );
+  const mercadonaTotalFacturaMatch =
+    rawMultiline.match(/(?:^|\n)\s*Total\s+Factura\s+([0-9]{1,6}(?:[.,][0-9]{2}))\s*€?/i) ??
+    normalized.match(/\btotal\s+factura\b[^0-9€]{0,16}([0-9]{1,6}(?:[.,][0-9]{2}))\s*€?/i);
+  const mercadonaTotalRowMatch = rawMultiline.match(
+    /(?:^|\n)\s*TOTAL\s*\(€\)\s+([0-9]{1,6}(?:[.,][0-9]{2}))\s+([0-9]{1,6}(?:[.,][0-9]{2}))\s+([0-9]{1,6}(?:[.,][0-9]{2}))/i,
+  );
+  const mercadonaVendorMatch =
+    rawMultiline.match(/(?:^|\n)\s*(MERCADONA\s+S\.?A\.?)\s*(?:\n|$)/i) ??
+    rawMultiline.match(/(?:^|\n)\s*(MERCADONA)\s*(?:\n|$)/i);
+  const mercadonaInvoiceMatch =
+    rawMultiline.match(/(?:^|\n)\s*N[ºo°]\s*Factura\s*:\s*([A-Z]-V\d{4,}-\d{4,})/i) ??
+    rawMultiline.match(/(?:^|\n)\s*Factura\s+Simplificada\s*:\s*([0-9-]{6,})/i);
   const baseIvaSummaryMatch = normalized.match(
     /\bbase\s*%\s*iva\s*total\s*iva\b[^0-9]{0,24}([0-9]{1,6}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,3}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,6}(?:[.,][0-9]{1,2})?)\b/i,
   );
@@ -1249,9 +1261,18 @@ function fallbackParseEmailInvoiceFromText(
     .filter((n) => Number.isFinite(n) && n > 0)
     .reduce((max, cur) => (cur > max ? cur : max), 0);
 
-  const summaryBaseParsed = parseMoney(totalTripleMatch?.[1]) || parseMoney(baseIvaSummaryMatch?.[1]);
-  const summaryIvaParsed = parseMoney(totalTripleMatch?.[2]) || parseMoney(baseIvaSummaryMatch?.[3]);
-  const summaryTotalParsed = parseMoney(totalTripleMatch?.[3]);
+  const summaryBaseParsed =
+    parseMoney(mercadonaTotalRowMatch?.[1]) ||
+    parseMoney(totalTripleMatch?.[1]) ||
+    parseMoney(baseIvaSummaryMatch?.[1]);
+  const summaryIvaParsed =
+    parseMoney(mercadonaTotalRowMatch?.[2]) ||
+    parseMoney(totalTripleMatch?.[2]) ||
+    parseMoney(baseIvaSummaryMatch?.[3]);
+  const summaryTotalParsed =
+    parseMoney(mercadonaTotalFacturaMatch?.[1]) ||
+    parseMoney(mercadonaTotalRowMatch?.[3]) ||
+    parseMoney(totalTripleMatch?.[3]);
 
   let totalParsed =
     summaryTotalParsed ||
@@ -1274,7 +1295,9 @@ function fallbackParseEmailInvoiceFromText(
     new Date().toISOString().split("T")[0];
 
   let invoiceNumberOut = String(invMatch?.[1] ?? "").trim();
-  if (serieEmision?.[1] && numFacturaOnly?.[1]) {
+  if (mercadonaInvoiceMatch?.[1]) {
+    invoiceNumberOut = String(mercadonaInvoiceMatch[1]).trim();
+  } else if (serieEmision?.[1] && numFacturaOnly?.[1]) {
     invoiceNumberOut = `${String(serieEmision[1]).trim()}-${String(numFacturaOnly[1]).trim()}`;
   } else if (!invoiceNumberOut && numFacturaOnly?.[1]) {
     invoiceNumberOut = String(numFacturaOnly[1]).trim();
@@ -1282,6 +1305,7 @@ function fallbackParseEmailInvoiceFromText(
 
   const vendorFromSubject = String(subjectVendorMatch?.[1] ?? "").trim();
   const vendorOut = pickBestParsedVendor(
+    mercadonaVendorMatch?.[1],
     companyLabelVendorMatch?.[1],
     topHeadingVendor,
     vendorFromSubject,
@@ -1589,57 +1613,81 @@ export const appRouter = router({
                 const maxImageOcr = 2;
                 const imageOcrBlocks: string[] = [];
                 for (const info of imageAttachmentIds.slice(0, maxImageOcr)) {
-                  const attRes = await fetch(
-                    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(info.attachmentId)}`,
-                    { headers: { Authorization: `Bearer ${accessToken}` } },
-                  );
-                  if (!attRes.ok) continue;
-                  const att = (await attRes.json()) as { data?: string };
-                  const decodedBuf = decodeGmailBase64UrlToBuffer(att.data ?? "");
-                  const b64 = decodedBuf ? decodedBuf.toString("base64") : "";
-                  if (!b64 || b64.length < 64) continue;
+                  try {
+                    const attRes = await fetch(
+                      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(info.attachmentId)}`,
+                      { headers: { Authorization: `Bearer ${accessToken}` } },
+                    );
+                    if (!attRes.ok) continue;
+                    const att = (await attRes.json()) as { data?: string };
+                    const decodedBuf = decodeGmailBase64UrlToBuffer(att.data ?? "");
+                    const b64 = decodedBuf ? decodedBuf.toString("base64") : "";
+                    if (!b64 || b64.length < 64) continue;
 
-                  const mimeType = info.mimeType || detectMimeFromImageBase64(b64);
-                  let ocrText = "";
-                  const useClaude = Boolean(ENV.anthropicApiKey?.trim());
-                  const useGeminiGoogle = Boolean(ENV.googleGeminiApiKey?.trim());
-                  if (useGeminiGoogle) {
-                    ocrText = await runGoogleGeminiReceiptOcr(
-                      b64,
-                      mimeType,
-                      RECEIPT_PARSE_SYSTEM,
-                      RECEIPT_PARSE_USER,
-                    );
-                  } else if (useClaude) {
-                    ocrText = await parseReceiptWithClaude(
-                      b64,
-                      mimeType,
-                      RECEIPT_PARSE_SYSTEM,
-                      RECEIPT_PARSE_USER,
-                    );
-                  }
-                  if (ocrText.trim()) {
-                    try {
-                      const cleanedOcr = ocrText
-                        .replace(/```json\n?/g, "")
-                        .replace(/```\n?/g, "")
-                        .trim();
-                      const ocrJsonMatch = cleanedOcr.match(/\{[\s\S]*\}/);
-                      if (ocrJsonMatch) {
-                        const ocrRawParsed = JSON.parse(ocrJsonMatch[0]) as Record<string, unknown>;
-                        attachmentBestCandidate = chooseBetterEmailInvoiceCandidate(
-                          attachmentBestCandidate,
-                          receiptLikeCandidateFromRawParsed(ocrRawParsed, {
-                            headerFrom,
-                            headerDate,
-                            subject: input.subject,
-                          }),
+                    const mimeType = info.mimeType || detectMimeFromImageBase64(b64);
+                    let ocrText = "";
+                    const useClaude = Boolean(ENV.anthropicApiKey?.trim());
+                    const useGeminiGoogle = Boolean(ENV.googleGeminiApiKey?.trim());
+                    if (useGeminiGoogle) {
+                      try {
+                        ocrText = await runGoogleGeminiReceiptOcr(
+                          b64,
+                          mimeType,
+                          RECEIPT_PARSE_SYSTEM,
+                          RECEIPT_PARSE_USER,
                         );
+                      } catch (geminiImageErr) {
+                        console.warn(
+                          "[Email Parse] Gemini image OCR failed, trying Claude / skipping image:",
+                          info.filename,
+                          geminiImageErr instanceof Error ? geminiImageErr.message : geminiImageErr,
+                        );
+                        if (useClaude) {
+                          ocrText = await parseReceiptWithClaude(
+                            b64,
+                            mimeType,
+                            RECEIPT_PARSE_SYSTEM,
+                            RECEIPT_PARSE_USER,
+                          );
+                        }
                       }
-                    } catch (ocrParseErr) {
-                      console.warn("[Email Parse] Attachment OCR JSON parse failed:", ocrParseErr);
+                    } else if (useClaude) {
+                      ocrText = await parseReceiptWithClaude(
+                        b64,
+                        mimeType,
+                        RECEIPT_PARSE_SYSTEM,
+                        RECEIPT_PARSE_USER,
+                      );
                     }
-                    imageOcrBlocks.push(`[Image attachment OCR: ${info.filename}]\n${ocrText.trim()}`);
+                    if (ocrText.trim()) {
+                      try {
+                        const cleanedOcr = ocrText
+                          .replace(/```json\n?/g, "")
+                          .replace(/```\n?/g, "")
+                          .trim();
+                        const ocrJsonMatch = cleanedOcr.match(/\{[\s\S]*\}/);
+                        if (ocrJsonMatch) {
+                          const ocrRawParsed = JSON.parse(ocrJsonMatch[0]) as Record<string, unknown>;
+                          attachmentBestCandidate = chooseBetterEmailInvoiceCandidate(
+                            attachmentBestCandidate,
+                            receiptLikeCandidateFromRawParsed(ocrRawParsed, {
+                              headerFrom,
+                              headerDate,
+                              subject: input.subject,
+                            }),
+                          );
+                        }
+                      } catch (ocrParseErr) {
+                        console.warn("[Email Parse] Attachment OCR JSON parse failed:", ocrParseErr);
+                      }
+                      imageOcrBlocks.push(`[Image attachment OCR: ${info.filename}]\n${ocrText.trim()}`);
+                    }
+                  } catch (imageOcrErr) {
+                    console.warn(
+                      "[Email Parse] Image attachment OCR skipped:",
+                      info.filename,
+                      imageOcrErr instanceof Error ? imageOcrErr.message : imageOcrErr,
+                    );
                   }
                 }
 
