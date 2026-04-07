@@ -394,6 +394,64 @@ function parseMoneyNumber(value: unknown): number {
   return 0;
 }
 
+function normalizeExtractedInvoiceText(raw: string): string {
+  return String(raw ?? "")
+    .replace(/\u0000/g, " ")
+    .replace(/[·∙]/g, ".")
+    .replace(/(\d)\s+([.,])\s*(\d{1,2}\b)/g, "$1$2$3")
+    .replace(/(\d{1,3}(?:[.,]\d{3})*)\s+([.,]\d{2}\b)/g, "$1$2")
+    .replace(/([€$])\s+(\d)/g, "$1$2")
+    .replace(/(\d)\s+(€|eur\b)/gi, "$1$2")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function isUsefulExtractedPdfText(raw: string): boolean {
+  const text = normalizeExtractedInvoiceText(raw);
+  if (text.length >= 72) return true;
+
+  const moneyMatches =
+    text.match(/[0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})|[0-9]{1,6}[.,][0-9]{1,2}/g) ?? [];
+  const hasInvoiceLabel =
+    /\b(total|importe|factura|invoice|iva|vat|base(?:\s+imponible)?|cuota\s+iva|amount\s+due|total\s+a\s+pagar)\b/i.test(
+      text,
+    );
+  const hasCurrency = /€|\beur\b/i.test(text);
+
+  return text.length >= 28 && moneyMatches.length >= 1 && (hasInvoiceLabel || hasCurrency);
+}
+
+function cleanParsedVendorName(raw: unknown): string {
+  const s = String(raw ?? "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/^from:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return "";
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/i.test(s)) return "";
+  if (/\b(?:noreply|no-reply|do-not-reply|donotreply)\b/i.test(s)) return "";
+  if (
+    /^(?:cliente|company|nombre|direcci[oó]n|poblaci[oó]n|empresa|factura|invoice|receipt|email subject|email content|attachment context)$/i.test(
+      s,
+    )
+  ) {
+    return "";
+  }
+  return s;
+}
+
+function pickBestParsedVendor(...candidates: unknown[]): string {
+  for (const candidate of candidates) {
+    const cleaned = cleanParsedVendorName(candidate);
+    if (!cleaned) continue;
+    if (!/[A-Za-zÀ-ÿ]/.test(cleaned)) continue;
+    return cleaned;
+  }
+  return "";
+}
+
 function isValidGregorianDate(y: number, m: number, d: number): boolean {
   if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return false;
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -580,15 +638,14 @@ function normalizeEmailInvoiceModelFields(
     }
   }
 
-  const vendor = String(
-    flat.vendor ??
-      flat.merchant ??
-      flat.company ??
-      flat.supplier ??
-      flat.store ??
-      opts.headerFrom ??
-      "",
-  ).trim();
+  const vendor = pickBestParsedVendor(
+    flat.vendor,
+    flat.merchant,
+    flat.company,
+    flat.supplier,
+    flat.store,
+    opts.headerFrom,
+  );
 
   const invoiceNumber = String(
     flat.invoiceNumber ??
@@ -913,10 +970,17 @@ function fallbackParseEmailInvoiceFromText(
   opts?: { headerFrom?: string; headerDate?: string },
 ) {
   const raw = `${subject ?? ""}\n${emailText ?? ""}\n${opts?.headerFrom ?? ""}\n${opts?.headerDate ?? ""}`;
-  /** One line so "TOTAL A PAGAR" and "12,33" on adjacent lines in PDF text still match. */
-  const normalized = raw
-    .replace(/[·∙]/g, ".")
+  const rawMultiline = String(raw)
     .replace(/\u00a0/g, " ")
+    .replace(/\r\n|\r/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+  const rawLines = rawMultiline
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  /** One line so "TOTAL A PAGAR" and "12,33" on adjacent lines in PDF text still match. */
+  const normalized = normalizeExtractedInvoiceText(rawMultiline)
     .replace(/\r\n|\r|\n/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -952,6 +1016,8 @@ function fallbackParseEmailInvoiceFromText(
   const totalMatch =
     /** Thermal / ticket printers: "TOTAL: 52,20" */
     normalized.match(new RegExp(`\\bTOTAL\\s*:\\s*${euMoney}`, "i")) ??
+    normalized.match(new RegExp(`\\bTOTAL\\s*:\\s*${euMoney}\\s*(?:€|EUR)?`, "i")) ??
+    normalized.match(new RegExp(`\\bSUMA\\s*:\\s*${euMoney}\\s*(?:€|EUR)?`, "i")) ??
     normalized.match(new RegExp(`\\bIMPORTE\\s+TOTAL\\s*:\\s*${euMoney}`, "i")) ??
     normalized.match(new RegExp(`\\btotal\\s+a\\s+pagar\\b\\s*:?\\s*${euMoney}`, "i")) ??
     normalized.match(
@@ -984,6 +1050,9 @@ function fallbackParseEmailInvoiceFromText(
     ) ??
     normalized.match(
       /\b(?:importe\s+total|total\s+factura)\b[^0-9€]{0,120}([0-9]{1,6}(?:[.,][0-9]{1,2})?)\b/i,
+    ) ??
+    normalized.match(
+      /\b(?:suma|total|importe)\b[^0-9€]{0,24}([0-9]{1,6}(?:[.,][0-9]{1,2})?)\s*(?:€|eur)\b/i,
     );
   /**
    * Some supermarket PDFs print a 3-column summary line:
@@ -993,6 +1062,9 @@ function fallbackParseEmailInvoiceFromText(
    */
   const totalTripleMatch = normalized.match(
     /\btotal\s*\(?(?:€|eur)?\)?\s*([0-9]{1,6}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,6}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,6}(?:[.,][0-9]{1,2})?)\b/i,
+  );
+  const baseIvaSummaryMatch = normalized.match(
+    /\bbase\s*%\s*iva\s*total\s*iva\b[^0-9]{0,24}([0-9]{1,6}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,3}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,6}(?:[.,][0-9]{1,2})?)\b/i,
   );
   const baseMatch =
     normalized.match(new RegExp(`\\bBASE\\s*:\\s*${euMoney}`, "i")) ??
@@ -1016,8 +1088,22 @@ function fallbackParseEmailInvoiceFromText(
     );
   const fromMatch = normalized.match(/\bfrom:\s*([^\n<]{3,80})/i);
   const subjectVendorMatch = String(subject ?? "").match(
-    /\bfactura\s+mensual\s+([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9\s&.'-]{1,48})/i,
+    /\bfactura(?:\s+mensual)?(?:\s+de(?:l)?)?\s+([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9\s&.'-]{1,60})/i,
   );
+  const companyLabelVendorMatch =
+    rawMultiline.match(/(?:^|\n)\s*empresa\s*:\s*([^\n]{3,80})/i) ??
+    rawMultiline.match(/(?:^|\n)\s*empresa\s*\n\s*([^\n]{3,80})/i);
+  const topHeadingVendor =
+    rawLines.find(
+      (line, index) =>
+        index < 12 &&
+        /[A-Za-zÀ-ÿ]/.test(line) &&
+        !/^(?:cliente|company|empresa|factura|invoice|receipt|from:|fecha:?|fra\s+simp:?|le\s+atendi[oó]:?|n\.?i\.?f\.?:?|nombre:?|direcci[oó]n:?|poblaci[oó]n:?|unid\.?|descripci[oó]n|precio|importe|base|% iva|total iva|subtotal|descuento|gratuity|impuesto|\[[^\]]+\])$/i.test(
+          line,
+        ) &&
+        !/^[^@\s]+@[^@\s]+\.[^@\s]+$/i.test(line) &&
+        !/^\d[\d\s.,/-]*$/.test(line),
+    ) ?? "";
 
   let dateIso = "";
   if (dateMatch) {
@@ -1072,8 +1158,8 @@ function fallbackParseEmailInvoiceFromText(
     .filter((n) => Number.isFinite(n) && n > 0)
     .reduce((max, cur) => (cur > max ? cur : max), 0);
 
-  const summaryBaseParsed = parseMoney(totalTripleMatch?.[1]);
-  const summaryIvaParsed = parseMoney(totalTripleMatch?.[2]);
+  const summaryBaseParsed = parseMoney(totalTripleMatch?.[1]) || parseMoney(baseIvaSummaryMatch?.[1]);
+  const summaryIvaParsed = parseMoney(totalTripleMatch?.[2]) || parseMoney(baseIvaSummaryMatch?.[3]);
   const summaryTotalParsed = parseMoney(totalTripleMatch?.[3]);
 
   let totalParsed =
@@ -1104,9 +1190,13 @@ function fallbackParseEmailInvoiceFromText(
   }
 
   const vendorFromSubject = String(subjectVendorMatch?.[1] ?? "").trim();
-  const vendorOut = String(
-    fromMatch?.[1] ?? opts?.headerFrom ?? vendorFromSubject ?? "",
-  ).trim();
+  const vendorOut = pickBestParsedVendor(
+    companyLabelVendorMatch?.[1],
+    topHeadingVendor,
+    vendorFromSubject,
+    fromMatch?.[1],
+    opts?.headerFrom,
+  );
 
   return {
     invoiceNumber: invoiceNumberOut,
@@ -1443,19 +1533,25 @@ export const appRouter = router({
 
                 const maxPdfExtract = 2;
                 const pdfTextBlocks: string[] = [];
-                let pdfParseFn: ((dataBuffer: Buffer) => Promise<{ text?: string }>) | null = null;
+                let pdfTextExtractFn: ((dataBuffer: Buffer) => Promise<string>) | null = null;
                 if (pdfAttachments.length > 0) {
                   try {
-                    // eslint-disable-next-line import/no-unresolved
-                    const mod = await import("pdf-parse");
-                    pdfParseFn = (mod.default ?? mod) as (dataBuffer: Buffer) => Promise<{ text?: string }>;
+                    const mod = await import("unpdf");
+                    const extractText = mod.extractText as (
+                      data: Uint8Array,
+                      options: { mergePages: true },
+                    ) => Promise<{ text: string }>;
+                    pdfTextExtractFn = async (dataBuffer: Buffer) => {
+                      const result = await extractText(new Uint8Array(dataBuffer), { mergePages: true });
+                      return String(result.text ?? "");
+                    };
                   } catch (importErr) {
-                    console.warn("[Email Parse] pdf-parse module not available:", importErr);
+                    console.warn("[Email Parse] unpdf module not available:", importErr);
                   }
                 }
                 const minPdfTextChars = 72;
                 const maxPdfBytesForGemini = 12 * 1024 * 1024;
-                const useGeminiPdf = Boolean(ENV.googleGeminiApiKey?.trim());
+                let allowGeminiPdf = Boolean(ENV.googleGeminiApiKey?.trim());
 
                 for (const info of pdfAttachments.slice(0, maxPdfExtract)) {
                   const attRes = await fetch(
@@ -1468,23 +1564,23 @@ export const appRouter = router({
                   if (!pdfBuf || pdfBuf.length < 64) continue;
 
                   let pdfText = "";
-                  if (pdfParseFn) {
+                  if (pdfTextExtractFn) {
                     try {
-                      const parsedPdf = await pdfParseFn(pdfBuf);
-                      pdfText = String(parsedPdf.text ?? "").replace(/\s+\n/g, "\n").trim();
+                      pdfText = await pdfTextExtractFn(pdfBuf);
+                      pdfText = normalizeExtractedInvoiceText(String(pdfText).replace(/\s+\n/g, "\n"));
                     } catch (pdfErr) {
-                      console.warn("[Email Parse] pdf-parse failed:", info.filename, pdfErr);
+                      console.warn("[Email Parse] unpdf extract failed:", info.filename, pdfErr);
                     }
                   }
 
-                  if (pdfText.length >= minPdfTextChars) {
+                  if (pdfText.length >= minPdfTextChars || isUsefulExtractedPdfText(pdfText)) {
                     pdfTextBlocks.push(`[PDF text: ${info.filename}]\n${pdfText.slice(0, 4500)}`);
                     continue;
                   }
 
                   // Scanned PDFs: no text layer — send PDF to Gemini (same JSON receipt schema as camera OCR).
                   if (
-                    useGeminiPdf &&
+                    allowGeminiPdf &&
                     pdfBuf.length <= maxPdfBytesForGemini
                   ) {
                     try {
@@ -1498,10 +1594,15 @@ export const appRouter = router({
                         pdfTextBlocks.push(`[PDF invoice (Gemini): ${info.filename}]\n${geminiJson.trim().slice(0, 4500)}`);
                       }
                     } catch (geminiPdfErr) {
+                      const geminiMsg =
+                        geminiPdfErr instanceof Error ? geminiPdfErr.message : String(geminiPdfErr);
+                      if (/429|quota|rate limit/i.test(geminiMsg)) {
+                        allowGeminiPdf = false;
+                      }
                       console.warn(
                         "[Email Parse] Gemini PDF read failed (quota or model):",
                         info.filename,
-                        geminiPdfErr instanceof Error ? geminiPdfErr.message : geminiPdfErr,
+                        geminiMsg,
                       );
                     }
                   }
@@ -1921,8 +2022,8 @@ export const appRouter = router({
                 : receiptImageSheetsFormula(imageUrl);
             }
 
-            // If attachment fetch/upload failed, still provide a clickable Gmail message link.
-            // User can open the original email and download/view the PDF from there.
+            // If attachment fetch/upload failed, still provide the raw Gmail message URL.
+            // Sheets auto-links plain https text more reliably than HYPERLINK() labels.
             if (!String(imageColumnValue ?? "").trim()) {
               const safeMsgId = String(
                 r.gmailReceiptFetch?.messageId ?? r.gmailMessageId ?? "",
@@ -1931,7 +2032,7 @@ export const appRouter = router({
                 .trim();
               if (safeMsgId) {
                 const gmailMsgUrl = `https://mail.google.com/mail/u/0/#inbox/${safeMsgId}`;
-                imageColumnValue = `=HYPERLINK("${gmailMsgUrl}","Open Gmail attachment")`;
+                imageColumnValue = gmailMsgUrl;
               }
             }
 

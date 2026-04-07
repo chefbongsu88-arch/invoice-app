@@ -75,7 +75,7 @@ export async function parseReceiptWithGoogleGemini(
 }
 
 /**
- * Invoice PDFs are often scanned images — pdf-parse returns no text. Gemini can read PDF bytes directly.
+ * Invoice PDFs are often scanned images or have weak text layers after extraction. Gemini can read PDF bytes directly.
  * Skips if key missing; caller should catch quota/network errors.
  */
 export async function parseInvoicePdfWithGoogleGemini(

@@ -24,8 +24,8 @@ export function receiptImageSheetsFormula(httpsUrl: string): string {
   return `=HYPERLINK("${safe}",${img})`;
 }
 
-/** PDFs are not reliable in Sheets =IMAGE(); use a link that opens the hosted file in the browser. */
+/** PDFs are not reliable in Sheets =IMAGE(); plain https text becomes a clickable link in Sheets. */
 export function receiptPdfSheetsHyperlinkFormula(httpsUrl: string): string {
   const safe = String(httpsUrl ?? "").trim().replace(/"/g, '""');
-  return `=HYPERLINK("${safe}","Open receipt (PDF)")`;
+  return safe;
 }

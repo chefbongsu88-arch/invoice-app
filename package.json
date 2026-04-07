@@ -78,7 +78,7 @@
     "heic-convert": "^2.1.0",
     "jose": "6.1.0",
     "nativewind": "^4.2.1",
-    "pdf-parse": "^2.4.5",
+    "unpdf": "^1.4.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
