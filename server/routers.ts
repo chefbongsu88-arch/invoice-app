@@ -452,6 +452,84 @@ function pickBestParsedVendor(...candidates: unknown[]): string {
   return "";
 }
 
+type ParsedEmailInvoiceCandidate = {
+  invoiceNumber: string;
+  vendor: string;
+  date: string;
+  totalAmount: number;
+  ivaAmount: number;
+  tipAmount: number;
+  category: string;
+  subject: string;
+  items: unknown[];
+};
+
+function scoreEmailInvoiceCandidate(candidate: Partial<ParsedEmailInvoiceCandidate> | null | undefined): number {
+  if (!candidate) return -1;
+  let score = 0;
+  if ((candidate.totalAmount ?? 0) > 0) score += 4;
+  if ((candidate.ivaAmount ?? 0) > 0) score += 1;
+  if (cleanParsedVendorName(candidate.vendor)) score += 3;
+  if (String(candidate.date ?? "").trim()) score += 1;
+  if (String(candidate.invoiceNumber ?? "").trim()) score += 1;
+  return score;
+}
+
+function chooseBetterEmailInvoiceCandidate(
+  current: ParsedEmailInvoiceCandidate | null,
+  next: ParsedEmailInvoiceCandidate | null,
+): ParsedEmailInvoiceCandidate | null {
+  if (!next) return current;
+  if (!current) return next;
+  const currentScore = scoreEmailInvoiceCandidate(current);
+  const nextScore = scoreEmailInvoiceCandidate(next);
+  if (nextScore > currentScore) return next;
+  if (nextScore < currentScore) return current;
+  if ((next.totalAmount ?? 0) > (current.totalAmount ?? 0)) return next;
+  return current;
+}
+
+function mergeEmailInvoiceCandidates(
+  primary: ParsedEmailInvoiceCandidate,
+  secondary: ParsedEmailInvoiceCandidate | null,
+): ParsedEmailInvoiceCandidate {
+  if (!secondary) return primary;
+  const primaryVendor = cleanParsedVendorName(primary.vendor);
+  const secondaryVendor = cleanParsedVendorName(secondary.vendor);
+  return {
+    invoiceNumber: String(primary.invoiceNumber || secondary.invoiceNumber || "").trim(),
+    vendor: primaryVendor || secondaryVendor || "",
+    date: String(primary.date || secondary.date || "").trim(),
+    totalAmount: primary.totalAmount > 0 ? primary.totalAmount : secondary.totalAmount,
+    ivaAmount: primary.ivaAmount > 0 ? primary.ivaAmount : secondary.ivaAmount,
+    tipAmount: primary.tipAmount > 0 ? primary.tipAmount : secondary.tipAmount,
+    category:
+      String(primary.category || "").trim() && primary.category !== "Other"
+        ? primary.category
+        : secondary.category,
+    subject: String(primary.subject || secondary.subject || "").trim(),
+    items: Array.isArray(primary.items) && primary.items.length > 0 ? primary.items : secondary.items,
+  };
+}
+
+function receiptLikeCandidateFromRawParsed(
+  rawParsed: Record<string, unknown>,
+  opts: { headerFrom: string; headerDate: string; subject?: string },
+): ParsedEmailInvoiceCandidate {
+  const parsed = normalizeReceiptParsedFields(rawParsed);
+  return {
+    invoiceNumber: String(parsed.invoiceNumber ?? "").trim(),
+    vendor: pickBestParsedVendor(parsed.vendor, opts.headerFrom),
+    date: resolveReceiptDateIso(parsed) || dateIsoFromEmailDateHeader(opts.headerDate),
+    totalAmount: parseMoneyNumber(parsed.totalAmount),
+    ivaAmount: parseMoneyNumber(parsed.ivaAmount),
+    tipAmount: parseMoneyNumber(parsed.tipAmount),
+    category: String(parsed.category ?? "Other").trim() || "Other",
+    subject: opts.subject ?? "",
+    items: Array.isArray(parsed.items) ? parsed.items : [],
+  };
+}
+
 function isValidGregorianDate(y: number, m: number, d: number): boolean {
   if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return false;
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -1421,6 +1499,7 @@ export const appRouter = router({
       )
       .mutation(async ({ input }) => {
         let attachmentAugmentedText = "";
+        let attachmentBestCandidate: ParsedEmailInvoiceCandidate | null = null;
         let headerFrom = "";
         let headerDate = "";
         try {
@@ -1527,6 +1606,26 @@ export const appRouter = router({
                     );
                   }
                   if (ocrText.trim()) {
+                    try {
+                      const cleanedOcr = ocrText
+                        .replace(/```json\n?/g, "")
+                        .replace(/```\n?/g, "")
+                        .trim();
+                      const ocrJsonMatch = cleanedOcr.match(/\{[\s\S]*\}/);
+                      if (ocrJsonMatch) {
+                        const ocrRawParsed = JSON.parse(ocrJsonMatch[0]) as Record<string, unknown>;
+                        attachmentBestCandidate = chooseBetterEmailInvoiceCandidate(
+                          attachmentBestCandidate,
+                          receiptLikeCandidateFromRawParsed(ocrRawParsed, {
+                            headerFrom,
+                            headerDate,
+                            subject: input.subject,
+                          }),
+                        );
+                      }
+                    } catch (ocrParseErr) {
+                      console.warn("[Email Parse] Attachment OCR JSON parse failed:", ocrParseErr);
+                    }
                     imageOcrBlocks.push(`[Image attachment OCR: ${info.filename}]\n${ocrText.trim()}`);
                   }
                 }
@@ -1574,6 +1673,13 @@ export const appRouter = router({
                   }
 
                   if (pdfText.length >= minPdfTextChars || isUsefulExtractedPdfText(pdfText)) {
+                    attachmentBestCandidate = chooseBetterEmailInvoiceCandidate(
+                      attachmentBestCandidate,
+                      fallbackParseEmailInvoiceFromText(pdfText, input.subject, {
+                        headerFrom,
+                        headerDate,
+                      }),
+                    );
                     pdfTextBlocks.push(`[PDF text: ${info.filename}]\n${pdfText.slice(0, 4500)}`);
                     continue;
                   }
@@ -1591,6 +1697,28 @@ export const appRouter = router({
                         RECEIPT_PARSE_USER,
                       );
                       if (geminiJson.trim()) {
+                        try {
+                          const cleanedGeminiJson = geminiJson
+                            .replace(/```json\n?/g, "")
+                            .replace(/```\n?/g, "")
+                            .trim();
+                          const geminiJsonMatch = cleanedGeminiJson.match(/\{[\s\S]*\}/);
+                          if (geminiJsonMatch) {
+                            const geminiRawParsed = JSON.parse(
+                              geminiJsonMatch[0],
+                            ) as Record<string, unknown>;
+                            attachmentBestCandidate = chooseBetterEmailInvoiceCandidate(
+                              attachmentBestCandidate,
+                              receiptLikeCandidateFromRawParsed(geminiRawParsed, {
+                                headerFrom,
+                                headerDate,
+                                subject: input.subject,
+                              }),
+                            );
+                          }
+                        } catch (geminiParseErr) {
+                          console.warn("[Email Parse] Gemini PDF JSON parse failed:", geminiParseErr);
+                        }
                         pdfTextBlocks.push(`[PDF invoice (Gemini): ${info.filename}]\n${geminiJson.trim().slice(0, 4500)}`);
                       }
                     } catch (geminiPdfErr) {
@@ -1636,10 +1764,13 @@ export const appRouter = router({
           const rawContent = response.choices?.[0]?.message?.content;
           const text = extractLlmMessageText(rawContent).trim();
           if (!text) {
-            return fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
-              headerFrom,
-              headerDate,
-            });
+            return mergeEmailInvoiceCandidates(
+              fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
+                headerFrom,
+                headerDate,
+              }),
+              attachmentBestCandidate,
+            );
           }
           const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
           let rawParsed: Record<string, unknown>;
@@ -1649,21 +1780,17 @@ export const appRouter = router({
             rawParsed = JSON.parse(jsonStr) as Record<string, unknown>;
           } catch (parseErr) {
             console.warn("[Email Parse] LLM JSON parse failed, using regex fallback:", parseErr);
-            return fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
-              headerFrom,
-              headerDate,
-            });
+            return mergeEmailInvoiceCandidates(
+              fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
+                headerFrom,
+                headerDate,
+              }),
+              attachmentBestCandidate,
+            );
           }
 
           const norm = normalizeEmailInvoiceModelFields(rawParsed, { headerFrom, headerDate });
-          if (!norm.totalAmount || norm.totalAmount <= 0 || !norm.vendor) {
-            return fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
-              headerFrom,
-              headerDate,
-            });
-          }
-
-          return {
+          const llmCandidate: ParsedEmailInvoiceCandidate = {
             invoiceNumber: norm.invoiceNumber,
             vendor: norm.vendor,
             date: norm.dateIso,
@@ -1674,12 +1801,26 @@ export const appRouter = router({
             subject: input.subject ?? "",
             items: [],
           };
+          const mergedCandidate = mergeEmailInvoiceCandidates(llmCandidate, attachmentBestCandidate);
+          if (!mergedCandidate.totalAmount || mergedCandidate.totalAmount <= 0 || !mergedCandidate.vendor) {
+            return mergeEmailInvoiceCandidates(
+              fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
+                headerFrom,
+                headerDate,
+              }),
+              attachmentBestCandidate,
+            );
+          }
+
+          return mergedCandidate;
         } catch (err) {
           console.error("[Email Parse] error:", err);
-          return fallbackParseEmailInvoiceFromText(
-            `${input.emailText}${attachmentAugmentedText}`,
-            input.subject,
-            { headerFrom, headerDate },
+          return mergeEmailInvoiceCandidates(
+            fallbackParseEmailInvoiceFromText(`${input.emailText}${attachmentAugmentedText}`, input.subject, {
+              headerFrom,
+              headerDate,
+            }),
+            attachmentBestCandidate,
           );
         }
       }),
