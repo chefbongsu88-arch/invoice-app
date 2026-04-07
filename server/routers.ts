@@ -985,6 +985,15 @@ function fallbackParseEmailInvoiceFromText(
     normalized.match(
       /\b(?:importe\s+total|total\s+factura)\b[^0-9€]{0,120}([0-9]{1,6}(?:[.,][0-9]{1,2})?)\b/i,
     );
+  /**
+   * Some supermarket PDFs print a 3-column summary line:
+   *   TOTAL (€)  52,22  3,22  55,44
+   *              base   iva   total
+   * When present, trust this more than generic heuristics.
+   */
+  const totalTripleMatch = normalized.match(
+    /\btotal\s*\(?(?:€|eur)?\)?\s*([0-9]{1,6}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,6}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,6}(?:[.,][0-9]{1,2})?)\b/i,
+  );
   const baseMatch =
     normalized.match(new RegExp(`\\bBASE\\s*:\\s*${euMoney}`, "i")) ??
     normalized.match(new RegExp(`\\bbase\\b[^0-9€]{0,24}${euMoney}`, "i")) ??
@@ -1047,7 +1056,7 @@ function fallbackParseEmailInvoiceFromText(
 
   const moneyTokens =
     normalized.match(
-      /[0-9]{1,3}(?:[.,][0-9]{3})*[.,][0-9]{1,2}|[0-9]{1,6}\.[0-9]{1,2}|[0-9]{1,6},[0-9]{1,2}|[0-9]{1,6}/g,
+      /[0-9]{1,3}(?:[.,][0-9]{3})*[.,][0-9]{1,2}|[0-9]{1,6}\.[0-9]{1,2}|[0-9]{1,6},[0-9]{1,2}/g,
     ) ?? [];
   const largestAmount = moneyTokens
     .map((m) => parseMoney(m))
@@ -1063,13 +1072,17 @@ function fallbackParseEmailInvoiceFromText(
     .filter((n) => Number.isFinite(n) && n > 0)
     .reduce((max, cur) => (cur > max ? cur : max), 0);
 
+  const summaryBaseParsed = parseMoney(totalTripleMatch?.[1]);
+  const summaryIvaParsed = parseMoney(totalTripleMatch?.[2]);
+  const summaryTotalParsed = parseMoney(totalTripleMatch?.[3]);
+
   let totalParsed =
+    summaryTotalParsed ||
     parseMoney(totalLabelMatch?.[1]) ||
     parseMoney(totalMatch?.[1]) ||
-    largestEuroTagged ||
-    largestAmount;
-  const baseParsed = parseMoney(baseMatch?.[1]);
-  let ivaParsed = parseMoney(ivaMatch?.[1]);
+    largestEuroTagged;
+  const baseParsed = summaryBaseParsed || parseMoney(baseMatch?.[1]);
+  let ivaParsed = summaryIvaParsed || parseMoney(ivaMatch?.[1]);
   if (totalParsed <= 0 && baseParsed > 0 && ivaParsed > 0) {
     totalParsed = Math.round((baseParsed + ivaParsed) * 100) / 100;
   }
