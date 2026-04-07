@@ -434,18 +434,39 @@ async function createQuarterlySheets(
 
 // ─── Meat Monthly Sheet ───────────────────────────────────────────────────────
 
-const MEAT_VENDORS = ["La Portenia", "Es Cuco"];
+type MeatVendorName = "La Portenia" | "Es Cuco";
+const MEAT_VENDOR_SHEETS: readonly { vendor: MeatVendorName; sheet: string }[] = [
+  { vendor: "La Portenia", sheet: "Meat_La_Portenia" },
+  { vendor: "Es Cuco", sheet: "Meat_Es_Cuco" },
+];
 const MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 function isMeatVendor(vendor: string): boolean {
-  const lv = vendor.toLowerCase();
-  return lv.includes("porteni") || lv.includes("cuco");
+  const lv = String(vendor ?? "").toLowerCase();
+  return (
+    lv.includes("porteni") ||
+    lv.includes("rapolteni") ||
+    lv.includes("lapolteni") ||
+    lv.includes("cuco") ||
+    lv.includes("coco") ||
+    lv.includes("escoco") ||
+    lv.includes("es cuco")
+  );
 }
 
 function normalizeMeatVendor(vendor: string): string {
-  const lv = vendor.toLowerCase();
-  if (lv.includes("porteni")) return "La Portenia";
-  if (lv.includes("cuco"))    return "Es Cuco";
+  const lv = String(vendor ?? "").toLowerCase();
+  if (lv.includes("porteni") || lv.includes("rapolteni") || lv.includes("lapolteni")) {
+    return "La Portenia";
+  }
+  if (
+    lv.includes("cuco") ||
+    lv.includes("coco") ||
+    lv.includes("escoco") ||
+    lv.includes("es cuco")
+  ) {
+    return "Es Cuco";
+  }
   return vendor;
 }
 
@@ -474,8 +495,85 @@ function buildMeatHeader(): string[] {
   return cols;
 }
 
-interface MeatAggKey { vendor: string; cutName: string }
 interface MeatMonthData { kg: number; eur: number }
+
+function buildMeatSheetDataRows(
+  aggMap: Map<string, MeatMonthData[]>,
+  vendorFilter?: MeatVendorName,
+): any[][] {
+  const dataRows: any[][] = [];
+  const sortedKeys = Array.from(aggMap.keys())
+    .filter((key) => {
+      if (!vendorFilter) return true;
+      const [vendor] = key.split("|||");
+      return vendor === vendorFilter;
+    })
+    .sort((a, b) => {
+      const [vA, cA] = a.split("|||");
+      const [vB, cB] = b.split("|||");
+      const vendorOrder = (v: string) => (v === "La Portenia" ? 0 : 1);
+      if (vendorOrder(vA) !== vendorOrder(vB)) return vendorOrder(vA) - vendorOrder(vB);
+      return cA.localeCompare(cB);
+    });
+
+  for (const key of sortedKeys) {
+    const [vendor, cutName] = key.split("|||");
+    const months = aggMap.get(key)!;
+    const row: any[] = [vendor, cutName];
+    let totalKg = 0;
+    let totalEur = 0;
+    for (const m of months) {
+      row.push(Math.round(m.kg * 1000) / 1000);
+      row.push(Math.round(m.eur * 100) / 100);
+      totalKg += m.kg;
+      totalEur += m.eur;
+    }
+    row.push(Math.round(totalKg * 1000) / 1000);
+    row.push(Math.round(totalEur * 100) / 100);
+    dataRows.push(row);
+  }
+
+  return dataRows;
+}
+
+async function rewriteMeatSheet(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetTitle: string,
+  headerRow: string[],
+  dataRows: any[][],
+): Promise<void> {
+  const ensured = await ensureSheetExists(spreadsheetId, sheetTitle, accessToken, headerRow);
+  if (!ensured) {
+    throw new Error(`${sheetTitle} sheet could not be created`);
+  }
+
+  const sheetData = [headerRow, ...dataRows];
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, "A:AZ")}:clear`;
+  await fetch(clearUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+  });
+
+  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, "A1")}?valueInputOption=USER_ENTERED`;
+  const writeRes = await fetch(writeUrl, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ values: sheetData }),
+  });
+  if (!writeRes.ok) throw new Error(`${sheetTitle} write error: ${await writeRes.text()}`);
+
+  const sheetId = await getSheetIdByTitle(spreadsheetId, sheetTitle, accessToken);
+  if (sheetId != null && sheetData.length > 0) {
+    const nCols = sheetData.reduce((m, r) => Math.max(m, r.length), 0);
+    await applyThinTextFormatToGridRange(spreadsheetId, accessToken, sheetId, {
+      startRowIndex: 0,
+      endRowIndex: sheetData.length,
+      startColumnIndex: 0,
+      endColumnIndex: Math.max(nCols, 1),
+    });
+  }
+}
 
 /**
  * Update (incremental) the Meat_Monthly sheet with new invoice items.
@@ -502,11 +600,6 @@ export async function updateMeatMonthlySheet(
   }
 
   const meatHeader = buildMeatHeader();
-  const ensured = await ensureSheetExists(spreadsheetId, SHEET, accessToken, meatHeader);
-  if (!ensured) {
-    console.warn("⚠️  Meat_Monthly sheet could not be created; skipping meat pivot update");
-    return;
-  }
 
   // ── 1. Read existing sheet data ────────────────────────────────────────────
   const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(SHEET, "A:AZ")}`;
@@ -562,64 +655,16 @@ export async function updateMeatMonthlySheet(
     }
   }
 
-  // ── 4. Build sheet rows ────────────────────────────────────────────────────
-  const headerRow = buildMeatHeader();
-  const dataRows: any[][] = [];
+  // ── 4. Rewrite combined + per-vendor sheets ────────────────────────────────
+  const combinedRows = buildMeatSheetDataRows(aggMap);
+  await rewriteMeatSheet(accessToken, spreadsheetId, SHEET, meatHeader, combinedRows);
+  console.log(`✅ Meat_Monthly updated: ${combinedRows.length} cut rows across ${meatInvoices.length} invoices`);
 
-  // Sort: La Portenia first, then Es Cuco; alphabetical within vendor
-  const sortedKeys = Array.from(aggMap.keys()).sort((a, b) => {
-    const [vA, cA] = a.split("|||");
-    const [vB, cB] = b.split("|||");
-    const vendorOrder = (v: string) => v === "La Portenia" ? 0 : 1;
-    if (vendorOrder(vA) !== vendorOrder(vB)) return vendorOrder(vA) - vendorOrder(vB);
-    return cA.localeCompare(cB);
-  });
-
-  for (const key of sortedKeys) {
-    const [vendor, cutName] = key.split("|||");
-    const months = aggMap.get(key)!;
-    const row: any[] = [vendor, cutName];
-    let totalKg = 0, totalEur = 0;
-    for (const m of months) {
-      row.push(Math.round(m.kg * 1000) / 1000);
-      row.push(Math.round(m.eur * 100) / 100);
-      totalKg  += m.kg;
-      totalEur += m.eur;
-    }
-    row.push(Math.round(totalKg * 1000) / 1000);
-    row.push(Math.round(totalEur * 100) / 100);
-    dataRows.push(row);
+  for (const target of MEAT_VENDOR_SHEETS) {
+    const vendorRows = buildMeatSheetDataRows(aggMap, target.vendor);
+    await rewriteMeatSheet(accessToken, spreadsheetId, target.sheet, meatHeader, vendorRows);
+    console.log(`✅ ${target.sheet} updated: ${vendorRows.length} cut rows`);
   }
-
-  const sheetData = [headerRow, ...dataRows];
-
-  // ── 5. Clear and rewrite sheet ─────────────────────────────────────────────
-  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(SHEET, "A:AZ")}:clear`;
-  await fetch(clearUrl, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-  });
-
-  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(SHEET, "A1")}?valueInputOption=USER_ENTERED`;
-  const writeRes = await fetch(writeUrl, {
-    method: "PUT",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ values: sheetData }),
-  });
-  if (!writeRes.ok) throw new Error(`Meat_Monthly write error: ${await writeRes.text()}`);
-
-  const meatSheetId = await getSheetIdByTitle(spreadsheetId, SHEET, accessToken);
-  if (meatSheetId != null && sheetData.length > 0) {
-    const nCols = sheetData.reduce((m, r) => Math.max(m, r.length), 0);
-    await applyThinTextFormatToGridRange(spreadsheetId, accessToken, meatSheetId, {
-      startRowIndex: 0,
-      endRowIndex: sheetData.length,
-      startColumnIndex: 0,
-      endColumnIndex: Math.max(nCols, 1),
-    });
-  }
-
-  console.log(`✅ Meat_Monthly updated: ${dataRows.length} cut rows across ${meatInvoices.length} invoices`);
 }
 
 /**

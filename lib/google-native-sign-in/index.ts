@@ -7,6 +7,9 @@ import * as WebStub from "./web-stub";
 export const NATIVE_GOOGLE_SIGNIN_UNAVAILABLE = "NATIVE_GOOGLE_SIGNIN_UNAVAILABLE";
 
 type NativeImpl = typeof import("./native-impl");
+type ConfigureOptions = {
+  iosClientId?: string;
+};
 
 let nativeImpl: NativeImpl | null | undefined;
 
@@ -43,8 +46,13 @@ function getNativeImpl(): NativeImpl | null {
   return nativeImpl;
 }
 
-export function configureGoogleSignInForGmail(webClientId: string) {
-  getNativeImpl()?.configureGoogleSignInForGmail(webClientId);
+export async function configureGoogleSignInForGmail(
+  webClientId: string,
+  options?: ConfigureOptions,
+) {
+  const impl = getNativeImpl();
+  if (!impl) return;
+  await impl.configureGoogleSignInForGmail(webClientId, options);
 }
 
 export async function signInWithGoogleForGmailAndSheets(): Promise<{

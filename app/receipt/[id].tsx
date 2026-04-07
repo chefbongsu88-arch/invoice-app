@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import * as FileSystem from "expo-file-system/legacy";
@@ -7,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,13 +16,16 @@ import {
   View,
 } from "react-native";
 
+import { APP_RECEIPT_VENDOR } from "@/constants/app-typography";
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
 import { getApiBaseUrl } from "@/constants/oauth";
-import { displayInvoiceNumber } from "@/lib/invoice-display";
+import { GMAIL_TOKEN_KEY } from "@/lib/gmail-oauth";
+import { displayInvoiceNumber, formatInvoiceDateLongEn } from "@/lib/invoice-display";
 import { getSheetsExportTarget } from "@/lib/sheets-settings";
+import { getTrpcMutationMessage } from "@/lib/trpc-error-message";
 import { trpc } from "@/lib/trpc";
 import type { Invoice } from "@/shared/invoice-types";
 
@@ -117,6 +122,16 @@ export default function ReceiptDetailScreen() {
         }
       }
 
+      let gmailReceiptFetch:
+        | { userAccessToken: string; messageId: string }
+        | undefined;
+      if (invoice.source === "email" && invoice.emailId && !imageBase64) {
+        const gmailTok = (await AsyncStorage.getItem(GMAIL_TOKEN_KEY))?.trim();
+        if (gmailTok) {
+          gmailReceiptFetch = { userAccessToken: gmailTok, messageId: invoice.emailId };
+        }
+      }
+
       const result = await exportMutation.mutateAsync({
         spreadsheetId,
         sheetName,
@@ -136,6 +151,8 @@ export default function ReceiptDetailScreen() {
             notes: invoice.notes ?? "",
             items: invoice.items,
             imageUrl: imageBase64 ? `data:image/jpeg;base64,${imageBase64}` : "",
+            gmailMessageId: invoice.emailId ?? undefined,
+            ...(gmailReceiptFetch ? { gmailReceiptFetch } : {}),
           },
         ],
         automateSheets: true,
@@ -169,10 +186,13 @@ export default function ReceiptDetailScreen() {
       });
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      if (result.receiptImageMissing && invoice.imageUri) {
+      if (
+        result.receiptImageMissing &&
+        (invoice.imageUri || (invoice.source === "email" && invoice.emailId))
+      ) {
         Alert.alert(
-          "Exported without image",
-          "The row was added to your Google Spreadsheet, but the receipt photo could not be uploaded. Invoice details are still saved.",
+          "Exported without receipt file",
+          "The row was added to your Google Spreadsheet, but the receipt image or PDF could not be attached. Invoice details are still saved.",
           [{ text: "OK" }],
         );
       } else {
@@ -180,7 +200,11 @@ export default function ReceiptDetailScreen() {
       }
     } catch (err) {
       console.error("[Export] Error:", err);
-      Alert.alert("Export Failed", "Could not export to Google Sheets. Check your connection and spreadsheet ID.");
+      const detail = getTrpcMutationMessage(
+        err,
+        "Could not export to Google Sheets. Check your connection and spreadsheet ID.",
+      );
+      Alert.alert("Export Failed", detail.slice(0, 600));
     } finally {
       setExporting(false);
     }
@@ -233,9 +257,22 @@ export default function ReceiptDetailScreen() {
             <Text style={[styles.sourceBadgeText, { color: sourceColor }]}>{sourceLabel}</Text>
           </View>
           {invoice.exportedToSheets && (
-            <View style={[styles.exportedBadge, { backgroundColor: colors.success + "20" }]}>
-              <IconSymbol name="checkmark.circle.fill" size={14} color={colors.success} />
-              <Text style={[styles.exportedText, { color: colors.success }]}>Exported to Sheets</Text>
+            <View
+              style={[
+                styles.exportedBadge,
+                {
+                  backgroundColor: colors.success + "22",
+                  borderColor: colors.success + "66",
+                },
+              ]}
+            >
+              <View style={[styles.exportedBadgeIconWrap, { backgroundColor: colors.success + "35" }]}>
+                <IconSymbol name="checkmark.circle.fill" size={16} color={colors.success} />
+              </View>
+              <View style={styles.exportedBadgeTextCol}>
+                <Text style={[styles.exportedText, { color: colors.success }]}>Exported to Sheets</Text>
+                <Text style={[styles.exportedSubtext, { color: colors.muted }]}>Row is in your spreadsheet</Text>
+              </View>
             </View>
           )}
         </View>
@@ -274,15 +311,7 @@ export default function ReceiptDetailScreen() {
         {/* Details */}
         <View style={[styles.detailsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <DetailRow label="Invoice Number" value={displayInvoiceNumber(invoice.invoiceNumber)} />
-          <DetailRow
-            label="Date"
-            value={new Date(invoice.date).toLocaleDateString("en-US", {
-              weekday: "long",
-              day: "2-digit",
-              month: "long",
-              year: "numeric",
-            })}
-          />
+          <DetailRow label="Date" value={formatInvoiceDateLongEn(invoice.date)} />
           <DetailRow label="Category" value={invoice.category} accent={colors.primary} />
           <DetailRow label="Currency" value={invoice.currency} />
           {invoice.emailSubject && (
@@ -313,43 +342,74 @@ export default function ReceiptDetailScreen() {
           <View style={[styles.hintBox, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             <Text style={[styles.hintTitle, { color: colors.foreground }]}>Receipt photo</Text>
             <Text style={[styles.hintBody, { color: colors.muted }]}>
-              This invoice has no photo saved in the app (for example, it was entered manually or from email). To see a picture in Google Sheets, export from a camera scan so the server can attach an image to the Receipt column when hosting is configured.
+              {invoice.source === "email"
+                ? "There is no image stored in the app for this email invoice. When you export to Google Sheets while signed into Gmail in the app, the server can attach the PDF or first image from the message to the Receipt column (link or preview)."
+                : "This invoice has no photo saved in the app (for example, it was entered manually). Use a camera scan to store a picture here, or export a camera receipt so the Receipt column in Sheets can show a preview."}
             </Text>
           </View>
         )}
 
-        {/* Export Button */}
-        <Pressable
-          onPress={() => handleExport()}
-          disabled={exporting || invoice.exportedToSheets}
-          style={({ pressed }) => [
-            styles.exportBtn,
+        {/* Google Sheets — card CTA for comfortable tapping */}
+        <View
+          style={[
+            styles.exportSection,
             {
-              backgroundColor: invoice.exportedToSheets
-                ? colors.success
-                : colors.primary,
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
             },
-            pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
-            (exporting || invoice.exportedToSheets) && { opacity: 0.7 },
           ]}
         >
-          {exporting ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <IconSymbol
-              name={invoice.exportedToSheets ? "checkmark.circle.fill" : "tablecells"}
-              size={20}
-              color="#fff"
-            />
-          )}
-          <Text style={styles.exportBtnText}>
-            {exporting
-              ? "Exporting..."
-              : invoice.exportedToSheets
-              ? "Already Exported"
-              : "Export to Google Sheets"}
+          <Text style={[styles.exportSectionTitle, { color: colors.foreground }]}>Google Sheets</Text>
+          <Text style={[styles.exportSectionHint, { color: colors.muted }]}>
+            {invoice.exportedToSheets
+              ? "This invoice is marked exported — your spreadsheet should already have this row."
+              : "Send this invoice to your main tracker: amounts, notes, and a receipt image or PDF link when available."}
           </Text>
-        </Pressable>
+          <Pressable
+            onPress={() => handleExport()}
+            disabled={exporting || invoice.exportedToSheets}
+            accessibilityRole="button"
+            accessibilityLabel={
+              invoice.exportedToSheets
+                ? "Already exported to Google Sheets"
+                : "Export invoice to Google Sheets"
+            }
+            style={({ pressed }) => [
+              styles.exportBtn,
+              !invoice.exportedToSheets && !exporting && styles.exportBtnElevated,
+              {
+                backgroundColor: invoice.exportedToSheets ? colors.success : colors.primary,
+              },
+              pressed &&
+                !invoice.exportedToSheets &&
+                !exporting && { opacity: 0.92, transform: [{ scale: 0.98 }] },
+              exporting && { opacity: 0.85 },
+              invoice.exportedToSheets && { opacity: 1 },
+            ]}
+          >
+            {exporting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <IconSymbol
+                name={invoice.exportedToSheets ? "checkmark.circle.fill" : "square.and.arrow.up"}
+                size={22}
+                color="#fff"
+              />
+            )}
+            <View style={styles.exportBtnLabelCol}>
+              <Text style={styles.exportBtnText}>
+                {exporting
+                  ? "Exporting…"
+                  : invoice.exportedToSheets
+                    ? "Exported to Sheets"
+                    : "Export to Google Sheets"}
+              </Text>
+              {!invoice.exportedToSheets && !exporting && (
+                <Text style={styles.exportBtnSubtext}>Tap to add a row to your spreadsheet</Text>
+              )}
+            </View>
+          </Pressable>
+        </View>
 
 
       </ScrollView>
@@ -375,12 +435,23 @@ const styles = StyleSheet.create({
   exportedBadge: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 10,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+    paddingVertical: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    maxWidth: "100%",
   },
-  exportedText: { fontSize: 13, fontWeight: "600" },
+  exportedBadgeIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  exportedBadgeTextCol: { flex: 1, gap: 2, minWidth: 0 },
+  exportedText: { fontSize: 14, fontWeight: "700" },
+  exportedSubtext: { fontSize: 11, fontWeight: "500" },
   vendorName: { fontSize: 28, fontWeight: "700" },
   amountCard: {
     borderRadius: 16,
@@ -390,7 +461,7 @@ const styles = StyleSheet.create({
   amountRow: { flexDirection: "row", justifyContent: "space-around", alignItems: "center" },
   amountItem: { alignItems: "center", flex: 1 },
   amountLabel: { fontSize: 11, fontWeight: "500", marginBottom: 4 },
-  amountValue: { fontSize: 20, fontWeight: "700" },
+  amountValue: { fontSize: 18, fontWeight: "700", lineHeight: 22 },
   amountDivider: { width: 1, height: 40 },
   detailsCard: { borderRadius: 14, borderWidth: 1, overflow: "hidden" },
   detailRow: {
@@ -418,16 +489,36 @@ const styles = StyleSheet.create({
   },
   hintTitle: { fontSize: 15, fontWeight: "600" },
   hintBody: { fontSize: 13, lineHeight: 19 },
+  exportSection: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    gap: 12,
+  },
+  exportSectionTitle: { fontSize: 17, fontWeight: "700", letterSpacing: -0.3 },
+  exportSectionHint: { fontSize: 13, lineHeight: 19, fontWeight: "500" },
   exportBtn: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
+    justifyContent: "flex-start",
+    gap: 14,
     paddingVertical: 16,
+    paddingHorizontal: 18,
     borderRadius: 14,
-    marginTop: 8,
+    minHeight: 56,
   },
-  exportBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  exportBtnElevated:
+    Platform.OS === "ios"
+      ? {
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.22,
+          shadowRadius: 8,
+        }
+      : { elevation: 5 },
+  exportBtnLabelCol: { flex: 1, gap: 3, minWidth: 0 },
+  exportBtnText: { color: "#fff", fontSize: 17, fontWeight: "700", letterSpacing: -0.2 },
+  exportBtnSubtext: { color: "rgba(255,255,255,0.88)", fontSize: 12, fontWeight: "600" },
   connectHint: { fontSize: 13, textAlign: "center", lineHeight: 18 },
   notFound: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
   notFoundText: { fontSize: 16 },

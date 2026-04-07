@@ -6,7 +6,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
   Image,
   Platform,
   Pressable,
@@ -17,6 +16,7 @@ import {
   View,
 } from "react-native";
 
+import { APP_SCAN_STEP_TITLE } from "@/constants/app-typography";
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
@@ -29,8 +29,6 @@ import {
 } from "@/shared/invoice-types";
 import { getOcrAlertForUser } from "@/lib/ocr-user-message";
 import { trpc } from "@/lib/trpc";
-
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 /** iOS 15+ ImagePicker defaults to `.current` (keeps HEIC). Use `.compatible` so library/camera return JPEG when possible — avoids server sharp/heic issues. */
 const IOS_PICKER_HEIC_SAFE =
@@ -751,7 +749,7 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   captureContainer: { gap: 20 },
-  captureTitle: { fontSize: 26, fontWeight: "700" },
+  captureTitle: APP_SCAN_STEP_TITLE,
   captureSubtitle: { fontSize: 14, lineHeight: 20, marginTop: -12 },
   captureArea: {
     minHeight: 240,
@@ -854,6 +852,6 @@ const styles = StyleSheet.create({
   customCategoryBtnText: { fontSize: 13, fontWeight: "600" },
   doneContainer: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
   doneIcon: { width: 100, height: 100, borderRadius: 28, alignItems: "center", justifyContent: "center" },
-  doneTitle: { fontSize: 26, fontWeight: "700" },
+  doneTitle: APP_SCAN_STEP_TITLE,
   doneDesc: { fontSize: 14, textAlign: "center", lineHeight: 22 },
 });

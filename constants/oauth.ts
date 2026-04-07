@@ -79,18 +79,20 @@ export function applyApiUrlFromAppSettings(parsed: { apiBaseUrlOverride?: unknow
 }
 
 type TrpcRecreateHandler = () => void;
-const trpcRecreateHandlers: TrpcRecreateHandler[] = [];
+/** Single subscriber — RootLayout only. Avoids duplicate handlers (Strict Mode / remounts) stacking and re-running replace many times. */
+let trpcRecreateHandler: TrpcRecreateHandler | null = null;
 
 export function onTrpcClientShouldRecreate(handler: TrpcRecreateHandler) {
-  trpcRecreateHandlers.push(handler);
+  trpcRecreateHandler = handler;
   return () => {
-    const i = trpcRecreateHandlers.indexOf(handler);
-    if (i >= 0) trpcRecreateHandlers.splice(i, 1);
+    if (trpcRecreateHandler === handler) {
+      trpcRecreateHandler = null;
+    }
   };
 }
 
 export function requestTrpcClientRecreate() {
-  trpcRecreateHandlers.forEach((h) => h());
+  trpcRecreateHandler?.();
 }
 
 /** Force API host to production Railway (ignores user override until next apply). */

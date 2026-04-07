@@ -42,7 +42,7 @@ export default function TabLayout() {
         /** Equal width per tab so the bar doesn’t leave a dead zone on the right (iOS). */
         tabBarItemStyle: Platform.OS === "web" ? undefined : { flex: 1 },
         tabBarLabelStyle: {
-          fontSize: 10,
+          fontSize: 9,
           fontWeight: "600",
         },
       }}
@@ -51,43 +51,42 @@ export default function TabLayout() {
         name="index"
         options={{
           title: "Home",
-          tabBarIcon: ({ color }) => <IconSymbol size={26} name="house.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="house.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="receipts"
         options={{
           title: "Receipts",
-          tabBarIcon: ({ color }) => <IconSymbol size={26} name="doc.text.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="doc.text.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="scan"
         options={{
           title: "Scan",
-          tabBarIcon: ({ color }) => <IconSymbol size={30} name="camera.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="camera.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="statistics"
         options={{
           title: "Stats",
-          tabBarIcon: ({ color }) => <IconSymbol size={26} name="chart.bar.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="chart.bar.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
           title: "Settings",
-          tabBarIcon: ({ color }) => <IconSymbol size={26} name="gearshape.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="gearshape.fill" color={color} />,
         }}
       />
-      {/* Route stays available via router.push("/(tabs)/gmail"); hide tab so Scan is never crowded off the bar */}
       <Tabs.Screen
         name="gmail"
         options={{
-          title: "Gmail",
-          tabBarButton: () => null,
+          title: "gmail",
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="envelope.fill" color={color} />,
         }}
       />
     </Tabs>

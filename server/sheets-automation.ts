@@ -64,6 +64,7 @@ export function encodeValuesRange(sheetName: string, a1: string): string {
 
 /** Columns A–M for tracker-style sheets (13 columns). */
 export const TRACKER_COLUMN_COUNT = 13;
+let thinFormatBackoffUntilMs = 0;
 
 /** 0-based column index from A1 letters (A=0, …, Z=25, AA=26, …). */
 export function a1ColumnLettersToIndex(letters: string): number {
@@ -131,6 +132,10 @@ export async function applyThinTextFormatToGridRange(
     endColumnIndex: number;
   },
 ): Promise<void> {
+  const now = Date.now();
+  if (thinFormatBackoffUntilMs > now) {
+    return;
+  }
   const batchRes = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
     {
@@ -161,9 +166,21 @@ export async function applyThinTextFormatToGridRange(
     },
   );
   if (!batchRes.ok) {
+    const errText = await batchRes.text();
+    // Avoid log storms + repeated 429 calls (Google write quota per minute/user).
+    if (
+      batchRes.status === 429 ||
+      /RATE_LIMIT_EXCEEDED|RESOURCE_EXHAUSTED|write requests per minute per user/i.test(errText)
+    ) {
+      thinFormatBackoffUntilMs = Date.now() + 5 * 60 * 1000;
+      console.warn(
+        "[Sheets] thin-text format skipped for 5m due to write quota limit (429).",
+      );
+      return;
+    }
     console.warn(
       "[Sheets] applyThinTextFormatToGridRange failed:",
-      await batchRes.text(),
+      errText,
     );
   }
 }

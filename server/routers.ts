@@ -4,6 +4,7 @@ import { COOKIE_NAME } from "../shared/const.js";
 import {
   DEFAULT_MAIN_TRACKER_SHEET_NAME,
   receiptImageSheetsFormula,
+  receiptPdfSheetsHyperlinkFormula,
 } from "../shared/sheets-defaults.js";
 import { isMeatCategory } from "../shared/invoice-types.js";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -22,7 +23,10 @@ import {
   FORGE_OCR_LADDER,
 } from "./_core/receipt-image-forge";
 import { parseReceiptWithClaude } from "./_core/receipt-claude";
-import { parseReceiptWithGoogleGemini } from "./_core/receipt-gemini-google";
+import {
+  parseInvoicePdfWithGoogleGemini,
+  parseReceiptWithGoogleGemini,
+} from "./_core/receipt-gemini-google";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { uploadImageToStorage } from "./image-upload-storage";
@@ -101,11 +105,213 @@ function normalizeAmountKeyForDuplicate(val: unknown): string {
   return Number.isFinite(n) ? n.toFixed(2) : "0.00";
 }
 
+function normalizeVendorKeyForDuplicate(vendor: string): string {
+  const raw = String(vendor ?? "").trim().toLowerCase();
+  const compact = raw.replace(/[\s'".,;:()_-]+/g, "");
+  // Keep aliases in one bucket so camera/email variants collapse to the same business.
+  if (compact.includes("porteni") || compact.includes("rapolteni") || compact.includes("lapolteni")) {
+    return "la_portenia";
+  }
+  if (compact.includes("cuco") || compact.includes("coco") || compact.includes("escoco")) {
+    return "es_cuco";
+  }
+  return compact;
+}
+
+function normalizeInvoiceNumberKey(invoiceNumber: string): string {
+  return String(invoiceNumber ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\-_/.:]+/g, "");
+}
+
 function duplicateRowKey(vendor: string, dateRaw: string, amountRaw: unknown): string {
-  const v = String(vendor ?? "").trim().toLowerCase();
+  const v = normalizeVendorKeyForDuplicate(vendor);
   const d = normalizeDateKeyForDuplicate(dateRaw);
   const a = normalizeAmountKeyForDuplicate(amountRaw);
   return `${v}|${d}|${a}`;
+}
+
+type GmailFetchResult = {
+  messages: {
+    id: string;
+    subject: string;
+    from: string;
+    date: string;
+    internalDate?: string;
+    bodyText: string;
+    snippet: string;
+  }[];
+  nextPageToken?: string;
+};
+
+const GMAIL_FETCH_CACHE_MS = 12_000;
+const gmailFetchCache = new Map<string, { expiresAt: number; result: GmailFetchResult }>();
+const gmailFetchInflight = new Map<string, Promise<GmailFetchResult>>();
+
+function pruneExpiredGmailFetchCache(nowMs: number) {
+  for (const [k, v] of gmailFetchCache) {
+    if (v.expiresAt <= nowMs) gmailFetchCache.delete(k);
+  }
+}
+
+function decodeGmailBase64UrlToUtf8(raw: string): string {
+  const normalized = String(raw ?? "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  try {
+    return Buffer.from(padded, "base64").toString("utf-8");
+  } catch {
+    return "";
+  }
+}
+
+function decodeGmailBase64UrlToBuffer(raw: string): Buffer | null {
+  const normalized = String(raw ?? "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  try {
+    return Buffer.from(padded, "base64");
+  } catch {
+    return null;
+  }
+}
+
+const GMAIL_RECEIPT_EXPORT_MAX_BYTES = 8 * 1024 * 1024;
+
+type GmailExportAttCandidate = { attachmentId: string; mime: string; priority: number };
+
+type GmailInlinePart = { buffer: Buffer; mime: string; priority: number };
+
+function mimePriorityForGmailExport(mimeRaw: string): number {
+  if (mimeRaw === "application/pdf" || mimeRaw === "application/x-pdf") return 1;
+  if (mimeRaw.startsWith("image/")) {
+    if (mimeRaw.includes("png")) return 5;
+    if (mimeRaw.includes("jpeg") || mimeRaw.includes("jpg")) return 6;
+    if (mimeRaw.includes("webp")) return 7;
+    if (mimeRaw.includes("gif")) return 8;
+    return 9;
+  }
+  if (mimeRaw === "application/octet-stream") return 15;
+  return 100;
+}
+
+/**
+ * First PDF attachment (typical invoice), else first image — for Sheets receipt column.
+ * Handles both Gmail `attachmentId` parts and small inline parts with `body.data` only.
+ */
+async function fetchFirstGmailAttachmentForReceiptExport(
+  userAccessToken: string,
+  messageId: string,
+): Promise<{ buffer: Buffer; mime: string } | null> {
+  const tok = userAccessToken.trim();
+  const mid = messageId.trim();
+  if (!tok || !mid) return null;
+
+  const msgRes = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(mid)}?format=full`,
+    { headers: { Authorization: `Bearer ${tok}` } },
+  );
+  if (!msgRes.ok) {
+    console.warn("[Export] Gmail message fetch for attachment failed:", msgRes.status);
+    return null;
+  }
+  const detail = (await msgRes.json()) as { payload?: any };
+  const idCandidates: GmailExportAttCandidate[] = [];
+  const inlineParts: GmailInlinePart[] = [];
+  const seen = new Set<string>();
+
+  const walk = (part: any) => {
+    for (const child of part?.parts ?? []) {
+      walk(child);
+    }
+    const mimeRaw = String(part?.mimeType ?? "").toLowerCase();
+    const id = String(part?.body?.attachmentId ?? "").trim();
+    const rawData = part?.body?.data;
+
+    if (id) {
+      if (seen.has(id)) return;
+      const priority = mimePriorityForGmailExport(mimeRaw);
+      if (priority >= 100) return;
+      seen.add(id);
+      idCandidates.push({ attachmentId: id, mime: mimeRaw, priority });
+      return;
+    }
+
+    if (!rawData || typeof rawData !== "string") return;
+    const buf = decodeGmailBase64UrlToBuffer(rawData);
+    if (!buf?.length || buf.length < 32 || buf.length > GMAIL_RECEIPT_EXPORT_MAX_BYTES) return;
+
+    let mimeOut = mimeRaw;
+    let priority = mimePriorityForGmailExport(mimeRaw);
+    if (mimeRaw === "application/octet-stream") {
+      mimeOut = detectMimeFromBuffer(buf);
+      priority = mimePriorityForGmailExport(mimeOut);
+    }
+    if (priority >= 100) return;
+    if (
+      mimeOut === "application/pdf" ||
+      mimeOut === "application/x-pdf" ||
+      mimeOut.startsWith("image/")
+    ) {
+      inlineParts.push({ buffer: buf, mime: mimeOut, priority });
+    }
+  };
+
+  if (detail.payload) {
+    walk(detail.payload);
+  }
+  idCandidates.sort((a, b) => a.priority - b.priority);
+
+  for (const c of idCandidates) {
+    const attRes = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(mid)}/attachments/${encodeURIComponent(c.attachmentId)}`,
+      { headers: { Authorization: `Bearer ${tok}` } },
+    );
+    if (!attRes.ok) continue;
+    const att = (await attRes.json()) as { data?: string };
+    const buf = decodeGmailBase64UrlToBuffer(att.data ?? "");
+    if (!buf?.length || buf.length < 32 || buf.length > GMAIL_RECEIPT_EXPORT_MAX_BYTES) continue;
+
+    let mimeOut = c.mime;
+    if (mimeOut === "application/octet-stream") {
+      mimeOut = detectMimeFromBuffer(buf);
+    }
+    if (
+      mimeOut === "application/pdf" ||
+      mimeOut === "application/x-pdf" ||
+      mimeOut.startsWith("image/")
+    ) {
+      return { buffer: buf, mime: mimeOut };
+    }
+  }
+
+  inlineParts.sort(
+    (a, b) => a.priority - b.priority || b.buffer.length - a.buffer.length,
+  );
+  const best = inlineParts[0];
+  if (best) {
+    console.log(
+      `[Export] Using inline Gmail part (no attachmentId): ${best.mime}, ${best.buffer.length} bytes`,
+    );
+    return { buffer: best.buffer, mime: best.mime };
+  }
+  return null;
+}
+
+function stripHtmlToText(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 
 /** Strip `data:image/...;base64,` prefix if present (some clients send full data URLs). */
@@ -170,7 +376,11 @@ function extractLlmMessageText(content: unknown): string {
 function parseMoneyNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
-    let s = value.replace(/€/g, "").replace(/\s/g, "").trim();
+    let s = value
+      .replace(/€/g, "")
+      .replace(/[·∙]/g, ".")
+      .replace(/\s/g, "")
+      .trim();
     if (!s) return 0;
     // Spanish/EU: thousands with dot, decimals with comma (e.g. 1.234,56 or 114,32)
     if (/^\d{1,3}(?:\.\d{3})*,\d{1,2}$/.test(s) || /^\d+,\d{1,2}$/.test(s)) {
@@ -257,6 +467,149 @@ function normalizeReceiptDateToIso(raw: unknown): string {
   }
 
   return "";
+}
+
+/** Gmail `Date:` header → YYYY-MM-DD (UTC calendar day). */
+function dateIsoFromEmailDateHeader(headerDate: string): string {
+  const s = String(headerDate ?? "").trim();
+  if (!s) return "";
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return "";
+  const d = new Date(t);
+  const y = d.getUTCFullYear();
+  const mo = d.getUTCMonth() + 1;
+  const day = d.getUTCDate();
+  if (y < 1990 || y > 2110) return "";
+  return `${y}-${padDatePart(mo)}-${padDatePart(day)}`;
+}
+
+/**
+ * Map alternate LLM keys (ES/EN) and header fallbacks — many models return `total` not `totalAmount`.
+ */
+function normalizeEmailInvoiceModelFields(
+  raw: Record<string, unknown>,
+  opts: { headerFrom: string; headerDate: string },
+): {
+  totalAmount: number;
+  ivaAmount: number;
+  tipAmount: number;
+  vendor: string;
+  dateIso: string;
+  invoiceNumber: string;
+  category: string;
+} {
+  const nested =
+    raw.amounts && typeof raw.amounts === "object" && !Array.isArray(raw.amounts)
+      ? (raw.amounts as Record<string, unknown>)
+      : null;
+  const flat = nested ? { ...raw, ...nested } : raw;
+
+  const merged: Record<string, unknown> = {
+    ...flat,
+    fecha:
+      flat.fecha ??
+      flat.date ??
+      flat.issueDate ??
+      flat.fechaFactura ??
+      flat.fecha_factura ??
+      flat.fechaEmision,
+    date: flat.date ?? flat.fecha ?? flat.issueDate ?? flat.fechaFactura,
+  };
+
+  const dateIso =
+    resolveReceiptDateIso(merged) ||
+    normalizeReceiptDateToIso(flat.date) ||
+    normalizeReceiptDateToIso(flat.fecha) ||
+    normalizeReceiptDateToIso(flat.issueDate) ||
+    dateIsoFromEmailDateHeader(opts.headerDate) ||
+    new Date().toISOString().split("T")[0];
+
+  const totalKeys = [
+    "totalAmount",
+    "total",
+    "importeTotal",
+    "importe_total",
+    "totalEUR",
+    "total_eur",
+    "amount",
+    "grandTotal",
+    "grand_total",
+    "importe",
+    "precioTotal",
+    "totalConIva",
+    "total_con_iva",
+    "amountDue",
+    "amount_due",
+  ];
+  let totalAmount = 0;
+  for (const k of totalKeys) {
+    if (flat[k] !== undefined && flat[k] !== null && String(flat[k]).trim() !== "") {
+      const n = parseMoneyNumber(flat[k]);
+      if (n > 0) {
+        totalAmount = n;
+        break;
+      }
+    }
+  }
+
+  const ivaKeys = [
+    "ivaAmount",
+    "iva",
+    "vat",
+    "tax",
+    "cuotaIva",
+    "cuota_iva",
+    "iva_total",
+    "importeIva",
+    "importe_iva",
+  ];
+  let ivaAmount = 0;
+  for (const k of ivaKeys) {
+    if (flat[k] !== undefined && flat[k] !== null && String(flat[k]).trim() !== "") {
+      ivaAmount = parseMoneyNumber(flat[k]);
+      break;
+    }
+  }
+
+  const tipKeys = ["tipAmount", "tip", "propina"];
+  let tipAmount = 0;
+  for (const k of tipKeys) {
+    if (flat[k] !== undefined && flat[k] !== null && String(flat[k]).trim() !== "") {
+      tipAmount = parseMoneyNumber(flat[k]);
+      break;
+    }
+  }
+
+  const vendor = String(
+    flat.vendor ??
+      flat.merchant ??
+      flat.company ??
+      flat.supplier ??
+      flat.store ??
+      opts.headerFrom ??
+      "",
+  ).trim();
+
+  const invoiceNumber = String(
+    flat.invoiceNumber ??
+      flat.invoice_number ??
+      flat.numFactura ??
+      flat.num_factura ??
+      flat.number ??
+      "",
+  ).trim();
+
+  const category = String(flat.category ?? "Other").trim() || "Other";
+
+  return {
+    totalAmount,
+    ivaAmount,
+    tipAmount,
+    vendor,
+    dateIso,
+    invoiceNumber,
+    category,
+  };
 }
 
 /**
@@ -401,12 +754,20 @@ async function getGoogleAccessToken(): Promise<string> {
       "Failed to authenticate with Google Sheets. Check GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN on the server (e.g. Railway).";
     try {
       const j = JSON.parse(err) as { error?: string; error_description?: string };
+      const detail =
+        typeof j.error_description === "string" && j.error_description.trim()
+          ? ` (${j.error_description.trim()})`
+          : "";
       if (j.error === "invalid_grant") {
         message =
-          "Google Sheets login expired (invalid_grant). Create a new refresh token and set GOOGLE_REFRESH_TOKEN in Railway — e.g. revoke app access in Google Account settings, then run your OAuth setup again.";
+          "Google Sheets login expired (invalid_grant). Create a new refresh token and set GOOGLE_REFRESH_TOKEN in Railway — e.g. revoke app access in Google Account settings, then run your OAuth setup again." +
+          detail;
       } else if (j.error === "invalid_client") {
         message =
-          "Google OAuth client is invalid (invalid_client). Verify GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET match the Google Cloud OAuth client.";
+          "Google OAuth client is invalid (invalid_client). Verify GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET match the Google Cloud OAuth client." +
+          detail;
+      } else if (detail) {
+        message += detail;
       }
     } catch {
       /* keep default message */
@@ -416,6 +777,38 @@ async function getGoogleAccessToken(): Promise<string> {
 
   const data = await res.json() as { access_token: string };
   return data.access_token;
+}
+
+/** Maps Sheets v4 JSON errors to a message the mobile app can show (not only server logs). */
+function userFacingMessageFromSheetsApiBody(errText: string): string {
+  try {
+    const j = JSON.parse(errText) as {
+      error?: {
+        code?: number;
+        message?: string;
+        status?: string;
+        details?: Array<{ reason?: string }>;
+      };
+    };
+    const msg = String(j.error?.message ?? "");
+    const status = String(j.error?.status ?? "");
+    const reasons = (j.error?.details ?? []).map((d) => d.reason).filter(Boolean);
+    if (
+      status === "PERMISSION_DENIED" &&
+      (reasons.includes("SERVICE_DISABLED") ||
+        /has not been used|it is disabled|Enable it by visiting/i.test(msg))
+    ) {
+      return (
+        "Google Sheets API is disabled for your Google Cloud project. In Google Cloud Console: APIs & Services → Library → search “Google Sheets API” → Enable (same project as your OAuth client ID). Wait 2–5 minutes, then export again."
+      );
+    }
+    if (msg.length > 0 && msg.length < 450) {
+      return `Google Sheets: ${msg}`;
+    }
+  } catch {
+    /* keep fallback */
+  }
+  return "Failed to export to Google Sheets. Please try again.";
 }
 
 
@@ -504,15 +897,216 @@ Analyze the provided email text and extract invoice information.
 Return ONLY a valid JSON object with these exact keys:
 - invoiceNumber: string (invoice/factura number)
 - vendor: string (sender company/business name)
-- date: string (ISO format YYYY-MM-DD)
+- date: string (ISO format YYYY-MM-DD, European DD/MM/YYYY in source → convert correctly)
 - totalAmount: number (total amount in EUR)
 - ivaAmount: number (IVA/VAT amount in EUR, 0 if not found)
 - tipAmount: number (tip/gratuity amount in EUR, 0 if not found)
-- category: string (one of: "Office Supplies", "Travel & Transport", "Meals & Entertainment", "Utilities", "Professional Services", "Software & Subscriptions", "Equipment", "Marketing", "Other")
+- category: string (one of: "Meat", "Seafood", "Vegetables", "Restaurant", "Gas Station", "Water", "Beverages", "Asian Market", "Caviar", "Truffle", "Organic Farm", "Hardware Store", "Other")
 - subject: string (email subject line)
 - items: array (return empty array [] for email invoices)
 
 Return only the JSON, no markdown, no explanation.`;
+
+function fallbackParseEmailInvoiceFromText(
+  emailText: string,
+  subject?: string,
+  opts?: { headerFrom?: string; headerDate?: string },
+) {
+  const raw = `${subject ?? ""}\n${emailText ?? ""}\n${opts?.headerFrom ?? ""}\n${opts?.headerDate ?? ""}`;
+  /** One line so "TOTAL A PAGAR" and "12,33" on adjacent lines in PDF text still match. */
+  const normalized = raw
+    .replace(/[·∙]/g, ".")
+    .replace(/\u00a0/g, " ")
+    .replace(/\r\n|\r|\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const invMatch =
+    normalized.match(
+      /\b(?:invoice|factura|n[úu]mero(?:\s*de)?\s*factura|n[úu]m(?:ero)?\.?\s*factura|n[oº°]\s*(?:de\s*)?factura)\s*[:#.]?\s*([A-Z0-9][A-Z0-9\-_/]{2,})/i,
+    ) ??
+    normalized.match(/\badjuntamos\s+factura\s+num\s*:\s*([0-9]+)\b/i) ??
+    normalized.match(/\bfactura\s+num\s*:\s*([0-9]+)\b/i) ??
+    normalized.match(/\bfactura\s*[#Nº]\s*([A-Z0-9][A-Z0-9\-_/]{1,})/i) ??
+    normalized.match(/\b(?:invoice|factura)\s*[#:]?\s*([A-Z0-9][A-Z0-9\-_/]{2,})/i) ??
+    normalized.match(/\bn[ºo°]\s*documento\s*[:.]?\s*([A-Z0-9][A-Z0-9\-_/]{3,})\b/i) ??
+    normalized.match(/\bdocumento\s*[:.]?\s*([A-Z0-9][A-Z0-9\-_/]{3,})\b/i) ??
+    normalized.match(/\b([A-Z]{1,4}\-\d{3,}|\d{6,})\b/);
+  const numFacturaOnly = normalized.match(
+    /\bn[oº°]\s*\.?\s*factura\s*:?\s*([0-9]{4,})\b/i,
+  );
+  const serieEmision = normalized.match(
+    /\bserie\s*(?:emis[ií]on|emisi[oó]n)\s*:?\s*([A-Z0-9]{2,})\b/i,
+  );
+  const dateMatch =
+    normalized.match(/\b(\d{4}\-\d{2}\-\d{2})\b/) ??
+    normalized.match(
+      /\bfecha\s*(?:de\s*)?factura\s*:?\s*(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\b/i,
+    ) ??
+    normalized.match(/\bfecha\s*:\s*(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\b/i) ??
+    normalized.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\b/);
+  /**
+   * EU amounts: 12,33 / 1.234,56 — plus PDF text that uses 12.33 (dot decimals) without thousands.
+   */
+  const euMoney =
+    "([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})|[0-9]{1,6}(?:[.,][0-9]{1,2})?|[0-9]{1,3}(?:[.,][0-9]{3})+)";
+  const totalMatch =
+    /** Thermal / ticket printers: "TOTAL: 52,20" */
+    normalized.match(new RegExp(`\\bTOTAL\\s*:\\s*${euMoney}`, "i")) ??
+    normalized.match(new RegExp(`\\bIMPORTE\\s+TOTAL\\s*:\\s*${euMoney}`, "i")) ??
+    normalized.match(new RegExp(`\\btotal\\s+a\\s+pagar\\b\\s*:?\\s*${euMoney}`, "i")) ??
+    normalized.match(
+      new RegExp(
+        `\\b(?:importe\\s+total|total\\s+con\\s+iva|total\\s+iva\\s+incluido|importe\\s+total\\s+con\\s+iva)\\b[^0-9€]{0,48}${euMoney}`,
+        "i",
+      ),
+    ) ??
+    normalized.match(
+      /\b(?:total(?:\s+a\s+pagar)?|importe\s+total|total\s+factura|amount\s+due|importe\s+con\s+iva)\b[^0-9€]{0,48}([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})|[0-9]{1,6}(?:[.,][0-9]{1,2})?)/i,
+    ) ??
+    normalized.match(
+      /\b(?:total|importe)\b[^0-9€]{0,52}€\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})|[0-9]{1,6}(?:[.,][0-9]{1,2})?)/i,
+    ) ??
+    normalized.match(
+      /€\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})|[0-9]{1,6}(?:[.,][0-9]{1,2})?)/,
+    ) ??
+    normalized.match(
+      /([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})|[0-9]{1,6}(?:[.,][0-9]{1,2})?)\s*€/,
+    );
+  /**
+   * Tabular factura PDFs often print totals like:
+   * - TOTAL IVA INCLUIDO    12,33
+   * - TOTAL A PAGAR         12,33
+   * Prefer these exact labels before generic amount heuristics.
+   */
+  const totalLabelMatch =
+    normalized.match(
+      /\b(?:total\s+iva\s+incluido|total\s+a\s+pagar)\b[^0-9€]{0,120}([0-9]{1,6}(?:[.,][0-9]{1,2})?)\b/i,
+    ) ??
+    normalized.match(
+      /\b(?:importe\s+total|total\s+factura)\b[^0-9€]{0,120}([0-9]{1,6}(?:[.,][0-9]{1,2})?)\b/i,
+    );
+  const baseMatch =
+    normalized.match(new RegExp(`\\bBASE\\s*:\\s*${euMoney}`, "i")) ??
+    normalized.match(new RegExp(`\\bbase\\b[^0-9€]{0,24}${euMoney}`, "i")) ??
+    normalized.match(
+      new RegExp(
+        `\\bbase\\s+imponible\\b[^0-9€]{0,40}${euMoney}`,
+        "i",
+      ),
+    );
+  const ivaMatch =
+    normalized.match(new RegExp(`\\b(?:total\\s+iva|iva\\s+total)\\s*:?\\s*${euMoney}`, "i")) ??
+    normalized.match(
+      new RegExp(
+        `\\bcuota\\s*(?:de\\s*)?iva\\b[^0-9€]{0,40}${euMoney}`,
+        "i",
+      ),
+    ) ??
+    normalized.match(
+      /\b(?:cuota\s*(?:de\s*)?iva|cuota\s+iva|iva|vat|tax|impuesto)\b[^0-9€]{0,36}([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{2}|[0-9]{1,6}\.[0-9]{2}|[0-9]{1,6},[0-9]{2}))/i,
+    );
+  const fromMatch = normalized.match(/\bfrom:\s*([^\n<]{3,80})/i);
+  const subjectVendorMatch = String(subject ?? "").match(
+    /\bfactura\s+mensual\s+([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9\s&.'-]{1,48})/i,
+  );
+
+  let dateIso = "";
+  if (dateMatch) {
+    if (dateMatch[1] && /^\d{4}\-\d{2}\-\d{2}$/.test(dateMatch[1])) {
+      dateIso = dateMatch[1];
+    } else if (dateMatch[1] && dateMatch[2] && dateMatch[3]) {
+      const dd = String(dateMatch[1]).padStart(2, "0");
+      const mm = String(dateMatch[2]).padStart(2, "0");
+      const yyyy = String(dateMatch[3]);
+      dateIso = `${yyyy}-${mm}-${dd}`;
+    }
+  }
+
+  const parseMoney = (v: string | undefined) => {
+    if (!v) return 0;
+    const t = v.trim().replace(/[·∙]/g, ".");
+    if (!t) return 0;
+    const hasComma = t.includes(",");
+    const hasDot = t.includes(".");
+    let cleaned = t;
+    if (hasComma && hasDot) {
+      cleaned = t.replace(/\./g, "").replace(",", ".");
+    } else if (hasComma && !hasDot) {
+      const lastComma = t.lastIndexOf(",");
+      if (lastComma >= 0 && t.length - lastComma - 1 <= 2) {
+        cleaned = `${t.slice(0, lastComma).replace(/,/g, "")}.${t.slice(lastComma + 1)}`;
+      } else {
+        cleaned = t.replace(/,/g, ".");
+      }
+    } else {
+      cleaned = t.replace(/,/g, "");
+    }
+    const n = Number.parseFloat(cleaned);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const moneyTokens =
+    normalized.match(
+      /[0-9]{1,3}(?:[.,][0-9]{3})*[.,][0-9]{1,2}|[0-9]{1,6}\.[0-9]{1,2}|[0-9]{1,6},[0-9]{1,2}|[0-9]{1,6}/g,
+    ) ?? [];
+  const largestAmount = moneyTokens
+    .map((m) => parseMoney(m))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .reduce((max, cur) => (cur > max ? cur : max), 0);
+
+  const euroTaggedTokens = [
+    ...(normalized.match(/€\s*[0-9]{1,6}(?:[.,][0-9]{1,2})?/g) ?? []),
+    ...(normalized.match(/[0-9]{1,6}(?:[.,][0-9]{1,2})?\s*(?:€|eur)\b/gi) ?? []),
+  ];
+  const largestEuroTagged = euroTaggedTokens
+    .map((rawToken) => parseMoney(rawToken.replace(/eur|€/gi, "")))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .reduce((max, cur) => (cur > max ? cur : max), 0);
+
+  let totalParsed =
+    parseMoney(totalLabelMatch?.[1]) ||
+    parseMoney(totalMatch?.[1]) ||
+    largestEuroTagged ||
+    largestAmount;
+  const baseParsed = parseMoney(baseMatch?.[1]);
+  let ivaParsed = parseMoney(ivaMatch?.[1]);
+  if (totalParsed <= 0 && baseParsed > 0 && ivaParsed > 0) {
+    totalParsed = Math.round((baseParsed + ivaParsed) * 100) / 100;
+  }
+  if (ivaParsed <= 0 && totalParsed > 0 && baseParsed > 0 && totalParsed >= baseParsed) {
+    ivaParsed = Math.round((totalParsed - baseParsed) * 100) / 100;
+  }
+
+  const fallbackDateFromHeader = normalizeDateKeyForDuplicate(opts?.headerDate ?? "");
+  const safeDate =
+    dateIso ||
+    (/^\d{4}\-\d{2}\-\d{2}$/.test(fallbackDateFromHeader) ? fallbackDateFromHeader : "") ||
+    new Date().toISOString().split("T")[0];
+
+  let invoiceNumberOut = String(invMatch?.[1] ?? "").trim();
+  if (serieEmision?.[1] && numFacturaOnly?.[1]) {
+    invoiceNumberOut = `${String(serieEmision[1]).trim()}-${String(numFacturaOnly[1]).trim()}`;
+  } else if (!invoiceNumberOut && numFacturaOnly?.[1]) {
+    invoiceNumberOut = String(numFacturaOnly[1]).trim();
+  }
+
+  const vendorFromSubject = String(subjectVendorMatch?.[1] ?? "").trim();
+  const vendorOut = String(
+    fromMatch?.[1] ?? opts?.headerFrom ?? vendorFromSubject ?? "",
+  ).trim();
+
+  return {
+    invoiceNumber: invoiceNumberOut,
+    vendor: vendorOut,
+    date: safeDate,
+    totalAmount: totalParsed,
+    ivaAmount: ivaParsed,
+    tipAmount: 0,
+    category: "Other",
+    subject: subject ?? "",
+    items: [],
+  };
+}
 
 export const appRouter = router({
   system: systemRouter,
@@ -714,34 +1308,265 @@ export const appRouter = router({
 
     // Parse email invoice text with AI
     parseEmailInvoice: publicProcedure
-      .input(z.object({ emailText: z.string(), subject: z.string().optional() }))
+      .input(
+        z.object({
+          emailText: z.string(),
+          subject: z.string().optional(),
+          accessToken: z.string().optional(),
+          messageId: z.string().optional(),
+        }),
+      )
       .mutation(async ({ input }) => {
+        let attachmentAugmentedText = "";
+        let headerFrom = "";
+        let headerDate = "";
         try {
+          const accessToken = input.accessToken?.trim();
+          const messageId = input.messageId?.trim();
+          if (accessToken && messageId) {
+            try {
+              const msgRes = await fetch(
+                `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`,
+                { headers: { Authorization: `Bearer ${accessToken}` } },
+              );
+              if (msgRes.ok) {
+                const detail = (await msgRes.json()) as {
+                  payload?: {
+                    headers?: { name?: string; value?: string }[];
+                    parts?: {
+                      mimeType?: string;
+                      filename?: string;
+                      body?: { attachmentId?: string };
+                      parts?: any[];
+                    }[];
+                    mimeType?: string;
+                    filename?: string;
+                    body?: { attachmentId?: string };
+                  };
+                };
+
+                const imageAttachmentIds: { attachmentId: string; filename: string; mimeType: string }[] = [];
+                const pdfAttachments: { attachmentId: string; filename: string }[] = [];
+                const headers = detail.payload?.headers ?? [];
+                headerFrom = String(
+                  headers.find((h) => String(h.name ?? "").toLowerCase() === "from")?.value ?? "",
+                )
+                  .replace(/<[^>]+>/g, "")
+                  .trim();
+                headerDate = String(
+                  headers.find((h) => String(h.name ?? "").toLowerCase() === "date")?.value ?? "",
+                ).trim();
+
+                const walk = (part: {
+                  mimeType?: string;
+                  filename?: string;
+                  body?: { attachmentId?: string };
+                  parts?: any[];
+                }) => {
+                  const mimeType = String(part.mimeType ?? "").toLowerCase();
+                  const filename = String(part.filename ?? "").trim();
+                  const attachmentId = part.body?.attachmentId?.trim();
+                  // Many invoice emails use inline images (cid) with no filename — still has attachmentId.
+                  if (attachmentId) {
+                    if (mimeType.startsWith("image/")) {
+                      const label =
+                        filename ||
+                        `inline.${mimeType.includes("png") ? "png" : mimeType.includes("gif") ? "gif" : mimeType.includes("webp") ? "webp" : "jpg"}`;
+                      imageAttachmentIds.push({ attachmentId, filename: label, mimeType });
+                    } else if (
+                      mimeType === "application/pdf" ||
+                      mimeType === "application/x-pdf" ||
+                      mimeType === "application/octet-stream"
+                    ) {
+                      const label = filename || "attachment.pdf";
+                      pdfAttachments.push({ attachmentId, filename: label });
+                    }
+                  }
+                  for (const child of part.parts ?? []) {
+                    walk(child);
+                  }
+                };
+
+                if (detail.payload) {
+                  walk(detail.payload);
+                }
+
+                const maxImageOcr = 2;
+                const imageOcrBlocks: string[] = [];
+                for (const info of imageAttachmentIds.slice(0, maxImageOcr)) {
+                  const attRes = await fetch(
+                    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(info.attachmentId)}`,
+                    { headers: { Authorization: `Bearer ${accessToken}` } },
+                  );
+                  if (!attRes.ok) continue;
+                  const att = (await attRes.json()) as { data?: string };
+                  const decodedBuf = decodeGmailBase64UrlToBuffer(att.data ?? "");
+                  const b64 = decodedBuf ? decodedBuf.toString("base64") : "";
+                  if (!b64 || b64.length < 64) continue;
+
+                  const mimeType = info.mimeType || detectMimeFromImageBase64(b64);
+                  let ocrText = "";
+                  const useClaude = Boolean(ENV.anthropicApiKey?.trim());
+                  const useGeminiGoogle = Boolean(ENV.googleGeminiApiKey?.trim());
+                  if (useGeminiGoogle) {
+                    ocrText = await runGoogleGeminiReceiptOcr(
+                      b64,
+                      mimeType,
+                      RECEIPT_PARSE_SYSTEM,
+                      RECEIPT_PARSE_USER,
+                    );
+                  } else if (useClaude) {
+                    ocrText = await parseReceiptWithClaude(
+                      b64,
+                      mimeType,
+                      RECEIPT_PARSE_SYSTEM,
+                      RECEIPT_PARSE_USER,
+                    );
+                  }
+                  if (ocrText.trim()) {
+                    imageOcrBlocks.push(`[Image attachment OCR: ${info.filename}]\n${ocrText.trim()}`);
+                  }
+                }
+
+                const maxPdfExtract = 2;
+                const pdfTextBlocks: string[] = [];
+                let pdfParseFn: ((dataBuffer: Buffer) => Promise<{ text?: string }>) | null = null;
+                if (pdfAttachments.length > 0) {
+                  try {
+                    // eslint-disable-next-line import/no-unresolved
+                    const mod = await import("pdf-parse");
+                    pdfParseFn = (mod.default ?? mod) as (dataBuffer: Buffer) => Promise<{ text?: string }>;
+                  } catch (importErr) {
+                    console.warn("[Email Parse] pdf-parse module not available:", importErr);
+                  }
+                }
+                const minPdfTextChars = 72;
+                const maxPdfBytesForGemini = 12 * 1024 * 1024;
+                const useGeminiPdf = Boolean(ENV.googleGeminiApiKey?.trim());
+
+                for (const info of pdfAttachments.slice(0, maxPdfExtract)) {
+                  const attRes = await fetch(
+                    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(info.attachmentId)}`,
+                    { headers: { Authorization: `Bearer ${accessToken}` } },
+                  );
+                  if (!attRes.ok) continue;
+                  const att = (await attRes.json()) as { data?: string };
+                  const pdfBuf = decodeGmailBase64UrlToBuffer(att.data ?? "");
+                  if (!pdfBuf || pdfBuf.length < 64) continue;
+
+                  let pdfText = "";
+                  if (pdfParseFn) {
+                    try {
+                      const parsedPdf = await pdfParseFn(pdfBuf);
+                      pdfText = String(parsedPdf.text ?? "").replace(/\s+\n/g, "\n").trim();
+                    } catch (pdfErr) {
+                      console.warn("[Email Parse] pdf-parse failed:", info.filename, pdfErr);
+                    }
+                  }
+
+                  if (pdfText.length >= minPdfTextChars) {
+                    pdfTextBlocks.push(`[PDF text: ${info.filename}]\n${pdfText.slice(0, 4500)}`);
+                    continue;
+                  }
+
+                  // Scanned PDFs: no text layer — send PDF to Gemini (same JSON receipt schema as camera OCR).
+                  if (
+                    useGeminiPdf &&
+                    pdfBuf.length <= maxPdfBytesForGemini
+                  ) {
+                    try {
+                      const b64pdf = pdfBuf.toString("base64");
+                      const geminiJson = await parseInvoicePdfWithGoogleGemini(
+                        b64pdf,
+                        RECEIPT_PARSE_SYSTEM,
+                        RECEIPT_PARSE_USER,
+                      );
+                      if (geminiJson.trim()) {
+                        pdfTextBlocks.push(`[PDF invoice (Gemini): ${info.filename}]\n${geminiJson.trim().slice(0, 4500)}`);
+                      }
+                    } catch (geminiPdfErr) {
+                      console.warn(
+                        "[Email Parse] Gemini PDF read failed (quota or model):",
+                        info.filename,
+                        geminiPdfErr instanceof Error ? geminiPdfErr.message : geminiPdfErr,
+                      );
+                    }
+                  }
+                }
+
+                if (imageOcrBlocks.length > 0 || pdfTextBlocks.length > 0 || pdfAttachments.length > 0) {
+                  attachmentAugmentedText =
+                    `\n\nAttachment context:\n` +
+                    (imageOcrBlocks.length > 0 ? `${imageOcrBlocks.join("\n\n")}\n` : "") +
+                    (pdfTextBlocks.length > 0 ? `${pdfTextBlocks.join("\n\n")}\n` : "") +
+                    (pdfAttachments.length > 0 && pdfTextBlocks.length === 0
+                      ? `[PDF attachments found but text could not be extracted]: ${pdfAttachments.map((p) => p.filename).join(", ")}\n`
+                      : "");
+                }
+              }
+            } catch (attErr) {
+              console.warn("[Email Parse] Attachment OCR augmentation failed:", attErr);
+            }
+          }
+
+          const mergedEmailContent = `${input.emailText}${attachmentAugmentedText}`;
           const response = await invokeLLM({
             messages: [
               {
                 role: "user",
-                content: `${EMAIL_PARSE_PROMPT}\n\nEmail Subject: ${input.subject ?? ""}\n\nEmail Content:\n${input.emailText}`,
+                content: `${EMAIL_PARSE_PROMPT}\n\nEmail Subject: ${input.subject ?? ""}\n\nEmail Content:\n${mergedEmailContent}`,
               },
             ],
           });
 
           const rawContent = response.choices?.[0]?.message?.content;
-          const text = typeof rawContent === "string" ? rawContent : "{}";
+          const text = extractLlmMessageText(rawContent).trim();
+          if (!text) {
+            return fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
+              headerFrom,
+              headerDate,
+            });
+          }
           const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-          return JSON.parse(cleaned);
+          let rawParsed: Record<string, unknown>;
+          try {
+            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+            const jsonStr = jsonMatch ? jsonMatch[0] : cleaned;
+            rawParsed = JSON.parse(jsonStr) as Record<string, unknown>;
+          } catch (parseErr) {
+            console.warn("[Email Parse] LLM JSON parse failed, using regex fallback:", parseErr);
+            return fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
+              headerFrom,
+              headerDate,
+            });
+          }
+
+          const norm = normalizeEmailInvoiceModelFields(rawParsed, { headerFrom, headerDate });
+          if (!norm.totalAmount || norm.totalAmount <= 0 || !norm.vendor) {
+            return fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
+              headerFrom,
+              headerDate,
+            });
+          }
+
+          return {
+            invoiceNumber: norm.invoiceNumber,
+            vendor: norm.vendor,
+            date: norm.dateIso,
+            totalAmount: norm.totalAmount,
+            ivaAmount: norm.ivaAmount,
+            tipAmount: norm.tipAmount,
+            category: norm.category,
+            subject: input.subject ?? "",
+            items: [],
+          };
         } catch (err) {
           console.error("[Email Parse] error:", err);
-          return {
-            invoiceNumber: "",
-            vendor: "",
-            date: new Date().toISOString().split("T")[0],
-            totalAmount: 0,
-            ivaAmount: 0,
-            tipAmount: 0,
-            category: "Other",
-            subject: input.subject ?? "",
-          };
+          return fallbackParseEmailInvoiceFromText(
+            `${input.emailText}${attachmentAugmentedText}`,
+            input.subject,
+            { headerFrom, headerDate },
+          );
         }
       }),
 
@@ -790,6 +1615,15 @@ export const appRouter = router({
               currency: z.string().default("EUR"),
               notes: z.string().optional(),
               imageUrl: z.string().optional(),
+              /** Gmail message id for fallback hyperlink in Receipt column even when attachment fetch fails. */
+              gmailMessageId: z.string().optional(),
+              /** When imageUrl is empty, server fetches first PDF or image attachment from this Gmail message. */
+              gmailReceiptFetch: z
+                .object({
+                  userAccessToken: z.string().min(10),
+                  messageId: z.string().min(2),
+                })
+                .optional(),
               tip: z.number().optional(),
               items: z.array(
                 z.object({
@@ -869,7 +1703,7 @@ export const appRouter = router({
         const existingInvoicesByNumber = new Set(
           existingData.values?.slice(1).map((row) => {
             // row[1] = Invoice #
-            const invoiceNum = row[1]?.trim() || "";
+            const invoiceNum = normalizeInvoiceNumberKey(row[1] ?? "");
             return invoiceNum;
           }).filter(num => num.length > 0) || []
         );
@@ -884,8 +1718,9 @@ export const appRouter = router({
         );
 
         newRows = rows.filter((r) => {
-          if (r.invoiceNumber && r.invoiceNumber.trim().length > 0) {
-            if (existingInvoicesByNumber.has(r.invoiceNumber.trim())) {
+          const invoiceNumKey = normalizeInvoiceNumberKey(r.invoiceNumber);
+          if (invoiceNumKey.length > 0) {
+            if (existingInvoicesByNumber.has(invoiceNumKey)) {
               console.warn(`[Export] Skipping duplicate invoice (by Invoice #): ${r.invoiceNumber}`);
               return false;
             }
@@ -898,6 +1733,12 @@ export const appRouter = router({
             );
             return false;
           }
+
+          // Also dedupe within the current request batch so camera/email duplicates only append once.
+          if (invoiceNumKey.length > 0) {
+            existingInvoicesByNumber.add(invoiceNumKey);
+          }
+          existingInvoicesByVendorDateAmount.add(key);
           return true;
         });
         
@@ -911,8 +1752,23 @@ export const appRouter = router({
         let receiptImageMissing = false;
         const dataRows = await Promise.all(
           newRows.map(async (r) => {
+            // Deployment marker for debugging production freshness.
+            console.log(
+              `[Export][v2026-04-07-b] gmailMessageId=${Boolean(String(r.gmailMessageId ?? "").trim())} gmailFetch=${Boolean(
+                r.gmailReceiptFetch?.messageId,
+              )} vendor=${r.vendor}`,
+            );
             let imageUrl = r.imageUrl ?? "";
+            let receiptShareMime = "";
             const userProvidedImage = Boolean(r.imageUrl?.trim());
+            const userRequestedGmailAttachment = Boolean(
+              r.gmailReceiptFetch?.userAccessToken?.trim() &&
+                r.gmailReceiptFetch?.messageId?.trim(),
+            );
+            const userWantsReceiptCell =
+              userProvidedImage ||
+              userRequestedGmailAttachment ||
+              Boolean(String(r.gmailMessageId ?? "").trim());
             if (
               userProvidedImage &&
               !imageUrl.startsWith("data:") &&
@@ -952,6 +1808,7 @@ export const appRouter = router({
                     const base = receiptPublicBase;
                     if (token && base) {
                       imageUrl = `${base}/api/receipt-share/${token}`;
+                      receiptShareMime = mime;
                       console.log(
                         `[Export] Receipt image for Sheets (/api/receipt-share): ${r.vendor}`,
                       );
@@ -978,6 +1835,56 @@ export const appRouter = router({
                 imageUrl = "";
               }
             }
+
+            if (
+              !String(imageUrl ?? "").trim() &&
+              userRequestedGmailAttachment &&
+              r.gmailReceiptFetch
+            ) {
+              try {
+                const att = await fetchFirstGmailAttachmentForReceiptExport(
+                  r.gmailReceiptFetch.userAccessToken,
+                  r.gmailReceiptFetch.messageId,
+                );
+                if (att?.buffer?.length) {
+                  let buf = att.buffer;
+                  let mime = att.mime;
+                  if (isLikelyHeicOrHeifBuffer(buf)) {
+                    try {
+                      buf = await heicBufferToJpeg(buf, 0.75);
+                      mime = "image/jpeg";
+                    } catch (heicErr) {
+                      console.warn(
+                        `[Export] HEIC→JPEG failed for Gmail attachment (${r.vendor}):`,
+                        heicErr,
+                      );
+                    }
+                  }
+                  const token = putReceiptShareImage(buf, mime);
+                  const base = receiptPublicBase;
+                  if (token && base) {
+                    imageUrl = `${base}/api/receipt-share/${token}`;
+                    receiptShareMime = mime;
+                    console.log(
+                      `[Export] Gmail attachment → receipt-share: ${r.vendor} (${mime})`,
+                    );
+                  } else if (!token) {
+                    console.warn(
+                      `[Export] Gmail attachment too large or empty for receipt-share: ${r.vendor} (${mime}, bytes=${buf.length})`,
+                    );
+                  } else if (!base) {
+                    console.warn(
+                      "[Export] Gmail attachment skipped — no public API base URL for receipt-share.",
+                    );
+                  }
+                }
+              } catch (gmailAttErr) {
+                console.error(
+                  `[Export] Gmail attachment fetch failed for ${r.vendor}:`,
+                  gmailAttErr,
+                );
+              }
+            }
             
             // Format date as DD/MM/YYYY (with leading apostrophe to prevent Google Sheets auto-formatting)
             const rawDate = String(r.date ?? "").trim();
@@ -990,13 +1897,32 @@ export const appRouter = router({
               formattedDate = `'${dd}/${mm}/${yyyy}`;
             }
 
-            // L: =IMAGE mode 4 = fixed pixel size (mode 1 fits cell → thumbnails too small)
+            // L: raster = IMAGE+HYPERLINK; PDF = link only (Sheets IMAGE does not render PDF reliably)
             let imageColumnValue: string = imageUrl;
             if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
-              imageColumnValue = receiptImageSheetsFormula(imageUrl);
+              const isPdf =
+                receiptShareMime === "application/pdf" ||
+                receiptShareMime === "application/x-pdf";
+              imageColumnValue = isPdf
+                ? receiptPdfSheetsHyperlinkFormula(imageUrl)
+                : receiptImageSheetsFormula(imageUrl);
             }
 
-            if (userProvidedImage && !String(imageUrl ?? "").trim()) {
+            // If attachment fetch/upload failed, still provide a clickable Gmail message link.
+            // User can open the original email and download/view the PDF from there.
+            if (!String(imageColumnValue ?? "").trim()) {
+              const safeMsgId = String(
+                r.gmailReceiptFetch?.messageId ?? r.gmailMessageId ?? "",
+              )
+                .replace(/"/g, "")
+                .trim();
+              if (safeMsgId) {
+                const gmailMsgUrl = `https://mail.google.com/mail/u/0/#inbox/${safeMsgId}`;
+                imageColumnValue = `=HYPERLINK("${gmailMsgUrl}","Open Gmail attachment")`;
+              }
+            }
+
+            if (userWantsReceiptCell && !String(imageColumnValue ?? "").trim()) {
               receiptImageMissing = true;
             }
 
@@ -1033,7 +1959,7 @@ export const appRouter = router({
           const errText = await appendRes.text();
           console.error("Sheets API error:", errText);
           console.error("Append URL:", appendUrl);
-          throw new Error(`Failed to export to Google Sheets. Please try again.`);
+          throw new Error(userFacingMessageFromSheetsApiBody(errText));
         }
 
         const appendJson = (await appendRes.json()) as {
@@ -1161,7 +2087,7 @@ export const appRouter = router({
       .input(
         z.object({
           accessToken: z.string(),
-          maxResults: z.number().min(1).max(100).default(50),
+          maxResults: z.number().min(1).max(100).default(10),
           pageToken: z.string().optional(),
           /** If set, search is only label:"…" (must match Gmail label name). */
           preparingLabelName: z.string().optional(),
@@ -1171,6 +2097,19 @@ export const appRouter = router({
         const { accessToken, maxResults, pageToken, preparingLabelName } = input;
 
         const trimmedLabel = preparingLabelName?.trim() ?? "";
+        const cacheKey = `${accessToken}|${trimmedLabel.toLowerCase()}|${maxResults}|${pageToken ?? ""}`;
+        const nowMs = Date.now();
+        pruneExpiredGmailFetchCache(nowMs);
+        const cached = gmailFetchCache.get(cacheKey);
+        if (cached && cached.expiresAt > nowMs) {
+          return cached.result;
+        }
+        const inFlight = gmailFetchInflight.get(cacheKey);
+        if (inFlight) {
+          return inFlight;
+        }
+
+        const task = (async (): Promise<GmailFetchResult> => {
         let searchQuery: string;
         if (trimmedLabel) {
           const safe = trimmedLabel.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -1189,6 +2128,12 @@ export const appRouter = router({
 
         if (!listRes.ok) {
           const errText = await listRes.text();
+          if (/quota.*exceeded|rate.?limit|userRateLimitExceeded/i.test(errText)) {
+            throw new TRPCError({
+              code: "TOO_MANY_REQUESTS",
+              message: "Gmail API quota exceeded. Wait about 60 seconds and try again.",
+            });
+          }
           throw new Error(`Gmail API error: ${errText}`);
         }
 
@@ -1205,7 +2150,14 @@ export const appRouter = router({
             id: string;
             payload?: {
               headers?: { name: string; value: string }[];
-              parts?: { mimeType: string; body?: { data?: string } }[];
+              parts?: {
+                mimeType?: string;
+                filename?: string;
+                body?: { data?: string; attachmentId?: string };
+                parts?: any[];
+              }[];
+              mimeType?: string;
+              filename?: string;
               body?: { data?: string };
             };
             snippet?: string;
@@ -1217,18 +2169,85 @@ export const appRouter = router({
           const from = headers.find((h) => h.name === "From")?.value ?? "";
           const dateHeader = headers.find((h) => h.name === "Date")?.value ?? "";
 
-          let bodyText = "";
-          const parts = detail.payload?.parts ?? [];
-          for (const part of parts) {
-            if (part.mimeType === "text/plain" && part.body?.data) {
-              bodyText = Buffer.from(part.body.data, "base64").toString("utf-8");
-              break;
+          const plainTexts: string[] = [];
+          const htmlTexts: string[] = [];
+          const attachmentHints: string[] = [];
+
+          const fetchAttachmentTextIfNeeded = async (
+            attachmentId: string,
+            mimeType: string,
+          ): Promise<string> => {
+            if (!attachmentId) return "";
+            if (!(mimeType === "text/plain" || mimeType === "text/html")) return "";
+            const attRes = await fetch(
+              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(msg.id)}/attachments/${encodeURIComponent(attachmentId)}`,
+              { headers: { Authorization: `Bearer ${accessToken}` } },
+            );
+            if (!attRes.ok) return "";
+            const att = (await attRes.json()) as { data?: string };
+            return decodeGmailBase64UrlToUtf8(att.data ?? "");
+          };
+
+          const walkParts = async (part: {
+            mimeType?: string;
+            filename?: string;
+            body?: { data?: string; attachmentId?: string };
+            parts?: {
+              mimeType?: string;
+              filename?: string;
+              body?: { data?: string; attachmentId?: string };
+              parts?: any[];
+            }[];
+          }) => {
+            const mimeType = String(part.mimeType ?? "").toLowerCase();
+            const filename = String(part.filename ?? "").trim();
+            const bodyData = part.body?.data;
+            const attachmentId = part.body?.attachmentId;
+
+            let decoded = bodyData ? decodeGmailBase64UrlToUtf8(bodyData) : "";
+            if (!decoded && attachmentId) {
+              decoded = await fetchAttachmentTextIfNeeded(attachmentId, mimeType);
             }
+
+            if (mimeType === "text/plain" && decoded) {
+              plainTexts.push(decoded);
+            } else if (mimeType === "text/html" && decoded) {
+              const text = stripHtmlToText(decoded);
+              if (text) htmlTexts.push(text);
+            }
+
+            if (
+              filename &&
+              (mimeType.startsWith("application/pdf") ||
+                mimeType.startsWith("image/") ||
+                mimeType.startsWith("application/octet-stream"))
+            ) {
+              attachmentHints.push(`Attachment: ${filename} (${mimeType || "file"})`);
+            }
+
+            const children = part.parts ?? [];
+            for (const child of children) {
+              await walkParts(child);
+            }
+          };
+
+          if (detail.payload) {
+            await walkParts(detail.payload);
           }
+
+          let bodyText = [plainTexts.join("\n\n"), htmlTexts.join("\n\n"), attachmentHints.join("\n")]
+            .filter((s) => s && s.trim().length > 0)
+            .join("\n\n")
+            .trim();
           if (!bodyText && detail.payload?.body?.data) {
-            bodyText = Buffer.from(detail.payload.body.data, "base64").toString("utf-8");
+            bodyText = decodeGmailBase64UrlToUtf8(detail.payload.body.data);
           }
-          if (!bodyText) bodyText = detail.snippet ?? "";
+          const snippetText = (detail.snippet ?? "").trim();
+          if (!bodyText) {
+            bodyText = snippetText;
+          } else if (snippetText && !bodyText.includes(snippetText)) {
+            bodyText = `${bodyText}\n\nSnippet: ${snippetText}`;
+          }
 
           return {
             id: msg.id,
@@ -1236,7 +2255,8 @@ export const appRouter = router({
             from,
             date: dateHeader,
             internalDate: detail.internalDate,
-            bodyText: bodyText.slice(0, 3000),
+            // Keep enough text for totals/IVA that appear late in HTML invoices (was 6000 → often €0).
+            bodyText: bodyText.slice(0, 24_000),
             snippet: detail.snippet ?? "",
           };
         }
@@ -1251,10 +2271,23 @@ export const appRouter = router({
           }
         }
 
-        return {
+        const result: GmailFetchResult = {
           messages: details,
           nextPageToken: listData.nextPageToken,
         };
+        gmailFetchCache.set(cacheKey, {
+          expiresAt: Date.now() + GMAIL_FETCH_CACHE_MS,
+          result,
+        });
+        return result;
+        })();
+
+        gmailFetchInflight.set(cacheKey, task);
+        try {
+          return await task;
+        } finally {
+          gmailFetchInflight.delete(cacheKey);
+        }
       }),
 
     /** Remove "preparing" label and add "complete" after Sheets export (needs gmail.modify scope). */

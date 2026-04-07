@@ -8,13 +8,19 @@ export const GMAIL_EMAIL_KEY = "gmail_email_address";
 /** Must match server redirect (`scheme://gmail-auth?...`). */
 export const GMAIL_OAUTH_RETURN_HOST = "gmail-auth";
 
-export function parseGmailAuthReturnUrl(url: string): { token?: string; email?: string; error?: string } {
+export function parseGmailAuthReturnUrl(url: string): {
+  token?: string;
+  email?: string;
+  error?: string;
+  detail?: string;
+} {
   const q = url.includes("?") ? url.split("?").slice(1).join("?").split("#")[0] : "";
   const sp = new URLSearchParams(q);
   return {
     token: sp.get("token") ?? undefined,
     email: sp.get("email") ?? undefined,
     error: sp.get("error") ?? undefined,
+    detail: sp.get("detail") ?? undefined,
   };
 }
 

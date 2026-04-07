@@ -1,6 +1,9 @@
 /** Web: OAuth is handled in `gmail.tsx` via WebBrowser — no native Google Sign-In module. */
 
-export function configureGoogleSignInForGmail(_webClientId: string) {}
+export async function configureGoogleSignInForGmail(
+  _webClientId: string,
+  _options?: { iosClientId?: string },
+) {}
 
 export async function signInWithGoogleForGmailAndSheets(): Promise<{
   accessToken: string;

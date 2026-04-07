@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 
 const TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 const MAX_ENTRIES = 250;
-const MAX_BYTES = 8 * 1024 * 1024; // 8 MiB per image
+const MAX_BYTES = 20 * 1024 * 1024; // 20 MiB per receipt (PDF/image)
 
 type Entry = { buffer: Buffer; mime: string; expiresAt: number };
 
@@ -54,6 +54,7 @@ export function getReceiptShareImage(
 
 export function detectMimeFromBuffer(buf: Buffer): string {
   if (buf.length >= 4) {
+    if (buf.slice(0, 4).toString("ascii") === "%PDF") return "application/pdf";
     const h = buf.slice(0, 4);
     if (h[0] === 0x89 && h[1] === 0x50 && h[2] === 0x4e && h[3] === 0x47) return "image/png";
     if (h[0] === 0xff && h[1] === 0xd8 && h[2] === 0xff) return "image/jpeg";

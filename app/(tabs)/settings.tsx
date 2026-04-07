@@ -1,21 +1,21 @@
-import { useEffect, useState } from "react";
-import { useRouter } from "expo-router";
+import { useEffect, useState, type ComponentProps } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
+  Alert,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
-  Linking,
-  Alert,
 } from "react-native";
 import { applyApiUrlFromAppSettings, requestTrpcClientRecreate } from "@/constants/oauth";
 import { PRODUCTION_API_ORIGIN } from "@/constants/receipt-api-origin";
 import { trpc } from "@/lib/trpc";
 import { DEFAULT_MAIN_TRACKER_SHEET_NAME } from "@/shared/sheets-defaults";
 
+import { APP_SCREEN_HEADER } from "@/constants/app-typography";
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
@@ -66,49 +66,33 @@ function SectionHeader({ title }: { title: string }) {
   );
 }
 
-function ToggleField({
+/** Full-bleed primary CTA at the bottom of a settings card (e.g. View Sheets). */
+function PrimaryCardButton({
+  icon,
   label,
-  value,
-  onToggle,
-  hint,
+  onPress,
 }: {
+  icon: ComponentProps<typeof IconSymbol>["name"];
   label: string;
-  value: boolean;
-  onToggle: (v: boolean) => void;
-  hint?: string;
+  onPress: () => void;
 }) {
   const colors = useColors();
   return (
     <Pressable
-      onPress={() => onToggle(!value)}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
       style={({ pressed }) => [
-        styles.settingRow,
-        { borderBottomColor: colors.border },
-        pressed && { opacity: 0.7 },
+        styles.primaryCardButton,
+        {
+          backgroundColor: colors.primary,
+          borderTopColor: colors.border,
+        },
+        pressed && { opacity: 0.92 },
       ]}
     >
-      <View style={styles.toggleLeft}>
-        <Text style={[styles.settingLabel, { color: colors.foreground }]}>{label}</Text>
-        {hint && <Text style={[styles.hintText, { color: colors.muted }]}>{hint}</Text>}
-      </View>
-      <View
-        style={[
-          styles.toggleSwitch,
-          {
-            backgroundColor: value ? colors.primary : colors.border,
-          },
-        ]}
-      >
-        <View
-          style={[
-            styles.toggleThumb,
-            {
-              transform: [{ translateX: value ? 20 : 2 }],
-              backgroundColor: "#fff",
-            },
-          ]}
-        />
-      </View>
+      <IconSymbol name={icon} size={22} color="#fff" />
+      <Text style={styles.primaryCardButtonText}>{label}</Text>
     </Pressable>
   );
 }
@@ -199,7 +183,6 @@ function EditableField({
 
 export default function SettingsScreen() {
   const colors = useColors();
-  const router = useRouter();
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const { reload: reloadInvoices } = useInvoices();
   const resetAllDataMutation = trpc.invoices.resetAllData.useMutation();
@@ -245,48 +228,6 @@ export default function SettingsScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={[styles.title, { color: colors.foreground }]}>Settings</Text>
 
-        {/* Gmail Automation */}
-        <SectionHeader title="Gmail Automation" />
-        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <ToggleField
-            label="Auto-save Gmail Emails"
-            value={settings.autoSaveGmailEmails ?? false}
-            onToggle={(v) => saveSettings({ ...settings, autoSaveGmailEmails: v })}
-            hint="Automatically save parsed Gmail invoices to Receipts"
-          />
-          <ToggleField
-            label="Auto-export to Sheets"
-            value={settings.autoExportToSheets ?? false}
-            onToggle={(v) => saveSettings({ ...settings, autoExportToSheets: v })}
-            hint="Automatically export to all Google Sheets tabs"
-          />
-          <EditableField
-            label="Gmail: Preparing label"
-            value={settings.gmailPreparingLabel ?? ""}
-            placeholder="e.g. 2026 Preparing Invoices"
-            onSave={(v) => saveSettings({ ...settings, gmailPreparingLabel: v })}
-            hint="Exact name of the label whose messages to import (read or unread). Leave empty to use keyword search instead."
-          />
-          <EditableField
-            label="Gmail: Complete label"
-            value={settings.gmailCompleteLabel ?? ""}
-            placeholder="e.g. 2026 Invoice Complete"
-            onSave={(v) => saveSettings({ ...settings, gmailCompleteLabel: v })}
-            hint="After a successful export to Sheets, the message is moved here (preparing label removed). Re-login to Gmail after first setup so the app can change labels."
-          />
-          <Pressable
-            onPress={() => router.navigate("/(tabs)/gmail")}
-            style={({ pressed }) => [
-              styles.viewSheetsBtn,
-              { backgroundColor: colors.primary },
-              pressed && { opacity: 0.85 },
-            ]}
-          >
-            <IconSymbol name="envelope.fill" size={18} color="#fff" />
-            <Text style={styles.viewSheetsBtnText}>Gmail connection & import</Text>
-          </Pressable>
-        </View>
-
         {/* Spreadsheet Configuration */}
         <SectionHeader title="Google Sheets Configuration" />
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -310,7 +251,9 @@ export default function SettingsScreen() {
             placeholder="2026 Invoice tracker"
             onSave={(v) => saveSettings({ ...settings, sheetName: v || DEFAULT_MAIN_TRACKER_SHEET_NAME })}
           />
-          <Pressable
+          <PrimaryCardButton
+            icon="paperplane.fill"
+            label="View Sheets"
             onPress={() => {
               if (settings.spreadsheetId) {
                 Linking.openURL(`https://docs.google.com/spreadsheets/d/${settings.spreadsheetId}/edit`);
@@ -318,15 +261,7 @@ export default function SettingsScreen() {
                 Linking.openURL("https://docs.google.com/spreadsheets/d/1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E/edit");
               }
             }}
-            style={({ pressed }) => [
-              styles.viewSheetsBtn,
-              { backgroundColor: colors.primary },
-              pressed && { opacity: 0.8 },
-            ]}
-          >
-            <IconSymbol name="paperplane.fill" size={18} color="#fff" />
-            <Text style={styles.viewSheetsBtnText}>View Sheets</Text>
-          </Pressable>
+          />
         </View>
 
         {/* Column Structure Info */}
@@ -343,17 +278,21 @@ export default function SettingsScreen() {
             ["E", "Total (€)", "Total amount"],
             ["F", "IVA (€)", "IVA amount"],
             ["G", "Base (€)", "Amount before tax"],
-            ["H", "Category", "AI classification"],
-            ["I", "Currency", "EUR"],
-            ["J", "Notes", "Additional notes"],
-            ["K", "Exported At", "Export timestamp"],
+            ["H", "Tip (€)", "Tip (restaurants)"],
+            ["I", "Category", "AI classification"],
+            ["J", "Currency", "EUR"],
+            ["K", "Notes", "Additional notes"],
+            ["L", "Receipt", "Image or PDF link"],
+            ["M", "Exported At", "Export timestamp"],
           ].map(([col, name, desc]) => (
             <View key={col} style={styles.columnRow}>
-              <Text style={[styles.columnLetter, { color: colors.primary, backgroundColor: colors.primary + "15" }]}>
-                {col}
-              </Text>
-              <Text style={[styles.columnName, { color: colors.foreground }]}>{name}</Text>
-              <Text style={[styles.columnDesc, { color: colors.muted }]}>{desc}</Text>
+              <View style={[styles.columnLetterBox, { backgroundColor: colors.primary }]}>
+                <Text style={styles.columnLetter}>{col}</Text>
+              </View>
+              <View style={styles.columnTextBlock}>
+                <Text style={[styles.columnName, { color: colors.foreground }]}>{name}</Text>
+                <Text style={[styles.columnDesc, { color: colors.muted }]}>{desc}</Text>
+              </View>
             </View>
           ))}
         </View>
@@ -374,7 +313,6 @@ export default function SettingsScreen() {
         {/* Testing & Maintenance */}
         <SectionHeader title="Testing & Maintenance" />
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          {/* Reset All Data */}
           <Pressable
             onPress={() => {
               Alert.alert(
@@ -403,30 +341,38 @@ export default function SettingsScreen() {
                 ]
               );
             }}
+            accessibilityRole="button"
+            accessibilityLabel="Reset all data"
             style={({ pressed }) => [
-              styles.resetBtn,
+              styles.maintenancePrimaryBtn,
               { backgroundColor: colors.error },
-              pressed && { opacity: 0.8 },
+              pressed && { opacity: 0.92 },
             ]}
           >
-            <Text style={styles.resetBtnText}>Reset All Data</Text>
+            <Text style={styles.maintenancePrimaryBtnText}>Reset All Data</Text>
           </Pressable>
-          <Text style={[styles.resetHint, { color: colors.muted }]}>
+          <Text style={[styles.maintenanceHint, { color: colors.muted }]}>
             Clears the linked spreadsheet (headers preserved) and empties Receipts on this device.
           </Text>
 
-          {/* Clear Local Cache */}
           <Pressable
             onPress={handleClearCache}
+            accessibilityRole="button"
+            accessibilityLabel="Clear local cache"
             style={({ pressed }) => [
-              styles.clearCacheBtn,
-              { backgroundColor: colors.border },
-              pressed && { opacity: 0.8 },
+              styles.maintenanceSecondaryBtn,
+              {
+                backgroundColor: colors.border,
+                borderTopColor: colors.foreground + "14",
+              },
+              pressed && { opacity: 0.92 },
             ]}
           >
-            <Text style={[styles.clearCacheBtnText, { color: colors.foreground }]}>Clear Local Cache</Text>
+            <Text style={[styles.maintenanceSecondaryBtnText, { color: colors.foreground }]}>
+              Clear Local Cache
+            </Text>
           </Pressable>
-          <Text style={[styles.clearCacheHint, { color: colors.muted }]}>
+          <Text style={[styles.maintenanceHint, styles.maintenanceHintLast, { color: colors.muted }]}>
             Deletes local invoice records only. Google Sheets will not be affected.
           </Text>
         </View>
@@ -453,8 +399,8 @@ export default function SettingsScreen() {
             <View style={styles.stepContent}>
               <Text style={[styles.stepTitle, { color: colors.foreground }]}>Connect Gmail</Text>
               <Text style={[styles.stepDesc, { color: colors.muted }]}>
-                In Settings → Gmail Automation, tap &quot;Gmail connection & import&quot; and sign in to fetch invoice
-                emails.
+                Open the <Text style={{ fontWeight: "700", color: colors.foreground }}>gmail</Text> tab, sign in with
+                Google, and adjust automation or labels there if you need them.
               </Text>
             </View>
           </View>
@@ -477,16 +423,26 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 20, paddingBottom: 48 },
-  title: { fontSize: 28, fontWeight: "700", marginBottom: 24 },
+  content: { padding: 20, paddingTop: 22, paddingBottom: 48 },
+  title: { ...APP_SCREEN_HEADER, marginBottom: 20 },
   sectionHeader: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5, marginBottom: 8, marginTop: 20 },
-  section: { borderRadius: 14, borderWidth: 1, overflow: "hidden" },
+  section: {
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
   settingRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 14,
     paddingVertical: 14,
+    minHeight: 56,
     borderBottomWidth: 1,
   },
   settingLabel: { fontSize: 15, fontWeight: "500" },
@@ -500,7 +456,7 @@ const styles = StyleSheet.create({
   editBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
   editBtnText: { fontSize: 14, fontWeight: "600" },
   columnsBox: {
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     padding: 14,
     gap: 8,
@@ -508,12 +464,26 @@ const styles = StyleSheet.create({
   },
   columnsTitle: { fontSize: 14, fontWeight: "600" },
   columnsDesc: { fontSize: 12, marginBottom: 4 },
-  columnRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  columnLetter: { width: 24, height: 24, borderRadius: 6, textAlign: "center", lineHeight: 24, fontSize: 12, fontWeight: "700" },
-  columnName: { fontSize: 13, fontWeight: "500", width: 80 },
-  columnDesc: { fontSize: 12, flex: 1 },
+  columnRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    paddingVertical: 8,
+  },
+  columnLetterBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+  columnLetter: { color: "#fff", fontSize: 14, fontWeight: "800" },
+  columnTextBlock: { flex: 1, minWidth: 0, gap: 3, justifyContent: "center" },
+  columnName: { fontSize: 14, fontWeight: "700", letterSpacing: -0.2 },
+  columnDesc: { fontSize: 12, fontWeight: "500", lineHeight: 17 },
   guideBox: {
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     padding: 14,
     gap: 16,
@@ -529,84 +499,63 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   stepNumberText: { color: "#fff", fontSize: 14, fontWeight: "700" },
-  stepContent: { flex: 1, gap: 4 },
-  stepTitle: { fontSize: 13, fontWeight: "600" },
-  stepDesc: { fontSize: 12, lineHeight: 18 },
-  toggleLeft: {
-    flex: 1,
-    gap: 4,
-  },
-  toggleSwitch: {
-    width: 50,
-    height: 28,
-    borderRadius: 14,
-    padding: 2,
-    justifyContent: "center",
-  },
-  toggleThumb: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-  },
-  viewSheetsBtn: {
+  stepContent: { flex: 1, gap: 6 },
+  stepTitle: { fontSize: 14, fontWeight: "800", letterSpacing: -0.2 },
+  stepDesc: { fontSize: 13, lineHeight: 20, fontWeight: "500" },
+  primaryCardButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 10,
-    marginHorizontal: 14,
-    marginVertical: 14,
+    gap: 12,
+    width: "100%",
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    minHeight: 58,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
-  viewSheetsBtnText: {
+  primaryCardButtonText: {
     color: "#fff",
-    fontSize: 15,
-    fontWeight: "600",
+    fontSize: 17,
+    fontWeight: "800",
+    letterSpacing: -0.35,
   },
-  resetBtn: {
-    flexDirection: "row",
+  maintenancePrimaryBtn: {
+    width: "100%",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 10,
-    marginHorizontal: 14,
-    marginVertical: 14,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    minHeight: 56,
   },
-  resetBtnText: {
+  maintenancePrimaryBtnText: {
     color: "#fff",
-    fontSize: 15,
-    fontWeight: "600",
+    fontSize: 17,
+    fontWeight: "800",
+    letterSpacing: -0.3,
   },
-  resetHint: {
+  maintenanceSecondaryBtn: {
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    minHeight: 56,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  maintenanceSecondaryBtnText: {
+    fontSize: 17,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+  },
+  maintenanceHint: {
     fontSize: 12,
-    textAlign: "center",
-    marginHorizontal: 14,
-    marginBottom: 14,
-  },
-  clearCacheBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
+    lineHeight: 17,
+    fontWeight: "500",
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 10,
-    marginHorizontal: 14,
-    marginVertical: 14,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
-  clearCacheBtnText: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  clearCacheHint: {
-    fontSize: 12,
-    textAlign: "center",
-    marginHorizontal: 14,
-    marginBottom: 14,
-    lineHeight: 16,
+  maintenanceHintLast: {
+    paddingBottom: 14,
   },
 });

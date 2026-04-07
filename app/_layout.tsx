@@ -270,6 +270,11 @@ export default function RootLayout() {
   const [insets, setInsets] = useState<EdgeInsets>(initialInsets);
   const [frame, setFrame] = useState<Rect>(initialFrame);
 
+  /** Freeze first-paint metrics — useMemo([initialInsets, initialFrame]) could churn → SafeAreaProvider remount loop → max update depth. */
+  const frozenProviderMetricsRef = useRef(
+    initialWindowMetrics ?? { insets: initialInsets, frame: initialFrame },
+  );
+
   // Initialize Manus runtime for cookie injection from parent container
   useEffect(() => {
     initManusRuntime();
@@ -488,9 +493,8 @@ export default function RootLayout() {
   }, [replaceTrpcClient]);
 
   /** Use device metrics as-is — inflating bottom inset here doubled with BottomTabBar + tabBarStyle and caused a gap under the tab bar. */
-  const providerInitialMetrics = useMemo(() => {
-    return initialWindowMetrics ?? { insets: initialInsets, frame: initialFrame };
-  }, [initialInsets, initialFrame]);
+  const providerInitialMetrics =
+    frozenProviderMetricsRef.current ?? { insets: initialInsets, frame: initialFrame };
 
   const loadingShell = (
     <ThemeProvider>

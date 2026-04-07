@@ -6,12 +6,29 @@ const GMAIL_SHEETS_SCOPES = [
   "https://www.googleapis.com/auth/spreadsheets",
 ];
 
-export function configureGoogleSignInForGmail(webClientId: string) {
-  GoogleSignin.configure({
+type ConfigureOptions = {
+  iosClientId?: string;
+};
+
+export async function configureGoogleSignInForGmail(
+  webClientId: string,
+  options?: ConfigureOptions,
+) {
+  const cfg: {
+    webClientId: string;
+    iosClientId?: string;
+    scopes: string[];
+    offlineAccess: boolean;
+  } = {
     webClientId,
     scopes: GMAIL_SHEETS_SCOPES,
     offlineAccess: false,
-  });
+  };
+  const iosClientId = options?.iosClientId?.trim();
+  if (iosClientId) {
+    cfg.iosClientId = iosClientId;
+  }
+  await Promise.resolve(GoogleSignin.configure(cfg));
 }
 
 export async function signInWithGoogleForGmailAndSheets(): Promise<{

@@ -9,10 +9,43 @@
  * If the browser shows "connection refused" on localhost, use manual mode:
  *   pnpm exec tsx scripts/get-refresh-token.ts --manual
  * Then copy the FULL address from the browser bar (it still contains ?code=... even if the page errors).
+ *
+ * Windows PowerShell (paste breaks or Empty paste): pass the redirect URL without typing it at PS>:
+ *   $env:GOOGLE_OAUTH_URL = 'http://localhost:3001/oauth2callback?code=...&scope=...'
+ *   pnpm exec tsx scripts/get-refresh-token.ts --manual
+ * Use single quotes so & is not treated as a command separator. Clear after: Remove-Item Env:GOOGLE_OAUTH_URL
+ *
+ * Or put the same single line in a file and run:
+ *   pnpm exec tsx scripts/get-refresh-token.ts --manual --code-file=C:\Users\You\oauth-redirect.txt
  */
 
+import { execFileSync } from "child_process";
+import * as fs from "fs";
 import * as http from "http";
+import * as os from "os";
+import * as path from "path";
 import * as readline from "readline";
+
+/** Terminal line-wrap often breaks long OAuth URLs when pasted → Google says "response_type missing". */
+function writeAuthUrlOneLineFile(url: string): string {
+  const p = path.join(os.tmpdir(), "invoice-app-google-oauth-url.txt");
+  fs.writeFileSync(p, url, "utf8");
+  return p;
+}
+
+function tryOpenDefaultBrowser(url: string): void {
+  try {
+    if (process.platform === "win32") {
+      execFileSync("cmd", ["/c", "start", "", url], { stdio: "ignore", windowsHide: true });
+    } else if (process.platform === "darwin") {
+      execFileSync("open", [url], { stdio: "ignore" });
+    } else {
+      execFileSync("xdg-open", [url], { stdio: "ignore" });
+    }
+  } catch {
+    /* optional */
+  }
+}
 
 // ─── Config ────────────────────────────────────────────────────────────────────
 // Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET as env vars, or paste them directly
@@ -25,7 +58,11 @@ const SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 
 function parseAuthCodeFromUserInput(raw: string): string {
   const trimmed = raw.trim();
-  if (!trimmed) throw new Error("Empty paste.");
+  if (!trimmed) {
+    throw new Error(
+      "Empty input. On PowerShell do not paste at the PS> line (use the script prompt, or set GOOGLE_OAUTH_URL).",
+    );
+  }
   if (trimmed.includes("code=")) {
     try {
       const url = trimmed.startsWith("http")
@@ -52,6 +89,27 @@ function promptLine(question: string): Promise<string> {
   });
 }
 
+/** Avoid interactive paste on Windows (PowerShell & readline issues). */
+function readPresetOAuthRedirectFromEnvOrFile(): string | null {
+  const fromEnv =
+    process.env.GOOGLE_OAUTH_URL?.trim() ||
+    process.env.GOOGLE_OAUTH_CODE?.trim() ||
+    "";
+  if (fromEnv) return fromEnv;
+
+  const arg = process.argv.find((a) => a.startsWith("--code-file="));
+  if (!arg) return null;
+  let fp = arg.slice("--code-file=".length).trim();
+  if ((fp.startsWith('"') && fp.endsWith('"')) || (fp.startsWith("'") && fp.endsWith("'"))) {
+    fp = fp.slice(1, -1);
+  }
+  if (!fp || !fs.existsSync(fp)) {
+    console.error(`❌ --code-file path not found: ${fp || "(empty)"}`);
+    process.exit(1);
+  }
+  return fs.readFileSync(fp, "utf8").trim();
+}
+
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -73,20 +131,45 @@ async function main() {
   authUrl.searchParams.set("access_type",   "offline");
   authUrl.searchParams.set("prompt",        "consent"); // force refresh_token to be issued
 
+  const authUrlString = authUrl.toString();
+  const urlBackupPath = writeAuthUrlOneLineFile(authUrlString);
+
   console.log("\n📋 Open this URL in your browser and sign in with Google:\n");
-  console.log(authUrl.toString());
+  console.log(authUrlString);
+  console.log(
+    "\n⚠️  Windows: copying from the terminal can break the link (you may see “response_type missing”).\n" +
+      `    → One-line copy: open Notepad → File → Open → paste this path in the address bar:\n` +
+      `      ${urlBackupPath}\n` +
+      "    → Or we try to open your default browser now…\n",
+  );
+  tryOpenDefaultBrowser(authUrlString);
 
   let code: string;
 
   if (manual) {
-    console.log(`
+    const preset = readPresetOAuthRedirectFromEnvOrFile();
+    if (preset) {
+      console.log(
+        "\n✓ Using GOOGLE_OAUTH_URL / GOOGLE_OAUTH_CODE / --code-file=... (skipping paste prompt).\n",
+      );
+      code = parseAuthCodeFromUserInput(preset);
+    } else {
+      console.log(`
 --- 수동 모드 (--manual) ---
 브라우저에서 로그인한 뒤 "사이트에 연결할 수 없음"이 나와도 괜찮습니다.
-주소창(위쪽)의 전체 주소를 보면 ...?code=4%2F0A... 같은 긴 코드가 붙어 있습니다.
-그 주소 전체를 복사해서 아래에 붙여넣고 Enter 하세요.
+주소창의 전체 주소(...?code=...&scope=...)를 복사하세요.
+
+Windows PowerShell에서 붙여넣기가 어렵면 이 창을 닫고:
+  $env:GOOGLE_OAUTH_URL = '여기에_주소창_전체_한줄'
+  pnpm exec tsx scripts/get-refresh-token.ts --manual
+(작은따옴표 ' 로 감싸서 & 오류를 피하세요.)
+
+또는 메모장에 주소 한 줄 저장 후:
+  pnpm exec tsx scripts/get-refresh-token.ts --manual --code-file=C:\\경로\\oauth.txt
 `);
-    const pasted = await promptLine("주소 전체 또는 code 값 붙여넣기: ");
-    code = parseAuthCodeFromUserInput(pasted);
+      const pasted = await promptLine("주소 전체 또는 code 값 붙여넣기: ");
+      code = parseAuthCodeFromUserInput(pasted);
+    }
   } else {
     console.log("\n로컬 서버가 3001 포트에서 code를 기다립니다. 브라우저에서 허용하면 자동으로 진행됩니다.");
     console.log("(연결 거부가 나오면 터미널에서 Ctrl+C 후 같은 명령에 --manual 을 붙여 다시 실행하세요.)\n");

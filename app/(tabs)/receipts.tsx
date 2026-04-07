@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import {
   Alert,
   FlatList,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -15,9 +16,21 @@ import {
 
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { APP_SCREEN_HEADER } from "@/constants/app-typography";
+import {
+  invoiceListAmountText,
+  invoiceListBody,
+  invoiceListRow1,
+  invoiceListRowOuter,
+  invoiceListVendorText,
+  INVOICE_LIST_ICON_GLYPH,
+  INVOICE_LIST_ICON_RADIUS,
+  INVOICE_LIST_ICON_SIZE,
+} from "@/constants/invoice-list-layout";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
-import { displayInvoiceNumberWithHash } from "@/lib/invoice-display";
+import { displayInvoiceNumberWithHash, formatInvoiceDateShortEn } from "@/lib/invoice-display";
+import { translucentTile } from "@/lib/translucent-ui";
 import { trpc } from "@/lib/trpc";
 import type { Invoice } from "@/shared/invoice-types";
 
@@ -48,9 +61,12 @@ function InvoiceCard({
   onLongPress: (invoice: Invoice) => void;
 }) {
   const colors = useColors();
+  const t = translucentTile(colors);
   const router = useRouter();
   const sourceColor = invoice.source === "camera" ? colors.camera : colors.email;
   const sourceLabel = invoice.source === "camera" ? "Camera" : "Email";
+
+  const safeDate = formatInvoiceDateShortEn(invoice.date);
 
   return (
     <Pressable
@@ -59,72 +75,83 @@ function InvoiceCard({
       delayLongPress={400}
       style={({ pressed }) => [
         styles.card,
-        { backgroundColor: colors.surface, borderColor: colors.border },
-        pressed && { opacity: 0.75 },
+        {
+          backgroundColor: pressed ? t.bgPressed : t.bg,
+          borderColor: t.border,
+        },
       ]}
     >
       <View style={styles.cardTop}>
-        <View style={styles.cardLeft}>
-          <View style={[styles.cardIcon, { backgroundColor: sourceColor + "15" }]}>
-            <IconSymbol
-              name={invoice.source === "camera" ? "camera.fill" : "envelope.fill"}
-              size={18}
-              color={sourceColor}
-            />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.cardVendor, { color: colors.foreground }]} numberOfLines={1}>
+        <View style={[styles.cardIcon, { backgroundColor: sourceColor }]}>
+          <IconSymbol
+            name={invoice.source === "camera" ? "camera.fill" : "envelope.fill"}
+            size={INVOICE_LIST_ICON_GLYPH}
+            color="#fff"
+          />
+        </View>
+        <View style={styles.cardTopBody}>
+          <View style={styles.cardTopRow1}>
+            <Text style={[styles.cardVendor, { color: colors.foreground }]} numberOfLines={2}>
               {invoice.vendor || "Unknown Vendor"}
             </Text>
-            <Text style={[styles.cardInvNum, { color: colors.muted }]}>
-              {displayInvoiceNumberWithHash(invoice.invoiceNumber)}
+            <Text style={[styles.cardAmount, { color: colors.foreground }]} numberOfLines={1}>
+              €{invoice.totalAmount.toFixed(2)}
             </Text>
           </View>
-        </View>
-        <View style={styles.cardRight}>
-          <Text style={[styles.cardAmount, { color: colors.foreground }]}>
-            €{invoice.totalAmount.toFixed(2)}
+          <Text style={[styles.cardInvNum, { color: colors.muted }]} numberOfLines={1}>
+            {displayInvoiceNumberWithHash(invoice.invoiceNumber)}
           </Text>
-          <View style={[styles.sourceBadge, { backgroundColor: sourceColor + "20" }]}>
-            <Text style={[styles.sourceBadgeText, { color: sourceColor }]}>{sourceLabel}</Text>
-          </View>
         </View>
       </View>
 
       <View style={[styles.cardDivider, { backgroundColor: colors.border }]} />
 
       <View style={styles.cardBottom}>
-        <View style={styles.cardMeta}>
-          <IconSymbol name="calendar" size={12} color={colors.muted} />
-          <Text style={[styles.cardMetaText, { color: colors.muted }]}>
-            {new Date(invoice.date).toLocaleDateString("en-US", {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-            })}
-          </Text>
-        </View>
-        <View style={styles.cardMeta}>
-          <IconSymbol name="tag.fill" size={12} color={colors.muted} />
-          <Text style={[styles.cardMetaText, { color: colors.muted }]}>{invoice.category}</Text>
-        </View>
-        <View style={styles.cardMeta}>
-          <Text style={[styles.ivaLabel, { color: colors.muted }]}>IVA</Text>
-          <Text style={[styles.cardMetaText, { color: colors.warning }]}>
-            €{invoice.ivaAmount.toFixed(2)}
-          </Text>
-        </View>
-        {invoice.exportedToSheets ? (
-          <View style={styles.cardMeta}>
-            <IconSymbol name="checkmark.circle.fill" size={12} color={colors.success} />
-            <Text style={[styles.cardMetaText, { color: colors.success }]}>Exported</Text>
+        <View style={styles.cardMetaRow}>
+          <View style={styles.cardMetaStart}>
+            <IconSymbol name="calendar" size={14} color={colors.muted} />
+            <Text style={[styles.cardMetaText, { color: colors.muted }]} numberOfLines={1}>
+              {safeDate}
+            </Text>
           </View>
-        ) : (
-          <View style={styles.cardMeta}>
-            <IconSymbol name="clock.fill" size={12} color={colors.warning} />
-            <Text style={[styles.cardMetaText, { color: colors.warning }]}>Pending</Text>
+          <View style={styles.cardMetaCategory}>
+            <IconSymbol name="tag.fill" size={14} color={colors.muted} />
+            <Text
+              style={[styles.cardMetaText, styles.cardCategoryText, { color: colors.muted }]}
+              numberOfLines={1}
+            >
+              {invoice.category}
+            </Text>
           </View>
-        )}
+        </View>
+        <View style={styles.cardMetaRow}>
+          <View style={styles.cardMetaStart}>
+            <Text style={[styles.ivaLabel, { color: colors.muted }]}>IVA</Text>
+            <Text style={[styles.cardMetaText, styles.cardIvaAmount, { color: colors.warning }]}>
+              €{invoice.ivaAmount.toFixed(2)}
+            </Text>
+          </View>
+          <View style={styles.cardMetaStatus}>
+            {invoice.exportedToSheets ? (
+              <View style={styles.statusRow}>
+                <IconSymbol name="checkmark.circle.fill" size={14} color={colors.success} />
+                <Text style={[styles.cardMetaText, styles.cardStatusText, { color: colors.success }]}>
+                  Exported
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.statusRow}>
+                <IconSymbol name="clock.fill" size={14} color={colors.warning} />
+                <Text style={[styles.cardMetaText, styles.cardStatusText, { color: colors.warning }]}>
+                  Pending
+                </Text>
+              </View>
+            )}
+            <View style={[styles.sourceBadge, { backgroundColor: colors.foreground + "14" }]}>
+              <Text style={[styles.sourceBadgeText, { color: sourceColor }]}>{sourceLabel}</Text>
+            </View>
+          </View>
+        </View>
       </View>
     </Pressable>
   );
@@ -132,6 +159,7 @@ function InvoiceCard({
 
 export default function ReceiptsScreen() {
   const colors = useColors();
+  const tile = translucentTile(colors);
   const router = useRouter();
   const { invoices, loading, deleteInvoice, reload } = useInvoices();
   const deleteFromSheetsMutation = trpc.invoices.deleteInvoiceFromSheets.useMutation();
@@ -221,7 +249,7 @@ export default function ReceiptsScreen() {
       <FlatList
         style={{ flex: 1, backgroundColor: colors.background }}
         data={filtered}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item, index) => `${item.id}__${item.createdAt ?? ""}__${index}`}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
@@ -229,11 +257,12 @@ export default function ReceiptsScreen() {
           <View style={styles.header}>
             <Text style={[styles.title, { color: colors.foreground }]}>Receipts</Text>
 
+            <View style={[styles.filtersCard, { backgroundColor: tile.bg, borderColor: tile.border }]}>
             {/* Search bar */}
             <View
               style={[
                 styles.searchBar,
-                { backgroundColor: colors.surface, borderColor: colors.border },
+                { backgroundColor: colors.background, borderColor: colors.border },
               ]}
             >
               <IconSymbol name="magnifyingglass" size={18} color={colors.muted} />
@@ -259,7 +288,7 @@ export default function ReceiptsScreen() {
                 <TextInput
                   style={[
                     styles.dateInput,
-                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.surface },
+                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background },
                   ]}
                   placeholder="YYYY-MM-DD"
                   placeholderTextColor={colors.muted}
@@ -273,7 +302,7 @@ export default function ReceiptsScreen() {
                 <TextInput
                   style={[
                     styles.dateInput,
-                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.surface },
+                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background },
                   ]}
                   placeholder="YYYY-MM-DD"
                   placeholderTextColor={colors.muted}
@@ -291,7 +320,7 @@ export default function ReceiptsScreen() {
                 onPress={() => setShowCategoryDropdown((v) => !v)}
                 style={[
                   styles.categoryBtn,
-                  { borderColor: colors.border, backgroundColor: colors.surface },
+                  { borderColor: colors.border, backgroundColor: colors.background },
                 ]}
               >
                 <Text style={[styles.categoryBtnText, { color: colors.foreground }]}>
@@ -309,7 +338,7 @@ export default function ReceiptsScreen() {
               <View
                 style={[
                   styles.dropdown,
-                  { backgroundColor: colors.surface, borderColor: colors.border },
+                  { backgroundColor: colors.background, borderColor: colors.border },
                 ]}
               >
                 <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled>
@@ -354,18 +383,21 @@ export default function ReceiptsScreen() {
                 </Pressable>
               )}
             </View>
+            </View>
 
             {/* Add Manual Invoice Button */}
             <Pressable
               onPress={() => router.push("/manual-invoice" as never)}
+              accessibilityRole="button"
+              accessibilityLabel="Add manual invoice"
               style={({ pressed }) => [
                 styles.addBtn,
                 { backgroundColor: colors.primary },
-                pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
+                pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] },
               ]}
             >
-              <IconSymbol name="plus.circle.fill" size={20} color="#fff" />
-              <Text style={styles.addBtnText}>Add Manual Invoice</Text>
+              <IconSymbol name="plus.circle.fill" size={22} color="#fff" />
+              <Text style={styles.addBtnText}>+ Add Manual Invoice</Text>
             </Pressable>
           </View>
         }
@@ -402,40 +434,48 @@ export default function ReceiptsScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 },
-  title: { fontSize: 28, fontWeight: "700", marginBottom: 14 },
+  header: { paddingHorizontal: 20, paddingTop: 22, paddingBottom: 8 },
+  title: { ...APP_SCREEN_HEADER, marginBottom: 14 },
+  filtersCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 14,
+    gap: 2,
+    marginBottom: 14,
+  },
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
     borderRadius: 12,
     borderWidth: 1,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
     gap: 8,
-    marginBottom: 10,
+    marginBottom: 12,
   },
-  searchInput: { flex: 1, fontSize: 15 },
-  dateRow: { flexDirection: "row", gap: 10, marginBottom: 10 },
-  dateField: { flex: 1, gap: 4 },
-  dateLabel: { fontSize: 12, fontWeight: "500" },
+  searchInput: { flex: 1, fontSize: 16 },
+  dateRow: { flexDirection: "row", gap: 10, marginBottom: 12 },
+  dateField: { flex: 1, gap: 6 },
+  dateLabel: { fontSize: 12, fontWeight: "700" },
   dateInput: {
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
     fontSize: 14,
+    fontWeight: "500",
   },
-  categoryRow: { gap: 4, marginBottom: 4 },
+  categoryRow: { gap: 6, marginBottom: 2 },
   categoryBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
-  categoryBtnText: { fontSize: 14, fontWeight: "500" },
+  categoryBtnText: { fontSize: 15, fontWeight: "700" },
   dropdown: {
     borderRadius: 10,
     borderWidth: 1,
@@ -449,52 +489,125 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 8,
-    marginBottom: 12,
+    marginTop: 10,
+    marginBottom: 4,
   },
-  countText: { fontSize: 13 },
-  clearText: { fontSize: 13, fontWeight: "600" },
+  countText: { fontSize: 13, fontWeight: "600" },
+  clearText: { fontSize: 13, fontWeight: "800" },
   addBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginBottom: 8,
+    gap: 10,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    minHeight: 58,
+    borderRadius: 16,
+    marginBottom: 10,
+    ...(Platform.OS === "ios"
+      ? {
+          shadowColor: "#000",
+          shadowOpacity: 0.2,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 5 },
+        }
+      : { elevation: 5 }),
   },
-  addBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  addBtnText: { color: "#fff", fontSize: 17, fontWeight: "800", letterSpacing: -0.3 },
   listContent: { paddingBottom: 32 },
   card: {
     marginHorizontal: 20,
-    marginBottom: 10,
-    borderRadius: 14,
+    marginBottom: 12,
+    borderRadius: 16,
     borderWidth: 1,
-    padding: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
   },
-  cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  cardLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  cardTop: {
+    ...invoiceListRowOuter,
+    alignItems: "center",
+  },
+  cardTopBody: {
+    ...invoiceListBody,
+    gap: 4,
+  },
+  cardTopRow1: invoiceListRow1,
   cardIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: INVOICE_LIST_ICON_SIZE,
+    height: INVOICE_LIST_ICON_SIZE,
+    borderRadius: INVOICE_LIST_ICON_RADIUS,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
-  cardVendor: { fontSize: 15, fontWeight: "600" },
-  cardInvNum: { fontSize: 12, marginTop: 1 },
-  cardRight: { alignItems: "flex-end", gap: 4 },
-  cardAmount: { fontSize: 17, fontWeight: "700" },
-  sourceBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 20 },
-  sourceBadgeText: { fontSize: 10, fontWeight: "600" },
-  cardDivider: { height: 1, marginVertical: 10 },
-  cardBottom: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  cardMeta: { flexDirection: "row", alignItems: "center", gap: 4 },
-  cardMetaText: { fontSize: 11, fontWeight: "500" },
-  ivaLabel: { fontSize: 10, fontWeight: "700" },
+  cardVendor: {
+    ...invoiceListVendorText,
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 4,
+  },
+  cardInvNum: { fontSize: 12, fontWeight: "600", lineHeight: 16 },
+  cardAmount: {
+    ...invoiceListAmountText,
+    minWidth: 72,
+    flexShrink: 0,
+  },
+  sourceBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
+  sourceBadgeText: { fontSize: 11, fontWeight: "800" },
+  cardDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginTop: 12,
+    marginBottom: 12,
+    alignSelf: "stretch",
+  },
+  cardBottom: { gap: 8 },
+  cardMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    minHeight: 22,
+  },
+  /** Left cell: grows but can shrink; keeps IVA row aligned with icon column. */
+  cardMetaStart: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flex: 1,
+    minWidth: 0,
+  },
+  /** Right cell: never shrinks below content — avoids "Exported" wrapping under the divider. */
+  /** Date row — category aligns right and ellipsizes. */
+  cardMetaCategory: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 6,
+    flex: 1,
+    minWidth: 0,
+  },
+  /** IVA row — status + source pill stay one line, never crushed under the divider. */
+  cardMetaStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+    flexShrink: 0,
+  },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    flexShrink: 0,
+  },
+  cardMetaText: { fontSize: 12, fontWeight: "600" },
+  cardCategoryText: { flexGrow: 1, flexShrink: 1, minWidth: 0, textAlign: "right" },
+  cardIvaAmount: { fontWeight: "800" },
+  cardStatusText: { fontWeight: "800" },
+  ivaLabel: { fontSize: 11, fontWeight: "800", marginRight: 2 },
   emptyState: { alignItems: "center", paddingTop: 60, paddingHorizontal: 40, gap: 12 },
-  emptyTitle: { fontSize: 18, fontWeight: "600" },
-  emptyDesc: { fontSize: 14, textAlign: "center", lineHeight: 20 },
-  emptyBtn: { marginTop: 8, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 },
-  emptyBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  emptyTitle: { fontSize: 20, fontWeight: "700" },
+  emptyDesc: { fontSize: 15, textAlign: "center", lineHeight: 22 },
+  emptyBtn: { marginTop: 8, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 14 },
+  emptyBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
 });

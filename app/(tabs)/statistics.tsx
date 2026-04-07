@@ -4,13 +4,21 @@ import { ScreenContainer } from "@/components/screen-container";
 import { useInvoices } from "@/hooks/use-invoices";
 import { calculateStatistics, formatMonthlyChartData, formatCategoryChartData } from "@/lib/statistics-utils";
 import { LineChart, PieChart } from "react-native-chart-kit";
+import { APP_SCREEN_HEADER, APP_STATS_SECTION, APP_STATS_SUBTITLE } from "@/constants/app-typography";
+import {
+  statsRowAmountText,
+  statsRowSubText,
+  statsRowTitleText,
+} from "@/constants/invoice-list-layout";
 import { useColors } from "@/hooks/use-colors";
+import { translucentTile } from "@/lib/translucent-ui";
 
 const screenWidth = Dimensions.get("window").width;
 const STATS_CHART_WIDTH = screenWidth - 48;
 
 export default function StatisticsScreen() {
   const colors = useColors();
+  const t = translucentTile(colors);
   const { invoices } = useInvoices();
   const [activeTab, setActiveTab] = useState<"monthly" | "category">("monthly");
 
@@ -30,7 +38,7 @@ export default function StatisticsScreen() {
   };
 
   return (
-    <ScreenContainer className="p-4">
+    <ScreenContainer containerClassName="bg-background">
       <ScrollView
         contentContainerStyle={[styles.scrollContent, { backgroundColor: colors.background }]}
         showsVerticalScrollIndicator={false}
@@ -45,21 +53,21 @@ export default function StatisticsScreen() {
 
           <View style={styles.cardCol}>
             <View style={styles.cardRow}>
-              <View style={[styles.statCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={[styles.statCard, { backgroundColor: t.bg, borderColor: t.border }]}>
                 <Text style={[styles.statLabel, { color: colors.muted }]}>Total Invoices</Text>
                 <Text style={[styles.statValue, { color: colors.foreground }]}>{stats.totalCount}</Text>
               </View>
-              <View style={[styles.statCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={[styles.statCard, { backgroundColor: t.bg, borderColor: t.border }]}>
                 <Text style={[styles.statLabel, { color: colors.muted }]}>Total Amount</Text>
                 <Text style={[styles.statValue, { color: colors.primary }]}>€{stats.totalAmount.toFixed(2)}</Text>
               </View>
             </View>
             <View style={styles.cardRow}>
-              <View style={[styles.statCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={[styles.statCard, { backgroundColor: t.bg, borderColor: t.border }]}>
                 <Text style={[styles.statLabel, { color: colors.muted }]}>Total IVA</Text>
                 <Text style={[styles.statValue, { color: colors.warning }]}>€{stats.totalIVA.toFixed(2)}</Text>
               </View>
-              <View style={[styles.statCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={[styles.statCard, { backgroundColor: t.bg, borderColor: t.border }]}>
                 <Text style={[styles.statLabel, { color: colors.muted }]}>Average</Text>
                 <Text style={[styles.statValue, { color: colors.foreground }]}>
                   €{stats.averageAmount.toFixed(2)}
@@ -68,7 +76,7 @@ export default function StatisticsScreen() {
             </View>
           </View>
 
-          <View style={[styles.tabBar, { backgroundColor: colors.surface }]}>
+          <View style={[styles.tabBar, { backgroundColor: t.bg, borderColor: t.border }]}>
             <Pressable
               onPress={() => setActiveTab("monthly")}
               style={[
@@ -107,7 +115,7 @@ export default function StatisticsScreen() {
             <View style={styles.sectionGap}>
               <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Monthly Trend</Text>
               <View
-                style={[styles.chartCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                style={[styles.chartCard, { backgroundColor: t.bg, borderColor: t.border }]}
               >
                 <LineChart
                   data={monthlyChartData}
@@ -123,9 +131,9 @@ export default function StatisticsScreen() {
                 {stats.monthlyStats.map((month) => (
                   <View
                     key={month.month}
-                    style={[styles.listRow, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                    style={[styles.listRow, { backgroundColor: t.bg, borderColor: t.border }]}
                   >
-                    <View>
+                    <View style={styles.listRowLeft}>
                       <Text style={[styles.rowTitle, { color: colors.foreground }]}>{month.month}</Text>
                       <Text style={[styles.rowSub, { color: colors.muted }]}>{month.count} invoices</Text>
                     </View>
@@ -139,7 +147,7 @@ export default function StatisticsScreen() {
             </View>
           ) : activeTab === "monthly" ? (
             <View
-              style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              style={[styles.emptyCard, { backgroundColor: t.bg, borderColor: t.border }]}
             >
               <Text style={{ color: colors.muted }}>No monthly data available</Text>
             </View>
@@ -149,7 +157,7 @@ export default function StatisticsScreen() {
             <View style={styles.sectionGap}>
               <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Category Distribution</Text>
               <View
-                style={[styles.chartCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                style={[styles.chartCard, { backgroundColor: t.bg, borderColor: t.border }]}
               >
                 <PieChart
                   data={categoryChartData}
@@ -167,10 +175,15 @@ export default function StatisticsScreen() {
                 {stats.categoryStats.map((category) => (
                   <View
                     key={category.category}
-                    style={[styles.categoryCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                    style={[styles.categoryCard, { backgroundColor: t.bg, borderColor: t.border }]}
                   >
                     <View style={styles.categoryTop}>
-                      <Text style={[styles.rowTitle, { color: colors.foreground }]}>{category.category}</Text>
+                      <Text
+                        style={[styles.rowTitle, styles.categoryTitleFlex, { color: colors.foreground }]}
+                        numberOfLines={1}
+                      >
+                        {category.category}
+                      </Text>
                       <Text style={[styles.rowAmount, { color: colors.primary }]}>
                         {category.percentage.toFixed(1)}%
                       </Text>
@@ -185,7 +198,7 @@ export default function StatisticsScreen() {
             </View>
           ) : activeTab === "category" ? (
             <View
-              style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              style={[styles.emptyCard, { backgroundColor: t.bg, borderColor: t.border }]}
             >
               <Text style={{ color: colors.muted }}>No category data available</Text>
             </View>
@@ -199,28 +212,30 @@ export default function StatisticsScreen() {
 const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingTop: 22,
     paddingBottom: 24,
   },
   sectionGap: { gap: 24 },
   headerBlock: { gap: 8 },
-  screenTitle: { fontSize: 30, fontWeight: "700" },
-  screenSubtitle: { fontSize: 14, lineHeight: 20 },
+  screenTitle: APP_SCREEN_HEADER,
+  screenSubtitle: APP_STATS_SUBTITLE,
   cardCol: { gap: 12 },
   cardRow: { flexDirection: "row", gap: 12 },
   statCard: {
     flex: 1,
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     borderWidth: 1,
   },
   statLabel: { fontSize: 12, marginBottom: 4 },
   statValue: { fontSize: 24, fontWeight: "700" },
-  tabBar: { flexDirection: "row", gap: 8, borderRadius: 8, padding: 4 },
-  tabBtn: { flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, alignItems: "center" },
-  tabBtnText: { fontSize: 14, fontWeight: "600", textAlign: "center" },
-  sectionTitle: { fontSize: 18, fontWeight: "600" },
+  tabBar: { flexDirection: "row", gap: 8, borderRadius: 12, padding: 5, borderWidth: 1 },
+  tabBtn: { flex: 1, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 9, alignItems: "center" },
+  tabBtnText: { fontSize: 15, fontWeight: "700", textAlign: "center" },
+  sectionTitle: APP_STATS_SECTION,
   chartCard: {
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     borderWidth: 1,
     overflow: "hidden",
@@ -229,15 +244,19 @@ const styles = StyleSheet.create({
   listGap: { gap: 8 },
   listRow: {
     flexDirection: "row",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    borderRadius: 8,
+    gap: 10,
+    borderRadius: 12,
     padding: 12,
     borderWidth: 1,
   },
-  rowTitle: { fontSize: 14, fontWeight: "600" },
-  rowSub: { fontSize: 12, marginTop: 2 },
-  rowRight: { alignItems: "flex-end" },
-  rowAmount: { fontSize: 14, fontWeight: "700" },
+  listRowLeft: { flex: 1, minWidth: 0 },
+  rowTitle: statsRowTitleText,
+  rowSub: statsRowSubText,
+  rowRight: { alignItems: "flex-end", flexShrink: 0, minWidth: 92 },
+  rowAmount: statsRowAmountText,
+  categoryTitleFlex: { flex: 1, minWidth: 0, paddingRight: 8 },
   emptyCard: {
     borderRadius: 12,
     padding: 24,
@@ -245,7 +264,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  categoryCard: { borderRadius: 8, padding: 12, borderWidth: 1 },
-  categoryTop: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 },
-  categoryBottom: { flexDirection: "row", justifyContent: "space-between" },
+  categoryCard: { borderRadius: 12, padding: 12, borderWidth: 1 },
+  categoryTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 6,
+  },
+  categoryBottom: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
 });

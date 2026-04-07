@@ -12,7 +12,9 @@ import {
   Platform,
   Pressable,
   StyleSheet,
+  Switch,
   Text,
+  TextInput,
   View,
 } from "react-native";
 
@@ -24,8 +26,9 @@ import type { Invoice, InvoiceCategory } from "@/shared/invoice-types";
 import { trpc } from "@/lib/trpc";
 import { getApiBaseUrl } from "@/constants/oauth";
 import { PRODUCTION_API_ORIGIN } from "@/constants/receipt-api-origin";
-import { displayInvoiceNumber } from "@/lib/invoice-display";
+import { coerceInvoiceDateIsoForStorage, displayInvoiceNumber } from "@/lib/invoice-display";
 import { getSheetsExportTarget } from "@/lib/sheets-settings";
+import { DEFAULT_MAIN_TRACKER_SHEET_NAME } from "@/shared/sheets-defaults";
 import {
   GMAIL_EMAIL_KEY,
   GMAIL_OAUTH_RETURN_HOST,
@@ -45,9 +48,25 @@ import { isExpoGo } from "@/lib/is-expo-go";
 
 const SETTINGS_KEY = "app_settings_v1";
 
+async function mergeAppSettingsPatch(patch: Record<string, unknown>): Promise<void> {
+  const raw = await AsyncStorage.getItem(SETTINGS_KEY);
+  const cur = raw ? JSON.parse(raw) : {};
+  const next = {
+    spreadsheetId: "",
+    sheetName: DEFAULT_MAIN_TRACKER_SHEET_NAME,
+    autoSaveGmailEmails: false,
+    autoExportToSheets: false,
+    ...cur,
+    ...patch,
+  };
+  await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+}
+
 const WEB_GOOGLE_CLIENT_ID =
   process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ??
   "614052249025-n9uf9hirmtop9phdl1bjsdod8d6sfhg2.apps.googleusercontent.com";
+const IOS_GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? "";
+const GMAIL_FETCH_PAGE_SIZE = 10;
 
 function getNativeAppScheme(): string {
   const s = Constants.expoConfig?.scheme;
@@ -56,8 +75,8 @@ function getNativeAppScheme(): string {
   return "manus20260325194257";
 }
 
-function encodeGmailOAuthState(scheme: string): string {
-  const json = JSON.stringify({ v: 1, scheme });
+function encodeGmailOAuthState(scheme: string, redirectUri: string): string {
+  const json = JSON.stringify({ v: 1, scheme, redirectUri });
   if (typeof globalThis.btoa === "function") {
     return globalThis.btoa(json);
   }
@@ -271,7 +290,10 @@ export default function GmailScreen() {
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
   const [autoExportEnabled, setAutoExportEnabled] = useState(false);
   const [gmailPreparingLabel, setGmailPreparingLabel] = useState("");
+  const [gmailCompleteLabel, setGmailCompleteLabel] = useState("");
   const autoSaveStartedRef = useRef<Set<string>>(new Set());
+  const fetchInFlightRef = useRef(false);
+  const lastAutoFetchKeyRef = useRef("");
 
   const fetchMutation = trpc.invoices.fetchGmailInvoices.useMutation();
   const parseMutation = trpc.invoices.parseEmailInvoice.useMutation();
@@ -290,6 +312,7 @@ export default function GmailScreen() {
       setAutoSaveEnabled(settings.autoSaveGmailEmails ?? false);
       setAutoExportEnabled(settings.autoExportToSheets ?? false);
       setGmailPreparingLabel(settings.gmailPreparingLabel?.trim() ?? "");
+      setGmailCompleteLabel(settings.gmailCompleteLabel?.trim() ?? "");
     });
   }, []);
 
@@ -313,7 +336,8 @@ export default function GmailScreen() {
       if (!url.includes("://gmail-auth")) return;
       const parsed = parseGmailAuthReturnUrl(url);
       if (parsed.error) {
-        Alert.alert("Error", `OAuth failed: ${parsed.error}`);
+        const msg = parsed.detail ? `OAuth failed: ${parsed.error}\n\n${parsed.detail}` : `OAuth failed: ${parsed.error}`;
+        Alert.alert("Error", msg);
         return;
       }
       const saved = await persistGmailOAuthFromParsed(parsed);
@@ -360,10 +384,9 @@ export default function GmailScreen() {
       const oauthBase = getGmailOAuthRedirectBaseUrl();
       const scheme = getNativeAppScheme();
       const appAuthRedirectUri = `${scheme}://${GMAIL_OAUTH_RETURN_HOST}`;
-      const statePayload = encodeGmailOAuthState(scheme);
-
       const clientId = WEB_GOOGLE_CLIENT_ID;
       const redirectUri = `${oauthBase}/auth/gmail/callback`;
+      const statePayload = encodeGmailOAuthState(scheme, redirectUri);
       if (__DEV__) {
         console.log(
           "[Gmail OAuth] redirect_uri (must be in Google Cloud + match this deploy):",
@@ -388,7 +411,7 @@ export default function GmailScreen() {
       });
 
       if (result.type === "success" && result.url) {
-        const { token, email, error } = parseGmailAuthReturnUrl(result.url);
+        const { token, email, error, detail } = parseGmailAuthReturnUrl(result.url);
         if (error) {
           const hint =
             error === "access_denied"
@@ -396,7 +419,16 @@ export default function GmailScreen() {
               : error === "missing_code"
                 ? "The login page did not return a code. Close the browser and try again from the app."
                 : error === "token_exchange_failed"
-                  ? "Server could not exchange the login code. Check Railway env GOOGLE_CLIENT_ID / SECRET and GMAIL_OAUTH_REDIRECT_URI."
+                  ? [
+                      "Server could not exchange the login code.",
+                      detail ?? "",
+                      "",
+                      `OAuth redirect: ${redirectUri}`,
+                      `OAuth host: ${oauthBase}`,
+                      `Client ID: ${clientId}`,
+                    ]
+                      .filter(Boolean)
+                      .join("\n")
                   : error;
           Alert.alert("Gmail sign-in", hint);
           return;
@@ -435,7 +467,15 @@ export default function GmailScreen() {
       /** Prefer native Sign-In when the binary includes RNGoogleSignin (not Expo Go). */
       if (Platform.OS !== "web" && !isExpoGo()) {
         try {
-          configureGoogleSignInForGmail(WEB_GOOGLE_CLIENT_ID);
+          const shouldSkipNativeOnIos = Platform.OS === "ios" && IOS_GOOGLE_CLIENT_ID.trim().length === 0;
+          if (shouldSkipNativeOnIos) {
+            // Native iOS Google Sign-In needs iosClientId or GoogleService-Info.plist.
+            await runWebBrowserOAuth();
+            return;
+          }
+          await configureGoogleSignInForGmail(WEB_GOOGLE_CLIENT_ID, {
+            iosClientId: Platform.OS === "ios" ? IOS_GOOGLE_CLIENT_ID : undefined,
+          });
           const { accessToken: token, email } = await signInWithGoogleForGmailAndSheets();
           const saved = await persistGmailOAuthFromParsed({ token, email });
           if (!saved.ok) {
@@ -449,10 +489,20 @@ export default function GmailScreen() {
           Alert.alert("Success", "Google account connected!");
           return;
         } catch (inner) {
+          const nativeMsg = inner instanceof Error ? inner.message.toLowerCase() : String(inner).toLowerCase();
+          const nativeClientIdMissing =
+            nativeMsg.includes("failed to determine clientid") ||
+            nativeMsg.includes("googleservice-info.plist") ||
+            nativeMsg.includes("iosclientid");
           if (
             inner instanceof Error &&
             inner.message === NATIVE_GOOGLE_SIGNIN_UNAVAILABLE
           ) {
+            await runWebBrowserOAuth();
+            return;
+          }
+          if (nativeClientIdMissing) {
+            // Native GoogleSignIn not configured in this dev build; use browser OAuth instead.
             await runWebBrowserOAuth();
             return;
           }
@@ -469,30 +519,59 @@ export default function GmailScreen() {
 
   const fetchEmails = useCallback(
     async (token?: string) => {
-      const tokenToUse = token || accessToken;
+      const tokenToUse = token?.trim();
       if (!tokenToUse) return;
+      if (fetchInFlightRef.current) return;
 
+      fetchInFlightRef.current = true;
       setFetching(true);
       try {
         const prep = gmailPreparingLabel.trim();
         const result = await fetchMutation.mutateAsync({
           accessToken: tokenToUse,
-          maxResults: 50,
+          maxResults: GMAIL_FETCH_PAGE_SIZE,
           preparingLabelName: prep || undefined,
         });
         setEmails((result.messages as EmailMessage[]) ?? []);
       } catch (err) {
-        Alert.alert("Error", "Failed to fetch Gmail messages. Please try again.");
+        const msg = err instanceof Error ? err.message : String(err);
+        const lower = msg.toLowerCase();
+        // Do not treat "invalid_grant" here — that phrase is from the server's Google Sheets
+        // refresh token (Railway), not from the user's Gmail API token.
+        const tokenProblem =
+          lower.includes("invalid credentials") ||
+          lower.includes("unauthorized") ||
+          lower.includes("401") ||
+          lower.includes("invalid authentication");
+        if (tokenProblem) {
+          await AsyncStorage.removeItem(GMAIL_TOKEN_KEY);
+          await AsyncStorage.removeItem(GMAIL_EMAIL_KEY);
+          lastAutoFetchKeyRef.current = "";
+          setAccessToken("");
+          setUserEmail("");
+          setIsLoggedIn(false);
+          setEmails([]);
+          Alert.alert(
+            "Gmail reconnect needed",
+            "Google access token has expired or is invalid. Please disconnect and sign in again.",
+          );
+          return;
+        }
+        Alert.alert("Error", `Failed to fetch Gmail messages.\n\n${msg.slice(0, 180)}`);
       } finally {
+        fetchInFlightRef.current = false;
         setFetching(false);
       }
     },
-    [accessToken, fetchMutation, gmailPreparingLabel],
+    [fetchMutation, gmailPreparingLabel],
   );
 
   useEffect(() => {
     if (isLoggedIn && accessToken) {
-      fetchEmails();
+      const key = `${accessToken.trim()}|${gmailPreparingLabel.trim().toLowerCase()}`;
+      if (lastAutoFetchKeyRef.current === key) return;
+      lastAutoFetchKeyRef.current = key;
+      void fetchEmails(accessToken);
     }
   }, [isLoggedIn, accessToken, gmailPreparingLabel, fetchEmails]);
 
@@ -503,6 +582,8 @@ export default function GmailScreen() {
         const parsed = await parseMutation.mutateAsync({
           emailText: email.bodyText || email.snippet,
           subject: email.subject,
+          accessToken,
+          messageId: email.id,
         });
         setEmails((prev) =>
           prev.map((e) =>
@@ -518,7 +599,7 @@ export default function GmailScreen() {
         setParsingId(null);
       }
     },
-    [parseMutation]
+    [accessToken, parseMutation]
   );
 
   const handleSave = useCallback(
@@ -530,7 +611,7 @@ export default function GmailScreen() {
         source: "email",
         invoiceNumber: pd.invoiceNumber ?? "",
         vendor: pd.vendor ?? email.from ?? "Unknown",
-        date: pd.date ?? new Date().toISOString().split("T")[0],
+        date: coerceInvoiceDateIsoForStorage(pd.date),
         totalAmount: pd.totalAmount ?? 0,
         ivaAmount: pd.ivaAmount ?? 0,
         baseAmount: (pd.totalAmount ?? 0) - (pd.ivaAmount ?? 0),
@@ -544,8 +625,13 @@ export default function GmailScreen() {
       await addInvoice(invoice);
 
       let exportOutcome: "none" | "ok" | "duplicate" | "failed" = "none";
+      let exportReceiptMissing = false;
       if (autoExportEnabled) {
         try {
+          const gmailTokForExport =
+            accessToken.trim() ||
+            (await AsyncStorage.getItem(GMAIL_TOKEN_KEY))?.trim() ||
+            "";
           const { spreadsheetId, sheetName } = await getSheetsExportTarget();
           const result = await exportMutation.mutateAsync({
             spreadsheetId,
@@ -566,6 +652,15 @@ export default function GmailScreen() {
                 notes: invoice.notes ?? "",
                 items: invoice.items,
                 imageUrl: "",
+                gmailMessageId: email.id,
+                ...(gmailTokForExport
+                  ? {
+                      gmailReceiptFetch: {
+                        userAccessToken: gmailTokForExport,
+                        messageId: email.id,
+                      },
+                    }
+                  : {}),
               },
             ],
             automateSheets: true,
@@ -575,6 +670,8 @@ export default function GmailScreen() {
             exportedAt: new Date().toISOString(),
           });
           exportOutcome = result.rowsAdded === 0 ? "duplicate" : "ok";
+          exportReceiptMissing =
+            exportOutcome === "ok" && Boolean(result.receiptImageMissing);
         } catch (err) {
           console.error("[Gmail] exportToSheets failed:", err);
           exportOutcome = "failed";
@@ -584,18 +681,20 @@ export default function GmailScreen() {
       if (
         autoExportEnabled &&
         (exportOutcome === "ok" || exportOutcome === "duplicate") &&
-        accessToken
+        accessToken &&
+        invoice.totalAmount > 0
       ) {
         try {
           const rawSettings = await AsyncStorage.getItem(SETTINGS_KEY);
           const parsed = rawSettings ? JSON.parse(rawSettings) : {};
           const prep = String(parsed.gmailPreparingLabel ?? "").trim();
           const done = String(parsed.gmailCompleteLabel ?? "").trim();
-          if (prep && done) {
+          // Complete label alone is enough (many users only set "2026 Invoice Complete").
+          if (done) {
             await relabelMutation.mutateAsync({
               accessToken,
               messageId: email.id,
-              removeLabelName: prep,
+              removeLabelName: prep || undefined,
               addLabelName: done,
             });
           }
@@ -623,7 +722,14 @@ export default function GmailScreen() {
           `${invoice.vendor}: saved to Receipts, but Google Sheets export failed. Open the receipt and tap Export.`,
         );
       } else if (exportOutcome === "ok") {
-        Alert.alert("Saved & exported", `${invoice.vendor} is in Receipts and your spreadsheet.`);
+        if (exportReceiptMissing) {
+          Alert.alert(
+            "Saved & exported",
+            `${invoice.vendor} is in your spreadsheet, but the Receipt column has no PDF/image (Gmail could not attach a file). Open the receipt and tap Export again, or remove the duplicate row in Sheets and re-save from Gmail.`,
+          );
+        } else {
+          Alert.alert("Saved & exported", `${invoice.vendor} is in Receipts and your spreadsheet.`);
+        }
       } else if (exportOutcome === "duplicate") {
         Alert.alert(
           "Saved",
@@ -660,6 +766,7 @@ export default function GmailScreen() {
           await signOutGoogleNative();
           await AsyncStorage.removeItem(GMAIL_TOKEN_KEY);
           await AsyncStorage.removeItem(GMAIL_EMAIL_KEY);
+          lastAutoFetchKeyRef.current = "";
           setAccessToken("");
           setUserEmail("");
           setIsLoggedIn(false);
@@ -676,9 +783,7 @@ export default function GmailScreen() {
         <LoginCard
           onLogin={handleGoogleLogin}
           apiBase={getApiBaseUrl()}
-          oauthRedirectBase={
-            Platform.OS === "web" || isExpoGo() ? getGmailOAuthRedirectBaseUrl() : null
-          }
+          oauthRedirectBase={getGmailOAuthRedirectBaseUrl()}
         />
       </ScreenContainer>
     );
@@ -689,7 +794,7 @@ export default function GmailScreen() {
       <FlatList
         style={{ flex: 1, backgroundColor: colors.background }}
         data={emails}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item, index) => `${item.id}__${item.internalDate ?? ""}__${index}`}
         ListHeaderComponent={
           <View style={styles.header}>
             <View style={styles.headerRow}>
@@ -700,13 +805,13 @@ export default function GmailScreen() {
                 </Text>
                 <Text style={[styles.sourceHint, { color: colors.muted }]}>
                   {gmailPreparingLabel.trim()
-                    ? `Source: label “${gmailPreparingLabel.trim()}” (read + unread, up to 50)`
-                    : "Source: keyword search in inbox (up to 50)"}
+                    ? `Source: label “${gmailPreparingLabel.trim()}” (read + unread, up to ${GMAIL_FETCH_PAGE_SIZE})`
+                    : `Source: keyword search in inbox (up to ${GMAIL_FETCH_PAGE_SIZE})`}
                 </Text>
               </View>
               <View style={styles.headerActions}>
                 <Pressable
-                  onPress={() => fetchEmails()}
+                  onPress={() => fetchEmails(accessToken)}
                   disabled={fetching}
                   style={({ pressed }) => [
                     styles.refreshBtn,
@@ -739,6 +844,98 @@ export default function GmailScreen() {
                 {userEmail || "Connected"}
               </Text>
             </View>
+
+            <View style={[styles.automationCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.automationTitle, { color: colors.muted }]}>AUTOMATION &amp; LABELS</Text>
+              <View style={[styles.automationRow, { borderBottomColor: colors.border }]}>
+                <View style={styles.automationRowText}>
+                  <Text style={[styles.automationLabel, { color: colors.foreground }]}>Auto-save Gmail emails</Text>
+                  <Text style={[styles.automationHint, { color: colors.muted }]}>
+                    Save parsed messages to Receipts automatically
+                  </Text>
+                </View>
+                <Switch
+                  value={autoSaveEnabled}
+                  onValueChange={async (v) => {
+                    await mergeAppSettingsPatch({ autoSaveGmailEmails: v });
+                    setAutoSaveEnabled(v);
+                  }}
+                  trackColor={{ false: colors.border, true: colors.primary }}
+                  thumbColor="#ffffff"
+                  ios_backgroundColor={colors.border}
+                />
+              </View>
+              <View style={[styles.automationRow, { borderBottomColor: colors.border }]}>
+                <View style={styles.automationRowText}>
+                  <Text style={[styles.automationLabel, { color: colors.foreground }]}>Auto-export to Sheets</Text>
+                  <Text style={[styles.automationHint, { color: colors.muted }]}>
+                    After save, push rows to your spreadsheet
+                  </Text>
+                </View>
+                <Switch
+                  value={autoExportEnabled}
+                  onValueChange={async (v) => {
+                    await mergeAppSettingsPatch({ autoExportToSheets: v });
+                    setAutoExportEnabled(v);
+                  }}
+                  trackColor={{ false: colors.border, true: colors.primary }}
+                  thumbColor="#ffffff"
+                  ios_backgroundColor={colors.border}
+                />
+              </View>
+              <View
+                style={[
+                  styles.labelFieldBlock,
+                  styles.labelFieldDivider,
+                  { borderBottomColor: colors.border },
+                ]}
+              >
+                <Text style={[styles.labelFieldTitle, { color: colors.foreground }]}>Preparing label</Text>
+                <Text style={[styles.automationHint, { color: colors.muted }]}>
+                  Exact Gmail label name to list here (empty = keyword search in inbox)
+                </Text>
+                <TextInput
+                  style={[
+                    styles.labelInput,
+                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background },
+                  ]}
+                  value={gmailPreparingLabel}
+                  onChangeText={setGmailPreparingLabel}
+                  onEndEditing={async () => {
+                    const t = gmailPreparingLabel.trim();
+                    await mergeAppSettingsPatch({ gmailPreparingLabel: t });
+                    setGmailPreparingLabel(t);
+                  }}
+                  placeholder="e.g. 2026 Preparing Invoices"
+                  placeholderTextColor={colors.muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+              <View style={styles.labelFieldBlock}>
+                <Text style={[styles.labelFieldTitle, { color: colors.foreground }]}>Complete label</Text>
+                <Text style={[styles.automationHint, { color: colors.muted }]}>
+                  After export, message moves here (preparing label removed)
+                </Text>
+                <TextInput
+                  style={[
+                    styles.labelInput,
+                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background },
+                  ]}
+                  value={gmailCompleteLabel}
+                  onChangeText={setGmailCompleteLabel}
+                  onEndEditing={async () => {
+                    const t = gmailCompleteLabel.trim();
+                    await mergeAppSettingsPatch({ gmailCompleteLabel: t });
+                    setGmailCompleteLabel(t);
+                  }}
+                  placeholder="e.g. 2026 Invoice Complete"
+                  placeholderTextColor={colors.muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+            </View>
           </View>
         }
         renderItem={({ item }) => (
@@ -765,10 +962,10 @@ export default function GmailScreen() {
                 No invoice emails found
               </Text>
               <Text style={[styles.emptyDesc, { color: colors.muted }]}>
-                We searched for emails with "factura", "invoice", "recibo" in the subject line
+                We searched for emails with &quot;factura&quot;, &quot;invoice&quot;, &quot;recibo&quot; in the subject line
               </Text>
               <Pressable
-                onPress={() => fetchEmails()}
+                onPress={() => fetchEmails(accessToken)}
                 style={[styles.refreshLargeBtn, { backgroundColor: colors.primary }]}
               >
                 <IconSymbol name="arrow.clockwise" size={16} color="#fff" />
@@ -843,6 +1040,50 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   connectedText: { fontSize: 13, fontWeight: "500" },
+  automationCard: {
+    marginTop: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  automationTitle: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  automationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 12,
+  },
+  automationRowText: { flex: 1, gap: 4, paddingRight: 8 },
+  automationLabel: { fontSize: 15, fontWeight: "700" },
+  automationHint: { fontSize: 11, lineHeight: 15, fontWeight: "500" },
+  labelFieldBlock: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 6,
+  },
+  labelFieldDivider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  labelFieldTitle: { fontSize: 14, fontWeight: "700" },
+  labelInput: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: "500",
+  },
   listContent: { paddingBottom: 32 },
   emailCard: {
     marginHorizontal: 20,
