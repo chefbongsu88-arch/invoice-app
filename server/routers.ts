@@ -946,6 +946,19 @@ function userFacingMessageFromSheetsApiBody(errText: string): string {
   return "Failed to export to Google Sheets. Please try again.";
 }
 
+function isSheetsWriteQuotaError(status: number, errText: string): boolean {
+  return (
+    status === 429 ||
+    /RATE_LIMIT_EXCEEDED|RESOURCE_EXHAUSTED|Write requests per minute per user|write requests/i.test(
+      errText,
+    )
+  );
+}
+
+async function sleepMs(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 
 const RECEIPT_PARSE_SYSTEM = `You read printed receipt and ticket photos from Spain, Europe, and elsewhere. Text may be Spanish or English. Copy every readable business name, date, and money amount into JSON. Photos may be blurry, angled, or on pink/thermal paper — still try hard.
 
@@ -2201,20 +2214,36 @@ export const appRouter = router({
 
         const range = `${sheetName}!A:M`;
         const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
-        const appendRes = await fetch(appendUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({ values: dataRows }),
-        });
+        let appendRes: Response | null = null;
+        let appendErrText = "";
+        const appendRetryDelaysMs = [0, 1200, 3000];
+        for (const delayMs of appendRetryDelaysMs) {
+          if (delayMs > 0) {
+            console.warn(`[Export] Retrying Sheets append after ${delayMs}ms backoff...`);
+            await sleepMs(delayMs);
+          }
+          appendRes = await fetch(appendUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({ values: dataRows }),
+          });
+          if (appendRes.ok) {
+            appendErrText = "";
+            break;
+          }
+          appendErrText = await appendRes.text();
+          if (!isSheetsWriteQuotaError(appendRes.status, appendErrText)) {
+            break;
+          }
+        }
 
-        if (!appendRes.ok) {
-          const errText = await appendRes.text();
-          console.error("Sheets API error:", errText);
+        if (!appendRes?.ok) {
+          console.error("Sheets API error:", appendErrText);
           console.error("Append URL:", appendUrl);
-          throw new Error(userFacingMessageFromSheetsApiBody(errText));
+          throw new Error(userFacingMessageFromSheetsApiBody(appendErrText));
         }
 
         const appendJson = (await appendRes.json()) as {
