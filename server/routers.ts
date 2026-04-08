@@ -2549,7 +2549,7 @@ export const appRouter = router({
 
         // Automatically trigger sheet automation on every upload
         // Always run automation to keep monthly/quarterly sheets in sync
-        if (true) {
+        if (input.automateSheets) {
           try {
             const { automateGoogleSheets, updateMeatMonthlySheet } = await import("./sheets-automation-vendor-aggregated");
             

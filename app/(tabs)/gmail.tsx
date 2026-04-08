@@ -663,7 +663,8 @@ export default function GmailScreen() {
                   : {}),
               },
             ],
-            automateSheets: true,
+            // Avoid hitting Sheets write quota on each single-email export.
+            automateSheets: false,
           });
           await updateInvoice(invoice.id, {
             exportedToSheets: true,
