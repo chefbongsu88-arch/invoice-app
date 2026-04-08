@@ -175,6 +175,25 @@ function decodeGmailBase64UrlToBuffer(raw: string): Buffer | null {
   }
 }
 
+function extractEmbeddedPdfFromMimeMessage(rawBuf: Buffer | null | undefined): Buffer | null {
+  if (!rawBuf?.length) return null;
+  const text = rawBuf.toString("utf-8");
+  if (!/content-type:\s*application\/pdf/i.test(text)) return null;
+  const m = text.match(
+    /content-type:\s*application\/pdf[\s\S]*?content-transfer-encoding:\s*base64[\s\S]*?\r?\n\r?\n([A-Za-z0-9+/=\r\n]+)/i,
+  );
+  const payload = String(m?.[1] ?? "").replace(/[^A-Za-z0-9+/=]/g, "");
+  if (payload.length < 256) return null;
+  try {
+    const out = Buffer.from(payload, "base64");
+    if (!out.length) return null;
+    const mime = detectMimeFromBuffer(out);
+    return mime === "application/pdf" || mime === "application/x-pdf" ? out : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Align with receipt-share / typical Mercadona PDFs (~10–15MB). */
 const GMAIL_RECEIPT_EXPORT_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -259,6 +278,11 @@ async function fetchFirstGmailAttachmentForReceiptExport(
     if (!rawData || typeof rawData !== "string") return;
     const buf = decodeGmailBase64UrlToBuffer(rawData);
     if (!buf?.length || buf.length < 32 || buf.length > GMAIL_RECEIPT_EXPORT_MAX_BYTES) return;
+    const embeddedPdf = mimeRaw.includes("message/rfc822") ? extractEmbeddedPdfFromMimeMessage(buf) : null;
+    if (embeddedPdf?.length) {
+      inlineParts.push({ buffer: embeddedPdf, mime: "application/pdf", priority: 1 });
+      return;
+    }
 
     let mimeOut = resolveGmailAttachmentMime(mimeRaw, filename, buf);
     let priority = mimePriorityForGmailExport(mimeOut);
@@ -286,6 +310,10 @@ async function fetchFirstGmailAttachmentForReceiptExport(
     const att = (await attRes.json()) as { data?: string };
     const buf = decodeGmailBase64UrlToBuffer(att.data ?? "");
     if (!buf?.length || buf.length < 32 || buf.length > GMAIL_RECEIPT_EXPORT_MAX_BYTES) continue;
+    const embeddedPdf = extractEmbeddedPdfFromMimeMessage(buf);
+    if (embeddedPdf?.length) {
+      return { buffer: embeddedPdf, mime: "application/pdf" };
+    }
 
     let mimeOut = resolveGmailAttachmentMime(c.mime, "", buf);
     if (
@@ -1710,6 +1738,14 @@ export const appRouter = router({
                     ) {
                       const label = filename || "attachment.pdf";
                       pdfAttachments.push({ filename: label, inlineData });
+                    } else if (mimeType.includes("message/rfc822") && inlineBuf?.length) {
+                      const embeddedPdf = extractEmbeddedPdfFromMimeMessage(inlineBuf);
+                      if (embeddedPdf?.length) {
+                        pdfAttachments.push({
+                          filename: filename || "embedded-attachment.pdf",
+                          inlineData: embeddedPdf.toString("base64"),
+                        });
+                      }
                     }
                   }
                   for (const child of part.parts ?? []) {
@@ -1841,6 +1877,10 @@ export const appRouter = router({
                     pdfBuf = decodeGmailBase64UrlToBuffer(att.data ?? "");
                   }
                   if (!pdfBuf || pdfBuf.length < 64) continue;
+                  const embeddedPdf = extractEmbeddedPdfFromMimeMessage(pdfBuf);
+                  if (embeddedPdf?.length) {
+                    pdfBuf = embeddedPdf;
+                  }
                   const detectedMime = detectMimeFromBuffer(pdfBuf);
                   const pdfLike =
                     detectedMime === "application/pdf" ||
@@ -2014,7 +2054,7 @@ export const appRouter = router({
 
                 if (!attachmentBestCandidate && /mercadona/i.test(String(input.subject ?? ""))) {
                   console.warn(
-                    `[Email Parse][Mercadona] no structured candidate from attachments. imageOcrBlocks=${imageOcrBlocks.length} pdfTextBlocks=${pdfTextBlocks.length} pdfAttachments=${pdfAttachments.length}`,
+                    `[Email Parse][Mercadona] no structured candidate from attachments. imageOcrBlocks=${imageOcrBlocks.length} pdfTextBlocks=${pdfTextBlocks.length} pdfAttachments=${pdfAttachments.length} payloadMime=${String(detail.payload?.mimeType ?? "")}`,
                   );
                 }
 
