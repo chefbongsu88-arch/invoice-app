@@ -1232,10 +1232,12 @@ function fallbackParseEmailInvoiceFromText(
     /\btotal\s*\(?(?:€|eur)?\)?\s*([0-9]{1,6}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,6}(?:[.,][0-9]{1,2})?)\s+([0-9]{1,6}(?:[.,][0-9]{1,2})?)\b/i,
   );
   const mercadonaTotalFacturaMatch =
-    rawMultiline.match(/(?:^|\n)\s*Total\s+Factura\s+([0-9]{1,6}(?:[.,][0-9]{2}))\s*€?/i) ??
-    normalized.match(/\btotal\s+factura\b[^0-9€]{0,16}([0-9]{1,6}(?:[.,][0-9]{2}))\s*€?/i);
+    rawMultiline.match(/(?:^|\n)\s*Total\s+Factura\s+([0-9]{1,6}(?:[.,][0-9]{2}))\s*(?:€|eur|e)?/i) ??
+    normalized.match(
+      /\btotal\s+factura\b[^0-9€]{0,20}([0-9]{1,6}(?:[.,][0-9]{2}))\s*(?:€|eur|e)?/i,
+    );
   const mercadonaTotalRowMatch = rawMultiline.match(
-    /(?:^|\n)\s*TOTAL\s*\(€\)\s+([0-9]{1,6}(?:[.,][0-9]{2}))\s+([0-9]{1,6}(?:[.,][0-9]{2}))\s+([0-9]{1,6}(?:[.,][0-9]{2}))/i,
+    /(?:^|\n)\s*TOTAL\s*\([^0-9)]*\)\s+([0-9]{1,6}(?:[.,][0-9]{2}))\s+([0-9]{1,6}(?:[.,][0-9]{2}))\s+([0-9]{1,6}(?:[.,][0-9]{2}))/i,
   );
   const mercadonaVendorMatch =
     rawMultiline.match(/(?:^|\n)\s*(MERCADONA\s+S\.?A\.?)\s*(?:\n|$)/i) ??
@@ -1821,7 +1823,7 @@ export const appRouter = router({
                   }
                 }
                 const minPdfTextChars = 72;
-                const maxPdfBytesForGemini = 12 * 1024 * 1024;
+                const maxPdfBytesForGemini = 20 * 1024 * 1024;
                 let allowGeminiPdf = Boolean(ENV.googleGeminiApiKey?.trim());
 
                 for (const info of pdfAttachments.slice(0, maxPdfExtract)) {
