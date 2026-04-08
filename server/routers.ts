@@ -432,6 +432,10 @@ function cleanParsedVendorName(raw: unknown): string {
   if (!s) return "";
   if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/i.test(s)) return "";
   if (/\b(?:noreply|no-reply|do-not-reply|donotreply)\b/i.test(s)) return "";
+  if (/^(?:n[ºo°]\s*factura|factura\s+simplificada|fecha\s+factura|fra\s+simp)\s*:/i.test(s)) return "";
+  if (/^(?:factura|invoice)\s+[A-Z]-?V?\d/i.test(s)) return "";
+  if (/\b(?:n[ºo°]\s*factura|fecha\s+factura|factura\s+simplificada)\b/i.test(s)) return "";
+  if (/^[A-Za-zÀ-ÿ\s]+A-V\d{4,}-\d{4,}/i.test(s)) return "";
   if (
     /^(?:cliente|company|nombre|direcci[oó]n|poblaci[oó]n|empresa|factura|invoice|receipt|email subject|email content|attachment context)$/i.test(
       s,
@@ -516,9 +520,10 @@ function mergeEmailInvoiceCandidates(
   const secondaryVendor = cleanParsedVendorName(secondary.vendor);
   const primaryInvoiceNumber = cleanParsedInvoiceNumber(primary.invoiceNumber);
   const secondaryInvoiceNumber = cleanParsedInvoiceNumber(secondary.invoiceNumber);
+  const chosenVendor = pickBestParsedVendor(primaryVendor, secondaryVendor);
   return {
     invoiceNumber: String(primaryInvoiceNumber || secondaryInvoiceNumber || "").trim(),
-    vendor: primaryVendor || secondaryVendor || "",
+    vendor: chosenVendor,
     date: String(primary.date || secondary.date || "").trim(),
     totalAmount: primary.totalAmount > 0 ? primary.totalAmount : secondary.totalAmount,
     ivaAmount: primary.ivaAmount > 0 ? primary.ivaAmount : secondary.ivaAmount,
