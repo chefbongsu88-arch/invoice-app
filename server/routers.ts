@@ -1595,7 +1595,7 @@ export const appRouter = router({
                 };
 
                 const imageAttachmentIds: { attachmentId: string; filename: string; mimeType: string }[] = [];
-                const pdfAttachments: { attachmentId: string; filename: string }[] = [];
+                const pdfAttachments: { attachmentId?: string; filename: string; inlineData?: string }[] = [];
                 const headers = detail.payload?.headers ?? [];
                 headerFrom = String(
                   headers.find((h) => String(h.name ?? "").toLowerCase() === "from")?.value ?? "",
@@ -1609,12 +1609,13 @@ export const appRouter = router({
                 const walk = (part: {
                   mimeType?: string;
                   filename?: string;
-                  body?: { attachmentId?: string };
+                  body?: { attachmentId?: string; data?: string };
                   parts?: any[];
                 }) => {
                   const mimeType = String(part.mimeType ?? "").toLowerCase();
                   const filename = String(part.filename ?? "").trim();
                   const attachmentId = part.body?.attachmentId?.trim();
+                  const inlineData = typeof part.body?.data === "string" ? part.body.data : "";
                   // Many invoice emails use inline images (cid) with no filename — still has attachmentId.
                   if (attachmentId) {
                     if (mimeType.startsWith("image/")) {
@@ -1630,6 +1631,28 @@ export const appRouter = router({
                       const label = filename || "attachment.pdf";
                       pdfAttachments.push({ attachmentId, filename: label });
                     }
+                  } else if (inlineData) {
+                    const inlineBuf = decodeGmailBase64UrlToBuffer(inlineData);
+                    let inlineMime = mimeType;
+                    if (inlineMime === "application/octet-stream" && inlineBuf?.length) {
+                      inlineMime = detectMimeFromBuffer(inlineBuf);
+                    }
+                    if (inlineMime.startsWith("image/")) {
+                      const label =
+                        filename ||
+                        `inline.${inlineMime.includes("png") ? "png" : inlineMime.includes("gif") ? "gif" : inlineMime.includes("webp") ? "webp" : "jpg"}`;
+                      imageAttachmentIds.push({
+                        attachmentId: "",
+                        filename: label,
+                        mimeType: inlineMime,
+                      });
+                    } else if (
+                      inlineMime === "application/pdf" ||
+                      inlineMime === "application/x-pdf"
+                    ) {
+                      const label = filename || "attachment.pdf";
+                      pdfAttachments.push({ filename: label, inlineData });
+                    }
                   }
                   for (const child of part.parts ?? []) {
                     walk(child);
@@ -1644,13 +1667,16 @@ export const appRouter = router({
                 const imageOcrBlocks: string[] = [];
                 for (const info of imageAttachmentIds.slice(0, maxImageOcr)) {
                   try {
-                    const attRes = await fetch(
-                      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(info.attachmentId)}`,
-                      { headers: { Authorization: `Bearer ${accessToken}` } },
-                    );
-                    if (!attRes.ok) continue;
-                    const att = (await attRes.json()) as { data?: string };
-                    const decodedBuf = decodeGmailBase64UrlToBuffer(att.data ?? "");
+                    let decodedBuf: Buffer | null = null;
+                    if (info.attachmentId) {
+                      const attRes = await fetch(
+                        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(info.attachmentId)}`,
+                        { headers: { Authorization: `Bearer ${accessToken}` } },
+                      );
+                      if (!attRes.ok) continue;
+                      const att = (await attRes.json()) as { data?: string };
+                      decodedBuf = decodeGmailBase64UrlToBuffer(att.data ?? "");
+                    }
                     const b64 = decodedBuf ? decodedBuf.toString("base64") : "";
                     if (!b64 || b64.length < 64) continue;
 
@@ -1744,13 +1770,18 @@ export const appRouter = router({
                 let allowGeminiPdf = Boolean(ENV.googleGeminiApiKey?.trim());
 
                 for (const info of pdfAttachments.slice(0, maxPdfExtract)) {
-                  const attRes = await fetch(
-                    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(info.attachmentId)}`,
-                    { headers: { Authorization: `Bearer ${accessToken}` } },
-                  );
-                  if (!attRes.ok) continue;
-                  const att = (await attRes.json()) as { data?: string };
-                  const pdfBuf = decodeGmailBase64UrlToBuffer(att.data ?? "");
+                  let pdfBuf: Buffer | null = null;
+                  if (info.inlineData) {
+                    pdfBuf = decodeGmailBase64UrlToBuffer(info.inlineData);
+                  } else if (info.attachmentId) {
+                    const attRes = await fetch(
+                      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(info.attachmentId)}`,
+                      { headers: { Authorization: `Bearer ${accessToken}` } },
+                    );
+                    if (!attRes.ok) continue;
+                    const att = (await attRes.json()) as { data?: string };
+                    pdfBuf = decodeGmailBase64UrlToBuffer(att.data ?? "");
+                  }
                   if (!pdfBuf || pdfBuf.length < 64) continue;
 
                   let pdfText = "";
