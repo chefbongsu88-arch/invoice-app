@@ -432,6 +432,9 @@ function cleanParsedVendorName(raw: unknown): string {
   if (!s) return "";
   if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/i.test(s)) return "";
   if (/\b(?:noreply|no-reply|do-not-reply|donotreply)\b/i.test(s)) return "";
+  if (/^factura(?:[-\s_]?correo)?$/i.test(s)) return "";
+  if (/^(?:invoice|receipt)(?:[-\s_]?mail|[-\s_]?email)?$/i.test(s)) return "";
+  if (/^(?:factura|invoice)(?:[\s:_-].*)$/i.test(s)) return "";
   if (/^(?:n[ºo°]\s*factura|factura\s+simplificada|fecha\s+factura|fra\s+simp)\s*:/i.test(s)) return "";
   if (/^(?:factura|invoice)\s+[A-Z]-?V?\d/i.test(s)) return "";
   if (/\b(?:n[ºo°]\s*factura|fecha\s+factura|factura\s+simplificada)\b/i.test(s)) return "";
