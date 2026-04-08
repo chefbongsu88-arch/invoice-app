@@ -175,7 +175,8 @@ function decodeGmailBase64UrlToBuffer(raw: string): Buffer | null {
   }
 }
 
-const GMAIL_RECEIPT_EXPORT_MAX_BYTES = 8 * 1024 * 1024;
+/** Align with receipt-share / typical Mercadona PDFs (~10–15MB). */
+const GMAIL_RECEIPT_EXPORT_MAX_BYTES = 20 * 1024 * 1024;
 
 type GmailExportAttCandidate = { attachmentId: string; mime: string; priority: number };
 
@@ -450,7 +451,13 @@ function cleanParsedVendorName(raw: unknown): string {
   if (/^(?:n[ºo°]\s*factura|factura\s+simplificada|fecha\s+factura|fra\s+simp)\s*:/i.test(s)) return "";
   if (/^(?:factura|invoice)\s+[A-Z]-?V?\d/i.test(s)) return "";
   if (/\b(?:n[ºo°]\s*factura|fecha\s+factura|factura\s+simplificada)\b/i.test(s)) return "";
-  if (/^[A-Za-zÀ-ÿ\s]+A-V\d{4,}-\d{4,}/i.test(s)) return "";
+  /** Subject lines like "Factura Mercadona A-V2026-1409771" — keep vendor, drop invoice id. */
+  if (/^[A-Za-zÀ-ÿ\s]+A[\-‑–—]V\d{4}[\-‑–—]\d+/i.test(s)) {
+    const stripped = s.replace(/\s+A[\-‑–—]V\d{4}[\-‑–—]\d+.*$/i, "").trim();
+    if (stripped) return stripped;
+    return "";
+  }
+  if (/^unknown\b/i.test(s)) return "";
   if (
     /^(?:cliente|company|nombre|direcci[oó]n|poblaci[oó]n|empresa|factura|invoice|receipt|email subject|email content|attachment context)$/i.test(
       s,
@@ -550,6 +557,36 @@ function mergeEmailInvoiceCandidates(
     subject: String(primary.subject || secondary.subject || "").trim(),
     items: Array.isArray(primary.items) && primary.items.length > 0 ? primary.items : secondary.items,
   };
+}
+
+/** Gmail subjects e.g. "Factura Mercadona A-V2026-1409771". */
+function mercadonaSubjectHintsCandidate(subject?: string): ParsedEmailInvoiceCandidate | null {
+  const m = String(subject ?? "").match(
+    /\bfactura\s+mercadona\s+(A[\-‑–—]V\d{4}[\-‑–—]\d{4,})\b/i,
+  );
+  if (!m?.[1]) return null;
+  const invoiceNumber = cleanParsedInvoiceNumber(m[1]);
+  if (!invoiceNumber) return null;
+  return {
+    invoiceNumber,
+    vendor: "MERCADONA S.A.",
+    date: "",
+    totalAmount: 0,
+    ivaAmount: 0,
+    tipAmount: 0,
+    category: "Other",
+    subject: String(subject ?? "").trim(),
+    items: [],
+  };
+}
+
+function mergeMercadonaSubjectHints(
+  candidate: ParsedEmailInvoiceCandidate,
+  subject?: string,
+): ParsedEmailInvoiceCandidate {
+  const hints = mercadonaSubjectHintsCandidate(subject);
+  if (!hints) return candidate;
+  return mergeEmailInvoiceCandidates(candidate, hints);
 }
 
 function receiptLikeCandidateFromRawParsed(
@@ -1233,6 +1270,9 @@ function fallbackParseEmailInvoiceFromText(
   const subjectVendorMatch = String(subject ?? "").match(
     /\bfactura(?:\s+mensual)?(?:\s+de(?:l)?)?\s+([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9\s&.'-]{1,60})/i,
   );
+  const mercadonaSubjectId = String(subject ?? "").match(
+    /\bfactura\s+mercadona\s+(A[\-‑–—]V\d{4}[\-‑–—]\d{4,})\b/i,
+  );
   const companyLabelVendorMatch =
     rawMultiline.match(/(?:^|\n)\s*empresa\s*:\s*([^\n]{3,80})/i) ??
     rawMultiline.match(/(?:^|\n)\s*empresa\s*\n\s*([^\n]{3,80})/i);
@@ -1337,6 +1377,9 @@ function fallbackParseEmailInvoiceFromText(
   let invoiceNumberOut = cleanParsedInvoiceNumber(invMatch?.[1]);
   if (mercadonaInvoiceMatch?.[1]) {
     invoiceNumberOut = cleanParsedInvoiceNumber(mercadonaInvoiceMatch[1]);
+  } else if (mercadonaSubjectId?.[1]) {
+    const subInv = cleanParsedInvoiceNumber(mercadonaSubjectId[1]);
+    if (subInv) invoiceNumberOut = subInv;
   } else if (serieEmision?.[1] && numFacturaOnly?.[1]) {
     invoiceNumberOut = cleanParsedInvoiceNumber(
       `${String(serieEmision[1]).trim()}-${String(numFacturaOnly[1]).trim()}`,
@@ -1346,8 +1389,10 @@ function fallbackParseEmailInvoiceFromText(
   }
 
   const vendorFromSubject = String(subjectVendorMatch?.[1] ?? "").trim();
+  const mercadonaSubjectVendor = mercadonaSubjectId?.[1] ? "MERCADONA S.A." : "";
   const vendorOut = pickBestParsedVendor(
     mercadonaVendorMatch?.[1],
+    mercadonaSubjectVendor,
     companyLabelVendorMatch?.[1],
     topHeadingVendor,
     vendorFromSubject,
@@ -1638,7 +1683,8 @@ export const appRouter = router({
                       imageAttachmentIds.push({ attachmentId, filename: label, mimeType: resolvedMime });
                     } else if (
                       resolvedMime === "application/pdf" ||
-                      resolvedMime === "application/x-pdf"
+                      resolvedMime === "application/x-pdf" ||
+                      (resolvedMime === "application/octet-stream" && /\.pdf$/i.test(filename))
                     ) {
                       const label = filename || "attachment.pdf";
                       pdfAttachments.push({ attachmentId, filename: label });
@@ -1792,6 +1838,12 @@ export const appRouter = router({
                     pdfBuf = decodeGmailBase64UrlToBuffer(att.data ?? "");
                   }
                   if (!pdfBuf || pdfBuf.length < 64) continue;
+                  const detectedMime = detectMimeFromBuffer(pdfBuf);
+                  const pdfLike =
+                    detectedMime === "application/pdf" ||
+                    detectedMime === "application/x-pdf" ||
+                    /\.pdf$/i.test(String(info.filename ?? ""));
+                  if (!pdfLike) continue;
 
                   let pdfText = "";
                   if (pdfTextExtractFn) {
@@ -1991,12 +2043,15 @@ export const appRouter = router({
           const rawContent = response.choices?.[0]?.message?.content;
           const text = extractLlmMessageText(rawContent).trim();
           if (!text) {
-            return mergeEmailInvoiceCandidates(
-              fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
-                headerFrom,
-                headerDate,
-              }),
-              attachmentBestCandidate,
+            return mergeMercadonaSubjectHints(
+              mergeEmailInvoiceCandidates(
+                fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
+                  headerFrom,
+                  headerDate,
+                }),
+                attachmentBestCandidate,
+              ),
+              input.subject,
             );
           }
           const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -2007,12 +2062,15 @@ export const appRouter = router({
             rawParsed = JSON.parse(jsonStr) as Record<string, unknown>;
           } catch (parseErr) {
             console.warn("[Email Parse] LLM JSON parse failed, using regex fallback:", parseErr);
-            return mergeEmailInvoiceCandidates(
-              fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
-                headerFrom,
-                headerDate,
-              }),
-              attachmentBestCandidate,
+            return mergeMercadonaSubjectHints(
+              mergeEmailInvoiceCandidates(
+                fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
+                  headerFrom,
+                  headerDate,
+                }),
+                attachmentBestCandidate,
+              ),
+              input.subject,
             );
           }
 
@@ -2030,24 +2088,30 @@ export const appRouter = router({
           };
           const mergedCandidate = mergeEmailInvoiceCandidates(llmCandidate, attachmentBestCandidate);
           if (!mergedCandidate.totalAmount || mergedCandidate.totalAmount <= 0 || !mergedCandidate.vendor) {
-            return mergeEmailInvoiceCandidates(
-              fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
+            return mergeMercadonaSubjectHints(
+              mergeEmailInvoiceCandidates(
+                fallbackParseEmailInvoiceFromText(mergedEmailContent, input.subject, {
+                  headerFrom,
+                  headerDate,
+                }),
+                attachmentBestCandidate,
+              ),
+              input.subject,
+            );
+          }
+
+          return mergeMercadonaSubjectHints(mergedCandidate, input.subject);
+        } catch (err) {
+          console.error("[Email Parse] error:", err);
+          return mergeMercadonaSubjectHints(
+            mergeEmailInvoiceCandidates(
+              fallbackParseEmailInvoiceFromText(`${input.emailText}${attachmentAugmentedText}`, input.subject, {
                 headerFrom,
                 headerDate,
               }),
               attachmentBestCandidate,
-            );
-          }
-
-          return mergedCandidate;
-        } catch (err) {
-          console.error("[Email Parse] error:", err);
-          return mergeEmailInvoiceCandidates(
-            fallbackParseEmailInvoiceFromText(`${input.emailText}${attachmentAugmentedText}`, input.subject, {
-              headerFrom,
-              headerDate,
-            }),
-            attachmentBestCandidate,
+            ),
+            input.subject,
           );
         }
       }),
