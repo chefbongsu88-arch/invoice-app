@@ -1686,7 +1686,7 @@ export const appRouter = router({
                     } else if (
                       resolvedMime === "application/pdf" ||
                       resolvedMime === "application/x-pdf" ||
-                      (resolvedMime === "application/octet-stream" && /\.pdf$/i.test(filename))
+                      resolvedMime === "application/octet-stream"
                     ) {
                       const label = filename || "attachment.pdf";
                       pdfAttachments.push({ attachmentId, filename: label });
@@ -1705,7 +1705,8 @@ export const appRouter = router({
                       });
                     } else if (
                       inlineMime === "application/pdf" ||
-                      inlineMime === "application/x-pdf"
+                      inlineMime === "application/x-pdf" ||
+                      inlineMime === "application/octet-stream"
                     ) {
                       const label = filename || "attachment.pdf";
                       pdfAttachments.push({ filename: label, inlineData });
@@ -1921,13 +1922,7 @@ export const appRouter = router({
                   }
                 }
 
-                if (
-                  !attachmentBestCandidate &&
-                  imageOcrBlocks.length === 0 &&
-                  pdfTextBlocks.length === 0 &&
-                  accessToken &&
-                  messageId
-                ) {
+                if (!attachmentBestCandidate && accessToken && messageId) {
                   try {
                     const fallbackAtt = await fetchFirstGmailAttachmentForReceiptExport(accessToken, messageId);
                     if (fallbackAtt?.buffer?.length) {
@@ -2015,6 +2010,12 @@ export const appRouter = router({
                   } catch (fallbackAttErr) {
                     console.warn("[Email Parse] Attachment fallback fetch failed:", fallbackAttErr);
                   }
+                }
+
+                if (!attachmentBestCandidate && /mercadona/i.test(String(input.subject ?? ""))) {
+                  console.warn(
+                    `[Email Parse][Mercadona] no structured candidate from attachments. imageOcrBlocks=${imageOcrBlocks.length} pdfTextBlocks=${pdfTextBlocks.length} pdfAttachments=${pdfAttachments.length}`,
+                  );
                 }
 
                 if (imageOcrBlocks.length > 0 || pdfTextBlocks.length > 0 || pdfAttachments.length > 0) {
