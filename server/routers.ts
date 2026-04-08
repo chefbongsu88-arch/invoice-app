@@ -1667,6 +1667,7 @@ export const appRouter = router({
               );
               if (msgRes.ok) {
                 const detail = (await msgRes.json()) as {
+                  threadId?: string;
                   payload?: {
                     headers?: { name?: string; value?: string }[];
                     parts?: {
@@ -1755,6 +1756,38 @@ export const appRouter = router({
 
                 if (detail.payload) {
                   walk(detail.payload);
+                }
+                if (pdfAttachments.length === 0 && detail.threadId) {
+                  try {
+                    const threadRes = await fetch(
+                      `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(detail.threadId)}?format=full`,
+                      { headers: { Authorization: `Bearer ${accessToken}` } },
+                    );
+                    if (threadRes.ok) {
+                      const thread = (await threadRes.json()) as {
+                        messages?: Array<{
+                          id?: string;
+                          payload?: {
+                            mimeType?: string;
+                            filename?: string;
+                            body?: { attachmentId?: string; data?: string };
+                            parts?: any[];
+                          };
+                        }>;
+                      };
+                      for (const msg of thread.messages ?? []) {
+                        if (!msg?.payload) continue;
+                        walk(msg.payload);
+                      }
+                      if (pdfAttachments.length > 0) {
+                        console.log(
+                          `[Email Parse] Thread fallback found ${pdfAttachments.length} pdf attachment candidate(s).`,
+                        );
+                      }
+                    }
+                  } catch (threadErr) {
+                    console.warn("[Email Parse] Thread fallback fetch failed:", threadErr);
+                  }
                 }
 
                 const maxImageOcr = 2;
