@@ -1858,6 +1858,102 @@ export const appRouter = router({
                   }
                 }
 
+                if (
+                  !attachmentBestCandidate &&
+                  imageOcrBlocks.length === 0 &&
+                  pdfTextBlocks.length === 0 &&
+                  accessToken &&
+                  messageId
+                ) {
+                  try {
+                    const fallbackAtt = await fetchFirstGmailAttachmentForReceiptExport(accessToken, messageId);
+                    if (fallbackAtt?.buffer?.length) {
+                      if (
+                        fallbackAtt.mime === "application/pdf" ||
+                        fallbackAtt.mime === "application/x-pdf"
+                      ) {
+                        const pdfBuf = fallbackAtt.buffer;
+                        let pdfText = "";
+                        if (pdfTextExtractFn) {
+                          try {
+                            pdfText = await pdfTextExtractFn(pdfBuf);
+                            pdfText = normalizeExtractedInvoiceText(String(pdfText).replace(/\s+\n/g, "\n"));
+                          } catch (fallbackPdfErr) {
+                            console.warn("[Email Parse] Fallback PDF extract failed:", fallbackPdfErr);
+                          }
+                        }
+                        if (pdfText.length >= minPdfTextChars || isUsefulExtractedPdfText(pdfText)) {
+                          attachmentBestCandidate = chooseBetterEmailInvoiceCandidate(
+                            attachmentBestCandidate,
+                            fallbackParseEmailInvoiceFromText(pdfText, input.subject, {
+                              headerFrom,
+                              headerDate,
+                            }),
+                          );
+                          pdfTextBlocks.push(`[PDF text: fallback attachment]\n${pdfText.slice(0, 4500)}`);
+                        }
+                      } else if (fallbackAtt.mime.startsWith("image/")) {
+                        const b64 = fallbackAtt.buffer.toString("base64");
+                        const useClaude = Boolean(ENV.anthropicApiKey?.trim());
+                        const useGeminiGoogle = Boolean(ENV.googleGeminiApiKey?.trim());
+                        let ocrText = "";
+                        if (useGeminiGoogle) {
+                          try {
+                            ocrText = await runGoogleGeminiReceiptOcr(
+                              b64,
+                              fallbackAtt.mime,
+                              RECEIPT_PARSE_SYSTEM,
+                              RECEIPT_PARSE_USER,
+                            );
+                          } catch (fallbackImgErr) {
+                            console.warn("[Email Parse] Fallback image OCR failed:", fallbackImgErr);
+                            if (useClaude) {
+                              ocrText = await parseReceiptWithClaude(
+                                b64,
+                                fallbackAtt.mime,
+                                RECEIPT_PARSE_SYSTEM,
+                                RECEIPT_PARSE_USER,
+                              );
+                            }
+                          }
+                        } else if (useClaude) {
+                          ocrText = await parseReceiptWithClaude(
+                            b64,
+                            fallbackAtt.mime,
+                            RECEIPT_PARSE_SYSTEM,
+                            RECEIPT_PARSE_USER,
+                          );
+                        }
+                        if (ocrText.trim()) {
+                          try {
+                            const cleanedOcr = ocrText
+                              .replace(/```json\n?/g, "")
+                              .replace(/```\n?/g, "")
+                              .trim();
+                            const ocrJsonMatch = cleanedOcr.match(/\{[\s\S]*\}/);
+                            if (ocrJsonMatch) {
+                              const ocrRawParsed = JSON.parse(ocrJsonMatch[0]) as Record<string, unknown>;
+                              attachmentBestCandidate = chooseBetterEmailInvoiceCandidate(
+                                attachmentBestCandidate,
+                                receiptLikeCandidateFromRawParsed(ocrRawParsed, {
+                                  headerFrom,
+                                  headerDate,
+                                  subject: input.subject,
+                                }),
+                              );
+                            }
+                          } catch (fallbackImgParseErr) {
+                            console.warn("[Email Parse] Fallback image OCR JSON parse failed:", fallbackImgParseErr);
+                          }
+                          imageOcrBlocks.push(`[Image attachment OCR: fallback attachment]\n${ocrText.trim()}`);
+                        }
+                      }
+                    }
+                  } catch (fallbackAttErr) {
+                    console.warn("[Email Parse] Attachment fallback fetch failed:", fallbackAttErr);
+                  }
+                }
+
                 if (imageOcrBlocks.length > 0 || pdfTextBlocks.length > 0 || pdfAttachments.length > 0) {
                   attachmentAugmentedText =
                     `\n\nAttachment context:\n` +
