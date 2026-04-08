@@ -194,6 +194,23 @@ function mimePriorityForGmailExport(mimeRaw: string): number {
   return 100;
 }
 
+function resolveGmailAttachmentMime(
+  mimeRaw: string,
+  filename: string,
+  buf?: Buffer | null,
+): string {
+  const mime = String(mimeRaw ?? "").toLowerCase().trim();
+  const name = String(filename ?? "").toLowerCase().trim();
+  if (mime && mime !== "application/octet-stream") return mime;
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (/\.(png)$/i.test(name)) return "image/png";
+  if (/\.(jpe?g)$/i.test(name)) return "image/jpeg";
+  if (/\.(webp)$/i.test(name)) return "image/webp";
+  if (/\.(gif)$/i.test(name)) return "image/gif";
+  if (buf?.length) return detectMimeFromBuffer(buf);
+  return mime || "application/octet-stream";
+}
+
 /**
  * First PDF attachment (typical invoice), else first image — for Sheets receipt column.
  * Handles both Gmail `attachmentId` parts and small inline parts with `body.data` only.
@@ -224,15 +241,17 @@ async function fetchFirstGmailAttachmentForReceiptExport(
       walk(child);
     }
     const mimeRaw = String(part?.mimeType ?? "").toLowerCase();
+    const filename = String(part?.filename ?? "").trim();
     const id = String(part?.body?.attachmentId ?? "").trim();
     const rawData = part?.body?.data;
 
     if (id) {
       if (seen.has(id)) return;
-      const priority = mimePriorityForGmailExport(mimeRaw);
+      const mimeResolved = resolveGmailAttachmentMime(mimeRaw, filename);
+      const priority = mimePriorityForGmailExport(mimeResolved);
       if (priority >= 100) return;
       seen.add(id);
-      idCandidates.push({ attachmentId: id, mime: mimeRaw, priority });
+      idCandidates.push({ attachmentId: id, mime: mimeResolved, priority });
       return;
     }
 
@@ -240,12 +259,8 @@ async function fetchFirstGmailAttachmentForReceiptExport(
     const buf = decodeGmailBase64UrlToBuffer(rawData);
     if (!buf?.length || buf.length < 32 || buf.length > GMAIL_RECEIPT_EXPORT_MAX_BYTES) return;
 
-    let mimeOut = mimeRaw;
-    let priority = mimePriorityForGmailExport(mimeRaw);
-    if (mimeRaw === "application/octet-stream") {
-      mimeOut = detectMimeFromBuffer(buf);
-      priority = mimePriorityForGmailExport(mimeOut);
-    }
+    let mimeOut = resolveGmailAttachmentMime(mimeRaw, filename, buf);
+    let priority = mimePriorityForGmailExport(mimeOut);
     if (priority >= 100) return;
     if (
       mimeOut === "application/pdf" ||
@@ -271,10 +286,7 @@ async function fetchFirstGmailAttachmentForReceiptExport(
     const buf = decodeGmailBase64UrlToBuffer(att.data ?? "");
     if (!buf?.length || buf.length < 32 || buf.length > GMAIL_RECEIPT_EXPORT_MAX_BYTES) continue;
 
-    let mimeOut = c.mime;
-    if (mimeOut === "application/octet-stream") {
-      mimeOut = detectMimeFromBuffer(buf);
-    }
+    let mimeOut = resolveGmailAttachmentMime(c.mime, "", buf);
     if (
       mimeOut === "application/pdf" ||
       mimeOut === "application/x-pdf" ||
@@ -1618,25 +1630,22 @@ export const appRouter = router({
                   const inlineData = typeof part.body?.data === "string" ? part.body.data : "";
                   // Many invoice emails use inline images (cid) with no filename — still has attachmentId.
                   if (attachmentId) {
-                    if (mimeType.startsWith("image/")) {
+                    const resolvedMime = resolveGmailAttachmentMime(mimeType, filename);
+                    if (resolvedMime.startsWith("image/")) {
                       const label =
                         filename ||
-                        `inline.${mimeType.includes("png") ? "png" : mimeType.includes("gif") ? "gif" : mimeType.includes("webp") ? "webp" : "jpg"}`;
-                      imageAttachmentIds.push({ attachmentId, filename: label, mimeType });
+                        `inline.${resolvedMime.includes("png") ? "png" : resolvedMime.includes("gif") ? "gif" : resolvedMime.includes("webp") ? "webp" : "jpg"}`;
+                      imageAttachmentIds.push({ attachmentId, filename: label, mimeType: resolvedMime });
                     } else if (
-                      mimeType === "application/pdf" ||
-                      mimeType === "application/x-pdf" ||
-                      mimeType === "application/octet-stream"
+                      resolvedMime === "application/pdf" ||
+                      resolvedMime === "application/x-pdf"
                     ) {
                       const label = filename || "attachment.pdf";
                       pdfAttachments.push({ attachmentId, filename: label });
                     }
                   } else if (inlineData) {
                     const inlineBuf = decodeGmailBase64UrlToBuffer(inlineData);
-                    let inlineMime = mimeType;
-                    if (inlineMime === "application/octet-stream" && inlineBuf?.length) {
-                      inlineMime = detectMimeFromBuffer(inlineBuf);
-                    }
+                    const inlineMime = resolveGmailAttachmentMime(mimeType, filename, inlineBuf);
                     if (inlineMime.startsWith("image/")) {
                       const label =
                         filename ||
