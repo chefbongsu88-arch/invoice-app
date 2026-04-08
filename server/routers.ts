@@ -452,6 +452,24 @@ function pickBestParsedVendor(...candidates: unknown[]): string {
   return "";
 }
 
+function cleanParsedInvoiceNumber(raw: unknown): string {
+  const s = String(raw ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return "";
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/i.test(s)) return "";
+  if (
+    /^(?:mercadona|can pizza madre,?\s*s\.?l\.?|zara home espa[ñn]a,?\s*s\.?a\.?|macao cafe santa gertrudis,?\s*s\.?l\.?)$/i.test(
+      s,
+    )
+  ) {
+    return "";
+  }
+  if (!/[0-9]/.test(s)) return "";
+  if (/^(?:cliente|company|empresa|vendor|merchant|factura|invoice)$/i.test(s)) return "";
+  return s;
+}
+
 type ParsedEmailInvoiceCandidate = {
   invoiceNumber: string;
   vendor: string;
@@ -496,8 +514,10 @@ function mergeEmailInvoiceCandidates(
   if (!secondary) return primary;
   const primaryVendor = cleanParsedVendorName(primary.vendor);
   const secondaryVendor = cleanParsedVendorName(secondary.vendor);
+  const primaryInvoiceNumber = cleanParsedInvoiceNumber(primary.invoiceNumber);
+  const secondaryInvoiceNumber = cleanParsedInvoiceNumber(secondary.invoiceNumber);
   return {
-    invoiceNumber: String(primary.invoiceNumber || secondary.invoiceNumber || "").trim(),
+    invoiceNumber: String(primaryInvoiceNumber || secondaryInvoiceNumber || "").trim(),
     vendor: primaryVendor || secondaryVendor || "",
     date: String(primary.date || secondary.date || "").trim(),
     totalAmount: primary.totalAmount > 0 ? primary.totalAmount : secondary.totalAmount,
@@ -518,7 +538,7 @@ function receiptLikeCandidateFromRawParsed(
 ): ParsedEmailInvoiceCandidate {
   const parsed = normalizeReceiptParsedFields(rawParsed);
   return {
-    invoiceNumber: String(parsed.invoiceNumber ?? "").trim(),
+    invoiceNumber: cleanParsedInvoiceNumber(parsed.invoiceNumber),
     vendor: pickBestParsedVendor(parsed.vendor, opts.headerFrom),
     date: resolveReceiptDateIso(parsed) || dateIsoFromEmailDateHeader(opts.headerDate),
     totalAmount: parseMoneyNumber(parsed.totalAmount),
@@ -1294,13 +1314,15 @@ function fallbackParseEmailInvoiceFromText(
     (/^\d{4}\-\d{2}\-\d{2}$/.test(fallbackDateFromHeader) ? fallbackDateFromHeader : "") ||
     new Date().toISOString().split("T")[0];
 
-  let invoiceNumberOut = String(invMatch?.[1] ?? "").trim();
+  let invoiceNumberOut = cleanParsedInvoiceNumber(invMatch?.[1]);
   if (mercadonaInvoiceMatch?.[1]) {
-    invoiceNumberOut = String(mercadonaInvoiceMatch[1]).trim();
+    invoiceNumberOut = cleanParsedInvoiceNumber(mercadonaInvoiceMatch[1]);
   } else if (serieEmision?.[1] && numFacturaOnly?.[1]) {
-    invoiceNumberOut = `${String(serieEmision[1]).trim()}-${String(numFacturaOnly[1]).trim()}`;
+    invoiceNumberOut = cleanParsedInvoiceNumber(
+      `${String(serieEmision[1]).trim()}-${String(numFacturaOnly[1]).trim()}`,
+    );
   } else if (!invoiceNumberOut && numFacturaOnly?.[1]) {
-    invoiceNumberOut = String(numFacturaOnly[1]).trim();
+    invoiceNumberOut = cleanParsedInvoiceNumber(numFacturaOnly[1]);
   }
 
   const vendorFromSubject = String(subjectVendorMatch?.[1] ?? "").trim();
