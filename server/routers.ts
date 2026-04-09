@@ -219,14 +219,23 @@ function resolveGmailAttachmentMime(
   filename: string,
   buf?: Buffer | null,
 ): string {
-  const mime = String(mimeRaw ?? "").toLowerCase().trim();
   const name = String(filename ?? "").toLowerCase().trim();
-  if (mime && mime !== "application/octet-stream") return mime;
+  const mime = String(mimeRaw ?? "").toLowerCase().trim();
+
+  /** Wrong Content-Type on PDF parts is common (Mercadona, etc.) — trust magic + extension first. */
+  if (buf?.length >= 4) {
+    const b = buf;
+    if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return "application/pdf";
+    if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "image/png";
+  }
   if (name.endsWith(".pdf")) return "application/pdf";
   if (/\.(png)$/i.test(name)) return "image/png";
   if (/\.(jpe?g)$/i.test(name)) return "image/jpeg";
   if (/\.(webp)$/i.test(name)) return "image/webp";
   if (/\.(gif)$/i.test(name)) return "image/gif";
+
+  if (mime && mime !== "application/octet-stream") return mime;
   if (buf?.length) return detectMimeFromBuffer(buf);
   return mime || "application/octet-stream";
 }
