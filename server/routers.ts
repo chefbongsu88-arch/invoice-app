@@ -335,6 +335,25 @@ async function fetchFirstGmailAttachmentForReceiptExport(
     );
     return { buffer: best.buffer, mime: best.mime };
   }
+
+  // Last fallback: parse the full raw MIME message and extract embedded PDF payload.
+  try {
+    const rawRes = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(mid)}?format=raw`,
+      { headers: { Authorization: `Bearer ${tok}` } },
+    );
+    if (rawRes.ok) {
+      const rawJson = (await rawRes.json()) as { raw?: string };
+      const rawBuf = decodeGmailBase64UrlToBuffer(rawJson.raw ?? "");
+      const embeddedPdf = extractEmbeddedPdfFromMimeMessage(rawBuf);
+      if (embeddedPdf?.length) {
+        console.log(`[Export] Using embedded PDF from Gmail raw message: ${embeddedPdf.length} bytes`);
+        return { buffer: embeddedPdf, mime: "application/pdf" };
+      }
+    }
+  } catch (rawErr) {
+    console.warn("[Export] Gmail raw MIME fallback failed:", rawErr);
+  }
   return null;
 }
 
@@ -1681,6 +1700,7 @@ export const appRouter = router({
                     body?: { attachmentId?: string };
                   };
                 };
+                const isMercadonaSubject = /mercadona/i.test(String(input.subject ?? ""));
 
                 const imageAttachmentIds: { attachmentId: string; filename: string; mimeType: string }[] = [];
                 const pdfAttachments: { attachmentId?: string; filename: string; inlineData?: string }[] = [];
@@ -1789,6 +1809,26 @@ export const appRouter = router({
                     console.warn("[Email Parse] Thread fallback fetch failed:", threadErr);
                   }
                 }
+                const collectGmailPartTree = (
+                  part: any,
+                  out: string[],
+                  path = "root",
+                ): void => {
+                  if (!part || out.length >= 40) return;
+                  const mime = String(part?.mimeType ?? "");
+                  const name = String(part?.filename ?? "");
+                  const attachmentId = String(part?.body?.attachmentId ?? "");
+                  const bodySize = Number(part?.body?.size ?? 0);
+                  const hasData = typeof part?.body?.data === "string" && part.body.data.length > 0;
+                  const childCount = Array.isArray(part?.parts) ? part.parts.length : 0;
+                  out.push(
+                    `${path} mime=${mime || "-"} file=${name || "-"} attId=${attachmentId ? "y" : "n"} data=${hasData ? "y" : "n"} size=${Number.isFinite(bodySize) ? bodySize : 0} children=${childCount}`,
+                  );
+                  for (let i = 0; i < childCount; i++) {
+                    collectGmailPartTree(part.parts[i], out, `${path}.${i}`);
+                    if (out.length >= 40) break;
+                  }
+                };
 
                 const maxImageOcr = 2;
                 const imageOcrBlocks: string[] = [];
@@ -2085,10 +2125,54 @@ export const appRouter = router({
                   }
                 }
 
+                if (!attachmentBestCandidate && accessToken && messageId) {
+                  try {
+                    const rawRes = await fetch(
+                      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=raw`,
+                      { headers: { Authorization: `Bearer ${accessToken}` } },
+                    );
+                    if (rawRes.ok) {
+                      const rawJson = (await rawRes.json()) as { raw?: string };
+                      const rawBuf = decodeGmailBase64UrlToBuffer(rawJson.raw ?? "");
+                      const embeddedPdf = extractEmbeddedPdfFromMimeMessage(rawBuf);
+                      if (embeddedPdf?.length) {
+                        let pdfText = "";
+                        if (pdfTextExtractFn) {
+                          try {
+                            pdfText = await pdfTextExtractFn(embeddedPdf);
+                            pdfText = normalizeExtractedInvoiceText(String(pdfText).replace(/\s+\n/g, "\n"));
+                          } catch (rawPdfErr) {
+                            console.warn("[Email Parse] Raw MIME PDF extract failed:", rawPdfErr);
+                          }
+                        }
+                        if (pdfText.length >= minPdfTextChars || isUsefulExtractedPdfText(pdfText)) {
+                          attachmentBestCandidate = chooseBetterEmailInvoiceCandidate(
+                            attachmentBestCandidate,
+                            fallbackParseEmailInvoiceFromText(pdfText, input.subject, {
+                              headerFrom,
+                              headerDate,
+                            }),
+                          );
+                          pdfTextBlocks.push(`[PDF text: raw MIME fallback]\n${pdfText.slice(0, 4500)}`);
+                        }
+                      }
+                    }
+                  } catch (rawMimeErr) {
+                    console.warn("[Email Parse] Raw MIME fallback fetch failed:", rawMimeErr);
+                  }
+                }
+
                 if (!attachmentBestCandidate && /mercadona/i.test(String(input.subject ?? ""))) {
                   console.warn(
                     `[Email Parse][Mercadona] no structured candidate from attachments. imageOcrBlocks=${imageOcrBlocks.length} pdfTextBlocks=${pdfTextBlocks.length} pdfAttachments=${pdfAttachments.length} payloadMime=${String(detail.payload?.mimeType ?? "")}`,
                   );
+                  if (isMercadonaSubject && detail.payload) {
+                    const partTreeSummary: string[] = [];
+                    collectGmailPartTree(detail.payload, partTreeSummary);
+                    console.warn(
+                      `[Email Parse][Mercadona] gmail part tree:\n${partTreeSummary.join("\n")}`,
+                    );
+                  }
                 }
 
                 if (imageOcrBlocks.length > 0 || pdfTextBlocks.length > 0 || pdfAttachments.length > 0) {
