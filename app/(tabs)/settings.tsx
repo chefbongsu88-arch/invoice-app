@@ -166,8 +166,7 @@ function EditableField({
       onPress={() => setEditing(true)}
       style={({ pressed }) => [
         styles.settingRow,
-        { borderBottomColor: colors.border },
-        pressed && { opacity: 0.7 },
+        { borderBottomColor: colors.border, backgroundColor: pressed ? colors.background : "transparent" },
       ]}
     >
       <Text style={[styles.settingLabel, { color: colors.foreground }]}>{label}</Text>
@@ -399,8 +398,9 @@ export default function SettingsScreen() {
             <View style={styles.stepContent}>
               <Text style={[styles.stepTitle, { color: colors.foreground }]}>Connect Gmail</Text>
               <Text style={[styles.stepDesc, { color: colors.muted }]}>
-                Open the <Text style={{ fontWeight: "700", color: colors.foreground }}>gmail</Text> tab, sign in with
-                Google, and adjust automation or labels there if you need them.
+                Open the <Text style={{ fontWeight: "700", color: colors.foreground }}>Gmail</Text> tab, sign in with
+                Google. At the top, use the <Text style={{ fontWeight: "700", color: colors.foreground }}>Gmail Labels</Text>{" "}
+                card to enter Preparing / Complete label names and tap <Text style={{ fontWeight: "700", color: colors.foreground }}>Save label names</Text>. Automation switches are below that.
               </Text>
             </View>
           </View>
@@ -423,9 +423,9 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 20, paddingTop: 22, paddingBottom: 48 },
-  title: { ...APP_SCREEN_HEADER, marginBottom: 20 },
-  sectionHeader: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5, marginBottom: 8, marginTop: 20 },
+  content: { padding: 20, paddingTop: 20, paddingBottom: 44 },
+  title: { ...APP_SCREEN_HEADER, marginBottom: 16 },
+  sectionHeader: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5, marginBottom: 6, marginTop: 16 },
   section: {
     borderRadius: 16,
     borderWidth: 1,
@@ -441,13 +441,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 14,
-    paddingVertical: 14,
-    minHeight: 56,
+    paddingVertical: 13,
+    minHeight: 52,
     borderBottomWidth: 1,
   },
-  settingLabel: { fontSize: 15, fontWeight: "500" },
+  settingLabel: { fontSize: 15, fontWeight: "600", flex: 1, paddingRight: 10 },
   settingRight: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1, justifyContent: "flex-end" },
-  settingValue: { fontSize: 13, maxWidth: 200 },
+  settingValue: { fontSize: 13, maxWidth: 170 },
   editRow: { padding: 14, gap: 8, borderBottomWidth: 1 },
   editLabel: { fontSize: 11, fontWeight: "600", letterSpacing: 0.3 },
   editInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
@@ -459,16 +459,16 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     padding: 14,
-    gap: 8,
-    marginTop: 10,
+    gap: 6,
+    marginTop: 6,
   },
-  columnsTitle: { fontSize: 14, fontWeight: "600" },
-  columnsDesc: { fontSize: 12, marginBottom: 4 },
+  columnsTitle: { fontSize: 15, fontWeight: "700" },
+  columnsDesc: { fontSize: 12, marginBottom: 6 },
   columnRow: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 12,
-    paddingVertical: 8,
+    paddingVertical: 7,
   },
   columnLetterBox: {
     width: 30,
@@ -481,13 +481,13 @@ const styles = StyleSheet.create({
   columnLetter: { color: "#fff", fontSize: 14, fontWeight: "800" },
   columnTextBlock: { flex: 1, minWidth: 0, gap: 3, justifyContent: "center" },
   columnName: { fontSize: 14, fontWeight: "700", letterSpacing: -0.2 },
-  columnDesc: { fontSize: 12, fontWeight: "500", lineHeight: 17 },
+  columnDesc: { fontSize: 12, fontWeight: "500", lineHeight: 16 },
   guideBox: {
     borderRadius: 16,
     borderWidth: 1,
     padding: 14,
-    gap: 16,
-    marginTop: 10,
+    gap: 12,
+    marginTop: 6,
   },
   guideStep: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
   stepNumber: {
@@ -499,18 +499,18 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   stepNumberText: { color: "#fff", fontSize: 14, fontWeight: "700" },
-  stepContent: { flex: 1, gap: 6 },
+  stepContent: { flex: 1, gap: 4 },
   stepTitle: { fontSize: 14, fontWeight: "800", letterSpacing: -0.2 },
-  stepDesc: { fontSize: 13, lineHeight: 20, fontWeight: "500" },
+  stepDesc: { fontSize: 13, lineHeight: 19, fontWeight: "500" },
   primaryCardButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 12,
     width: "100%",
-    paddingVertical: 18,
+    paddingVertical: 16,
     paddingHorizontal: 20,
-    minHeight: 58,
+    minHeight: 54,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   primaryCardButtonText: {
@@ -523,9 +523,9 @@ const styles = StyleSheet.create({
     width: "100%",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 18,
+    paddingVertical: 16,
     paddingHorizontal: 20,
-    minHeight: 56,
+    minHeight: 52,
   },
   maintenancePrimaryBtnText: {
     color: "#fff",
@@ -537,9 +537,9 @@ const styles = StyleSheet.create({
     width: "100%",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 18,
+    paddingVertical: 16,
     paddingHorizontal: 20,
-    minHeight: 56,
+    minHeight: 52,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   maintenanceSecondaryBtnText: {

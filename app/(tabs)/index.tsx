@@ -12,12 +12,8 @@ import {
   APP_GREETING,
   APP_HOME_HERO_TITLE,
   APP_LINK,
-  APP_QUICK_FULL_MIN_H,
-  APP_QUICK_ICON_BOX,
   APP_QUICK_ICON_GLYPH,
   APP_QUICK_ICON_RADIUS,
-  APP_QUICK_LABEL,
-  APP_QUICK_MIN_H,
   APP_SECTION_TITLE,
   APP_STAT_LABEL,
   APP_STAT_SUB,
@@ -28,8 +24,6 @@ import {
   invoiceListBody,
   invoiceListMetaText,
   invoiceListPillLabelText,
-  invoiceListRow1,
-  invoiceListRow2,
   invoiceListRowOuter,
   invoiceListVendorText,
   INVOICE_LIST_ICON_GLYPH,
@@ -38,6 +32,7 @@ import {
 } from "@/constants/invoice-list-layout";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
+import { displayInvoiceNumberWithHash, formatInvoiceDateShortEn } from "@/lib/invoice-display";
 import { translucentTile } from "@/lib/translucent-ui";
 import type { DashboardStats, Invoice } from "@/shared/invoice-types";
 
@@ -68,14 +63,11 @@ function QuickAction({
   label,
   color,
   onPress,
-  fullWidth,
 }: {
   icon: ComponentProps<typeof IconSymbol>["name"];
   label: string;
   color: string;
   onPress: () => void;
-  /** Second row: span full width like legacy home screen */
-  fullWidth?: boolean;
 }) {
   const colors = useColors();
   const t = translucentTile(colors);
@@ -85,8 +77,7 @@ function QuickAction({
       accessibilityRole="button"
       accessibilityLabel={label}
       style={({ pressed }) => [
-        styles.quickAction,
-        fullWidth && styles.quickActionFull,
+        styles.quickActionGridCell,
         {
           backgroundColor: pressed ? t.bgPressed : t.bg,
           borderColor: pressed ? `${colors.foreground}28` : t.border,
@@ -95,9 +86,9 @@ function QuickAction({
       ]}
     >
       <View style={[styles.quickActionIcon, { backgroundColor: color + "24" }]}>
-        <IconSymbol name={icon} size={APP_QUICK_ICON_GLYPH} color={color} />
+        <IconSymbol name={icon} size={APP_QUICK_ICON_GLYPH - 2} color={color} />
       </View>
-      <Text style={[styles.quickActionLabel, { color: colors.foreground }]} numberOfLines={2}>
+      <Text style={[styles.quickActionLabelGrid, { color: colors.foreground }]} numberOfLines={2}>
         {label}
       </Text>
     </Pressable>
@@ -109,16 +100,8 @@ function RecentItem({ invoice }: { invoice: Invoice }) {
   const t = translucentTile(colors);
   const router = useRouter();
   const sourceColor = invoice.source === "camera" ? colors.camera : colors.email;
-  const sourceLabel = invoice.source === "camera" ? "Camera" : "Email";
-
-  const dateObj = new Date(invoice.date);
-  const safeDate = Number.isNaN(dateObj.getTime())
-    ? "Date unavailable"
-    : dateObj.toLocaleDateString("en-US", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      });
+  const safeDate = formatInvoiceDateShortEn(invoice.date);
+  const invoiceNumberLabel = displayInvoiceNumberWithHash(invoice.invoiceNumber);
 
   return (
     <Pressable
@@ -141,27 +124,25 @@ function RecentItem({ invoice }: { invoice: Invoice }) {
         />
       </View>
       <View style={styles.recentBody}>
-        <View style={styles.recentRow1}>
-          <Text
-            style={[styles.recentVendor, { color: colors.foreground }]}
-            numberOfLines={2}
-          >
+        <View style={styles.recentTextBlock}>
+          <Text style={[styles.recentVendor, { color: colors.foreground }]} numberOfLines={1}>
             {invoice.vendor || "Unknown Vendor"}
           </Text>
-          <Text
-            style={[styles.recentAmount, { color: colors.foreground }]}
-            numberOfLines={1}
-          >
+          <View style={styles.recentMetaRow}>
+            <Text style={[styles.recentInvoiceNumber, { color: colors.muted }]} numberOfLines={1}>
+              {invoiceNumberLabel}
+            </Text>
+            <Text style={[styles.recentMetaDivider, { color: colors.border }]}>•</Text>
+            <IconSymbol name="calendar" size={12} color={colors.muted} />
+            <Text style={[styles.recentDateInline, { color: colors.muted }]} numberOfLines={1}>
+              {safeDate}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.recentAmountWrap}>
+          <Text style={[styles.recentAmount, { color: colors.foreground }]} numberOfLines={1}>
             €{invoice.totalAmount.toFixed(2)}
           </Text>
-        </View>
-        <View style={styles.recentRow2}>
-          <Text style={[styles.recentDate, { color: colors.muted }]} numberOfLines={1}>
-            {safeDate}
-          </Text>
-          <View style={[styles.recentSourcePill, { backgroundColor: colors.foreground + "12" }]}>
-            <Text style={[styles.recentSourcePillText, { color: sourceColor }]}>{sourceLabel}</Text>
-          </View>
         </View>
       </View>
     </Pressable>
@@ -206,7 +187,7 @@ export default function HomeScreen() {
       <FlatList
         style={{ flex: 1, backgroundColor: colors.background }}
         data={recent}
-        keyExtractor={(item, index) => `${item.id}__${item.createdAt ?? ""}__${index}`}
+        keyExtractor={(item) => item.id}
         keyboardShouldPersistTaps="handled"
         removeClippedSubviews={false}
         refreshControl={
@@ -263,9 +244,8 @@ export default function HomeScreen() {
               />
             </View>
 
-            {/* Quick Actions — top row: Scan + Sheets; second row: full-width Receipts (legacy layout) */}
             <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Quick Actions</Text>
-            <View style={styles.quickActionsTopRow}>
+            <View style={styles.quickActionsRow}>
               <QuickAction
                 icon="camera.fill"
                 label="Scan Receipt"
@@ -278,10 +258,7 @@ export default function HomeScreen() {
                 color={colors.success}
                 onPress={() => Linking.openURL("https://docs.google.com/spreadsheets/d/1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E")}
               />
-            </View>
-            <View style={styles.quickActionFullWrap}>
               <QuickAction
-                fullWidth
                 icon="doc.text.fill"
                 label="All Receipts"
                 color={colors.primary}
@@ -321,12 +298,12 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: { paddingHorizontal: 20, paddingTop: 22 },
+  header: { paddingHorizontal: 20, paddingTop: 20 },
   topRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 18,
   },
   greeting: APP_GREETING,
   title: APP_HOME_HERO_TITLE,
@@ -335,108 +312,128 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     justifyContent: "space-between",
     rowGap: 10,
-    marginBottom: 24,
+    marginBottom: 20,
   },
   statCard: {
     width: "48%",
     borderRadius: 16,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
   },
   statValue: APP_STAT_VALUE,
   statLabel: APP_STAT_LABEL,
   statSub: APP_STAT_SUB,
   sectionTitle: APP_SECTION_TITLE,
-  quickActionsTopRow: {
+  quickActionsRow: {
     flexDirection: "row",
     alignItems: "stretch",
-    gap: 10,
-    marginBottom: 10,
-  },
-  quickActionFullWrap: {
-    marginBottom: 28,
-  },
-  quickAction: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: APP_QUICK_MIN_H,
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-    borderWidth: 1.5,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  quickActionFull: {
-    flex: 0,
-    width: "100%",
-    minHeight: APP_QUICK_FULL_MIN_H,
-    flexDirection: "row",
     justifyContent: "center",
     gap: 12,
-    paddingHorizontal: 16,
+    marginBottom: 22,
+  },
+  quickActionGridCell: {
+    width: 104,
+    minHeight: 98,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderWidth: 1.5,
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
   },
   quickActionIcon: {
-    width: APP_QUICK_ICON_BOX,
-    height: APP_QUICK_ICON_BOX,
+    width: 44,
+    height: 44,
     borderRadius: APP_QUICK_ICON_RADIUS,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
-  quickActionLabel: APP_QUICK_LABEL,
+  quickActionLabelGrid: {
+    fontSize: 11,
+    fontWeight: "800",
+    lineHeight: 15,
+    letterSpacing: -0.06,
+    textAlign: "center",
+  },
   recentHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: 10,
   },
   seeAll: APP_LINK,
   listContent: { paddingBottom: 32 },
   recentItem: {
     ...invoiceListRowOuter,
+    alignItems: "center",
     marginHorizontal: 20,
-    marginBottom: 12,
+    marginBottom: 10,
     borderRadius: 16,
-    paddingVertical: 16,
-    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
     borderWidth: 1,
+    overflow: "hidden",
+    gap: 10,
   },
   recentIcon: {
-    width: INVOICE_LIST_ICON_SIZE,
-    height: INVOICE_LIST_ICON_SIZE,
+    width: 40,
+    height: 40,
     borderRadius: INVOICE_LIST_ICON_RADIUS,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
   recentBody: invoiceListBody,
-  recentRow1: invoiceListRow1,
-  recentRow2: invoiceListRow2,
+  recentBody: {
+    ...invoiceListBody,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  recentTextBlock: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
   recentVendor: {
     ...invoiceListVendorText,
-    flex: 1,
-    minWidth: 0,
-    paddingRight: 4,
+    lineHeight: 19,
   },
-  recentDate: {
+  recentMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: 18,
+  },
+  recentInvoiceNumber: {
     ...invoiceListMetaText,
-    flex: 1,
-    minWidth: 0,
-    paddingRight: 8,
+    flexShrink: 1,
+  },
+  recentMetaDivider: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  recentDateInline: {
+    ...invoiceListMetaText,
+    flexShrink: 1,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  recentAmountWrap: {
+    width: 92,
+    alignItems: "flex-end",
+    justifyContent: "center",
+    alignSelf: "center",
   },
   recentAmount: {
     ...invoiceListAmountText,
-    minWidth: 64,
-    flexShrink: 0,
+    width: "100%",
+    paddingTop: 0,
   },
-  recentSourcePill: {
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    borderRadius: 20,
-    flexShrink: 0,
-  },
-  recentSourcePillText: invoiceListPillLabelText,
   emptyState: { alignItems: "center", paddingTop: 70, paddingHorizontal: 40, gap: 12 },
   emptyTitle: APP_EMPTY_TITLE,
   emptyDesc: APP_EMPTY_DESC,

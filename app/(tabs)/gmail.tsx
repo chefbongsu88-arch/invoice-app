@@ -22,7 +22,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
-import type { Invoice, InvoiceCategory } from "@/shared/invoice-types";
+import type { Invoice, InvoiceCategory, MeatItem } from "@/shared/invoice-types";
 import { trpc } from "@/lib/trpc";
 import { getApiBaseUrl } from "@/constants/oauth";
 import { PRODUCTION_API_ORIGIN } from "@/constants/receipt-api-origin";
@@ -87,6 +87,7 @@ function encodeGmailOAuthState(scheme: string, redirectUri: string): string {
 
 interface EmailMessage {
   id: string;
+  threadId?: string;
   subject: string;
   from: string;
   date: string;
@@ -101,6 +102,7 @@ interface EmailMessage {
     totalAmount: number;
     ivaAmount: number;
     category: string;
+    items?: MeatItem[];
   };
 }
 
@@ -167,8 +169,13 @@ function LoginCard({
           pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
         ]}
       >
-        <IconSymbol name="envelope.fill" size={18} color="#fff" />
-        <Text style={styles.connectBtnText}>Sign in with Google</Text>
+        <View style={styles.connectBtnIconBox}>
+          <IconSymbol name="envelope.fill" size={20} color="#fff" />
+        </View>
+        <View style={styles.connectBtnTextBlock}>
+          <Text style={styles.connectBtnText}>Sign in with Google</Text>
+          <Text style={styles.connectBtnSubtext}>Connect your Gmail inbox</Text>
+        </View>
       </Pressable>
     </View>
   );
@@ -527,10 +534,12 @@ export default function GmailScreen() {
       setFetching(true);
       try {
         const prep = gmailPreparingLabel.trim();
+        const done = gmailCompleteLabel.trim();
         const result = await fetchMutation.mutateAsync({
           accessToken: tokenToUse,
           maxResults: GMAIL_FETCH_PAGE_SIZE,
           preparingLabelName: prep || undefined,
+          excludeLabelName: done || undefined,
         });
         setEmails((result.messages as EmailMessage[]) ?? []);
       } catch (err) {
@@ -563,7 +572,7 @@ export default function GmailScreen() {
         setFetching(false);
       }
     },
-    [fetchMutation, gmailPreparingLabel],
+    [fetchMutation, gmailCompleteLabel, gmailPreparingLabel],
   );
 
   useEffect(() => {
@@ -619,6 +628,7 @@ export default function GmailScreen() {
         category: (pd.category as InvoiceCategory) ?? "Other",
         emailId: email.id,
         emailSubject: email.subject,
+        items: Array.isArray(pd.items) && pd.items.length > 0 ? pd.items : undefined,
         exportedToSheets: false,
         createdAt: new Date().toISOString(),
       };
@@ -626,6 +636,8 @@ export default function GmailScreen() {
 
       let exportOutcome: "none" | "ok" | "duplicate" | "failed" = "none";
       let exportReceiptMissing = false;
+      let relabelAttempted = false;
+      let relabelFailed = false;
       if (autoExportEnabled) {
         try {
           const gmailTokForExport =
@@ -679,27 +691,29 @@ export default function GmailScreen() {
         }
       }
 
-      if (
-        autoExportEnabled &&
-        (exportOutcome === "ok" || exportOutcome === "duplicate") &&
+      // Move Gmail labels after save. If auto-export is on, wait for Sheets success/duplicate first.
+      const shouldRelabelAfterSave =
         accessToken &&
-        invoice.totalAmount > 0
-      ) {
+        (autoExportEnabled ? exportOutcome === "ok" || exportOutcome === "duplicate" : true);
+      if (shouldRelabelAfterSave) {
         try {
           const rawSettings = await AsyncStorage.getItem(SETTINGS_KEY);
           const parsed = rawSettings ? JSON.parse(rawSettings) : {};
           const prep = String(parsed.gmailPreparingLabel ?? "").trim();
           const done = String(parsed.gmailCompleteLabel ?? "").trim();
           // Complete label alone is enough (many users only set "2026 Invoice Complete").
-          if (done) {
+          if (done || prep) {
+            relabelAttempted = true;
             await relabelMutation.mutateAsync({
               accessToken,
               messageId: email.id,
+              threadId: email.threadId,
               removeLabelName: prep || undefined,
-              addLabelName: done,
+              addLabelName: done || undefined,
             });
           }
         } catch (relErr) {
+          relabelFailed = true;
           console.error("[Gmail] Relabel after export failed:", relErr);
         }
       }
@@ -712,6 +726,11 @@ export default function GmailScreen() {
           Alert.alert(
             "Sheets export failed",
             `${invoice.vendor} was saved to Receipts. Open it and tap Export.`,
+          );
+        } else if (relabelAttempted && relabelFailed) {
+          Alert.alert(
+            "Saved, but label move failed",
+            `${invoice.vendor} was saved, but Gmail could not move the label. Check the Preparing / Complete label names.`,
           );
         }
         return;
@@ -736,6 +755,11 @@ export default function GmailScreen() {
           "Saved",
           `${invoice.vendor}: saved to Receipts. A matching row was already in Sheets — marked as exported.`,
         );
+      } else if (relabelAttempted && relabelFailed) {
+        Alert.alert(
+          "Saved, but label move failed",
+          `${invoice.vendor} was saved, but Gmail could not move the label. Check the Preparing / Complete label names.`,
+        );
       } else {
         Alert.alert("Saved!", `Invoice from ${invoice.vendor} has been saved to your receipts.`);
       }
@@ -756,6 +780,24 @@ export default function GmailScreen() {
       });
     }
   }, [emails, autoSaveEnabled, handleSave]);
+
+  const saveGmailLabelSettings = useCallback(async () => {
+    const prep = gmailPreparingLabel.trim();
+    const done = gmailCompleteLabel.trim();
+    await mergeAppSettingsPatch({
+      gmailPreparingLabel: prep,
+      gmailCompleteLabel: done,
+    });
+    setGmailPreparingLabel(prep);
+    setGmailCompleteLabel(done);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert(
+      "Saved",
+      done
+        ? `Complete label “${done}” is saved. Saved emails will move to that label.`
+        : "Enter your Gmail “Complete” label name, then save again.",
+    );
+  }, [gmailCompleteLabel, gmailPreparingLabel]);
 
   const handleDisconnect = useCallback(() => {
     Alert.alert("Disconnect Google", "Are you sure you want to disconnect your Google account?", [
@@ -794,6 +836,7 @@ export default function GmailScreen() {
     <ScreenContainer containerClassName="bg-background">
       <FlatList
         style={{ flex: 1, backgroundColor: colors.background }}
+        keyboardShouldPersistTaps="handled"
         data={emails}
         keyExtractor={(item, index) => `${item.id}__${item.internalDate ?? ""}__${index}`}
         ListHeaderComponent={
@@ -846,8 +889,67 @@ export default function GmailScreen() {
               </Text>
             </View>
 
+            <View style={[styles.labelsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.labelsCardKicker, { color: colors.primary }]}>Gmail Labels</Text>
+              <Text style={[styles.labelsCardTitle, { color: colors.foreground }]}>
+                Label names used after saving
+              </Text>
+              <Text style={[styles.labelsCardHelp, { color: colors.muted }]}>
+                Enter the exact Gmail label names you already created. Tap "Save label names" to store them in the app.
+                After a successful export, the message moves to the Complete label and the Preparing label is removed if set.
+                Fetched emails also skip anything already in the Complete label.
+              </Text>
+              <View style={[styles.labelFieldBlock, { paddingHorizontal: 0, paddingTop: 4 }]}>
+                <Text style={[styles.labelFieldTitle, { color: colors.foreground }]}>Preparing label (optional)</Text>
+                <Text style={[styles.automationHint, { color: colors.muted }]}>
+                  Gmail label to read from. Leave empty to search the inbox by keyword.
+                </Text>
+                <TextInput
+                  style={[
+                    styles.labelInput,
+                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background },
+                  ]}
+                  value={gmailPreparingLabel}
+                  onChangeText={setGmailPreparingLabel}
+                  placeholder="e.g. 2026 Preparing Invoices"
+                  placeholderTextColor={colors.muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+              <View style={[styles.labelFieldBlock, { paddingHorizontal: 0 }]}>
+                <Text style={[styles.labelFieldTitle, { color: colors.foreground }]}>Complete label (recommended)</Text>
+                <Text style={[styles.automationHint, { color: colors.muted }]}>
+                  Label to add after processing is finished. It must exactly match the label name in Gmail.
+                </Text>
+                <TextInput
+                  style={[
+                    styles.labelInput,
+                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background },
+                  ]}
+                  value={gmailCompleteLabel}
+                  onChangeText={setGmailCompleteLabel}
+                  placeholder="e.g. 2026 Invoice Complete"
+                  placeholderTextColor={colors.muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+              <Pressable
+                onPress={() => void saveGmailLabelSettings()}
+                style={({ pressed }) => [
+                  styles.saveLabelsBtn,
+                  { backgroundColor: colors.primary },
+                  pressed && { opacity: 0.88 },
+                ]}
+              >
+                <IconSymbol name="checkmark.circle.fill" size={16} color="#fff" />
+                <Text style={styles.saveLabelsBtnText}>Save label names</Text>
+              </Pressable>
+            </View>
+
             <View style={[styles.automationCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Text style={[styles.automationTitle, { color: colors.muted }]}>AUTOMATION &amp; LABELS</Text>
+              <Text style={[styles.automationTitle, { color: colors.muted }]}>Automation</Text>
               <View style={[styles.automationRow, { borderBottomColor: colors.border }]}>
                 <View style={styles.automationRowText}>
                   <Text style={[styles.automationLabel, { color: colors.foreground }]}>Auto-save Gmail emails</Text>
@@ -882,58 +984,6 @@ export default function GmailScreen() {
                   trackColor={{ false: colors.border, true: colors.primary }}
                   thumbColor="#ffffff"
                   ios_backgroundColor={colors.border}
-                />
-              </View>
-              <View
-                style={[
-                  styles.labelFieldBlock,
-                  styles.labelFieldDivider,
-                  { borderBottomColor: colors.border },
-                ]}
-              >
-                <Text style={[styles.labelFieldTitle, { color: colors.foreground }]}>Preparing label</Text>
-                <Text style={[styles.automationHint, { color: colors.muted }]}>
-                  Exact Gmail label name to list here (empty = keyword search in inbox)
-                </Text>
-                <TextInput
-                  style={[
-                    styles.labelInput,
-                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background },
-                  ]}
-                  value={gmailPreparingLabel}
-                  onChangeText={setGmailPreparingLabel}
-                  onEndEditing={async () => {
-                    const t = gmailPreparingLabel.trim();
-                    await mergeAppSettingsPatch({ gmailPreparingLabel: t });
-                    setGmailPreparingLabel(t);
-                  }}
-                  placeholder="e.g. 2026 Preparing Invoices"
-                  placeholderTextColor={colors.muted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
-              <View style={styles.labelFieldBlock}>
-                <Text style={[styles.labelFieldTitle, { color: colors.foreground }]}>Complete label</Text>
-                <Text style={[styles.automationHint, { color: colors.muted }]}>
-                  After export, message moves here (preparing label removed)
-                </Text>
-                <TextInput
-                  style={[
-                    styles.labelInput,
-                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background },
-                  ]}
-                  value={gmailCompleteLabel}
-                  onChangeText={setGmailCompleteLabel}
-                  onEndEditing={async () => {
-                    const t = gmailCompleteLabel.trim();
-                    await mergeAppSettingsPatch({ gmailCompleteLabel: t });
-                    setGmailCompleteLabel(t);
-                  }}
-                  placeholder="e.g. 2026 Invoice Complete"
-                  placeholderTextColor={colors.muted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
                 />
               </View>
             </View>
@@ -985,32 +1035,49 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: 32,
-    gap: 16,
+    padding: 24,
+    gap: 14,
   },
   connectIcon: {
-    width: 96,
-    height: 96,
-    borderRadius: 24,
+    width: 88,
+    height: 88,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
   },
-  connectTitle: { fontSize: 24, fontWeight: "700" },
-  connectDesc: { fontSize: 14, textAlign: "center", lineHeight: 22 },
+  connectTitle: { fontSize: 22, fontWeight: "700", textAlign: "center" },
+  connectDesc: { fontSize: 14, textAlign: "center", lineHeight: 21 },
   apiBaseHint: { fontSize: 11, textAlign: "center", marginTop: 10, lineHeight: 16 },
   apiBaseWarn: { fontSize: 12, textAlign: "left", marginTop: 10, lineHeight: 18, paddingHorizontal: 4 },
   connectBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 12,
+    width: "100%",
+    maxWidth: 320,
+    minHeight: 72,
     paddingVertical: 14,
     paddingHorizontal: 24,
-    borderRadius: 14,
+    borderRadius: 18,
     marginTop: 8,
   },
-  connectBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  header: { padding: 20, paddingBottom: 8 },
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
+  connectBtnIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF22",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  connectBtnTextBlock: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  connectBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  connectBtnSubtext: { color: "#E5EDF9", fontSize: 12, lineHeight: 16, fontWeight: "500" },
+  header: { padding: 20, paddingBottom: 6 },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, gap: 12 },
   title: { fontSize: 26, fontWeight: "700" },
   subtitle: { fontSize: 13, marginTop: 2 },
   sourceHint: { fontSize: 11, marginTop: 4, lineHeight: 15 },
@@ -1035,14 +1102,36 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: 10,
     borderWidth: 1,
     alignSelf: "flex-start",
   },
   connectedText: { fontSize: 13, fontWeight: "500" },
+  labelsCard: {
+    marginTop: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  labelsCardKicker: { fontSize: 12, fontWeight: "700", letterSpacing: 0.3 },
+  labelsCardTitle: { fontSize: 16, fontWeight: "700", lineHeight: 22 },
+  labelsCardHelp: { fontSize: 13, lineHeight: 19, fontWeight: "500" },
+  saveLabelsBtn: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  saveLabelsBtnText: { color: "#fff", fontSize: 15, fontWeight: "700" },
   automationCard: {
-    marginTop: 16,
+    marginTop: 12,
     borderRadius: 14,
     borderWidth: 1,
     overflow: "hidden",
@@ -1057,7 +1146,7 @@ const styles = StyleSheet.create({
   },
   automationRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     paddingHorizontal: 14,
     paddingVertical: 12,
@@ -1075,26 +1164,26 @@ const styles = StyleSheet.create({
   labelFieldDivider: {
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  labelFieldTitle: { fontSize: 14, fontWeight: "700" },
+  labelFieldTitle: { fontSize: 15, fontWeight: "700" },
   labelInput: {
     marginTop: 4,
     borderWidth: 1,
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
+    paddingVertical: 11,
+    fontSize: 15,
     fontWeight: "500",
   },
   listContent: { paddingBottom: 32 },
   emailCard: {
     marginHorizontal: 20,
-    marginBottom: 10,
+    marginBottom: 12,
     borderRadius: 14,
     borderWidth: 1,
     padding: 14,
-    gap: 10,
+    gap: 12,
   },
-  emailHeader: { flexDirection: "row", gap: 10, alignItems: "center" },
+  emailHeader: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
   emailIcon: {
     width: 34,
     height: 34,
@@ -1102,32 +1191,32 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  emailInfo: { flex: 1 },
-  emailSubject: { fontSize: 14, fontWeight: "600" },
-  emailFrom: { fontSize: 12, marginTop: 1 },
-  snippet: { fontSize: 12, lineHeight: 18 },
+  emailInfo: { flex: 1, minWidth: 0 },
+  emailSubject: { fontSize: 15, fontWeight: "700", lineHeight: 20 },
+  emailFrom: { fontSize: 13, marginTop: 2, lineHeight: 18 },
+  snippet: { fontSize: 13, lineHeight: 19 },
   parsedBox: {
     borderRadius: 10,
     borderWidth: 1,
     padding: 10,
     gap: 6,
   },
-  parsedRow: { flexDirection: "row", justifyContent: "space-between" },
-  parsedLabel: { fontSize: 12 },
-  parsedValue: { fontSize: 12, fontWeight: "500" },
+  parsedRow: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  parsedLabel: { fontSize: 13, lineHeight: 18 },
+  parsedValue: { fontSize: 13, fontWeight: "600", lineHeight: 18, flexShrink: 1, textAlign: "right" },
   emailActions: { flexDirection: "row", justifyContent: "flex-end" },
   actionBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 10,
   },
   actionBtnText: { color: "#fff", fontSize: 13, fontWeight: "600" },
   loadingBox: { alignItems: "center", paddingTop: 60, gap: 12 },
   loadingText: { fontSize: 14 },
-  emptyState: { alignItems: "center", paddingTop: 60, paddingHorizontal: 40, gap: 12 },
+  emptyState: { alignItems: "center", paddingTop: 60, paddingHorizontal: 32, gap: 12 },
   emptyTitle: { fontSize: 18, fontWeight: "600" },
   emptyDesc: { fontSize: 14, textAlign: "center", lineHeight: 20 },
   refreshLargeBtn: {

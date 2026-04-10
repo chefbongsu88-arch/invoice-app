@@ -64,8 +64,6 @@ function InvoiceCard({
   const t = translucentTile(colors);
   const router = useRouter();
   const sourceColor = invoice.source === "camera" ? colors.camera : colors.email;
-  const sourceLabel = invoice.source === "camera" ? "Camera" : "Email";
-
   const safeDate = formatInvoiceDateShortEn(invoice.date);
 
   return (
@@ -94,62 +92,38 @@ function InvoiceCard({
             <Text style={[styles.cardVendor, { color: colors.foreground }]} numberOfLines={2}>
               {invoice.vendor || "Unknown Vendor"}
             </Text>
-            <Text style={[styles.cardAmount, { color: colors.foreground }]} numberOfLines={1}>
-              €{invoice.totalAmount.toFixed(2)}
-            </Text>
+            <View style={styles.cardAmountBlock}>
+              <Text style={[styles.cardAmount, { color: colors.foreground }]} numberOfLines={1}>
+                €{invoice.totalAmount.toFixed(2)}
+              </Text>
+              <View style={styles.cardAmountStatus}>
+                {invoice.exportedToSheets ? (
+                  <View style={styles.statusRow}>
+                    <IconSymbol name="checkmark.circle.fill" size={13} color={colors.success} />
+                    <Text style={[styles.cardMetaText, styles.cardStatusText, { color: colors.success }]}>
+                      Exported
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.statusRow}>
+                    <IconSymbol name="clock.fill" size={13} color={colors.warning} />
+                    <Text style={[styles.cardMetaText, styles.cardStatusText, { color: colors.warning }]}>
+                      Pending
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </View>
           </View>
-          <Text style={[styles.cardInvNum, { color: colors.muted }]} numberOfLines={1}>
-            {displayInvoiceNumberWithHash(invoice.invoiceNumber)}
-          </Text>
-        </View>
-      </View>
-
-      <View style={[styles.cardDivider, { backgroundColor: colors.border }]} />
-
-      <View style={styles.cardBottom}>
-        <View style={styles.cardMetaRow}>
-          <View style={styles.cardMetaStart}>
-            <IconSymbol name="calendar" size={14} color={colors.muted} />
+          <View style={styles.cardMetaInlineRow}>
+            <Text style={[styles.cardInvNum, { color: colors.muted }]} numberOfLines={1}>
+              {displayInvoiceNumberWithHash(invoice.invoiceNumber)}
+            </Text>
+            <Text style={[styles.cardMetaDivider, { color: colors.border }]}>•</Text>
+            <IconSymbol name="calendar" size={12} color={colors.muted} />
             <Text style={[styles.cardMetaText, { color: colors.muted }]} numberOfLines={1}>
               {safeDate}
             </Text>
-          </View>
-          <View style={styles.cardMetaCategory}>
-            <IconSymbol name="tag.fill" size={14} color={colors.muted} />
-            <Text
-              style={[styles.cardMetaText, styles.cardCategoryText, { color: colors.muted }]}
-              numberOfLines={1}
-            >
-              {invoice.category}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.cardMetaRow}>
-          <View style={styles.cardMetaStart}>
-            <Text style={[styles.ivaLabel, { color: colors.muted }]}>IVA</Text>
-            <Text style={[styles.cardMetaText, styles.cardIvaAmount, { color: colors.warning }]}>
-              €{invoice.ivaAmount.toFixed(2)}
-            </Text>
-          </View>
-          <View style={styles.cardMetaStatus}>
-            {invoice.exportedToSheets ? (
-              <View style={styles.statusRow}>
-                <IconSymbol name="checkmark.circle.fill" size={14} color={colors.success} />
-                <Text style={[styles.cardMetaText, styles.cardStatusText, { color: colors.success }]}>
-                  Exported
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.statusRow}>
-                <IconSymbol name="clock.fill" size={14} color={colors.warning} />
-                <Text style={[styles.cardMetaText, styles.cardStatusText, { color: colors.warning }]}>
-                  Pending
-                </Text>
-              </View>
-            )}
-            <View style={[styles.sourceBadge, { backgroundColor: colors.foreground + "14" }]}>
-              <Text style={[styles.sourceBadgeText, { color: sourceColor }]}>{sourceLabel}</Text>
-            </View>
           </View>
         </View>
       </View>
@@ -249,7 +223,7 @@ export default function ReceiptsScreen() {
       <FlatList
         style={{ flex: 1, backgroundColor: colors.background }}
         data={filtered}
-        keyExtractor={(item, index) => `${item.id}__${item.createdAt ?? ""}__${index}`}
+        keyExtractor={(item) => item.id}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
@@ -397,7 +371,7 @@ export default function ReceiptsScreen() {
               ]}
             >
               <IconSymbol name="plus.circle.fill" size={22} color="#fff" />
-              <Text style={styles.addBtnText}>+ Add Manual Invoice</Text>
+              <Text style={styles.addBtnText}>Add Manual Invoice</Text>
             </Pressable>
           </View>
         }
@@ -439,9 +413,9 @@ const styles = StyleSheet.create({
   filtersCard: {
     borderRadius: 16,
     borderWidth: 1,
-    padding: 14,
-    gap: 2,
-    marginBottom: 14,
+    padding: 16,
+    gap: 4,
+    marginBottom: 16,
   },
   searchBar: {
     flexDirection: "row",
@@ -451,7 +425,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   searchInput: { flex: 1, fontSize: 16 },
   dateRow: { flexDirection: "row", gap: 10, marginBottom: 12 },
@@ -497,13 +471,13 @@ const styles = StyleSheet.create({
   addBtn: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
     gap: 10,
-    paddingVertical: 18,
+    paddingVertical: 16,
     paddingHorizontal: 20,
-    minHeight: 58,
+    minHeight: 54,
     borderRadius: 16,
-    marginBottom: 10,
+    marginBottom: 12,
     ...(Platform.OS === "ios"
       ? {
           shadowColor: "#000",
@@ -513,23 +487,24 @@ const styles = StyleSheet.create({
         }
       : { elevation: 5 }),
   },
-  addBtnText: { color: "#fff", fontSize: 17, fontWeight: "800", letterSpacing: -0.3 },
+  addBtnText: { color: "#fff", fontSize: 16, fontWeight: "800", letterSpacing: -0.25 },
   listContent: { paddingBottom: 32 },
   card: {
     marginHorizontal: 20,
-    marginBottom: 12,
+    marginBottom: 16,
     borderRadius: 16,
     borderWidth: 1,
     paddingVertical: 16,
     paddingHorizontal: 16,
+    overflow: "hidden",
   },
   cardTop: {
     ...invoiceListRowOuter,
-    alignItems: "center",
+    alignItems: "flex-start",
   },
   cardTopBody: {
     ...invoiceListBody,
-    gap: 4,
+    gap: 3,
   },
   cardTopRow1: invoiceListRow1,
   cardIcon: {
@@ -552,47 +527,25 @@ const styles = StyleSheet.create({
     minWidth: 72,
     flexShrink: 0,
   },
-  sourceBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
-  sourceBadgeText: { fontSize: 11, fontWeight: "800" },
-  cardDivider: {
-    height: StyleSheet.hairlineWidth,
-    marginTop: 12,
-    marginBottom: 12,
-    alignSelf: "stretch",
-  },
-  cardBottom: { gap: 8 },
-  cardMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    minHeight: 22,
-  },
-  /** Left cell: grows but can shrink; keeps IVA row aligned with icon column. */
-  cardMetaStart: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flex: 1,
-    minWidth: 0,
-  },
-  /** Right cell: never shrinks below content — avoids "Exported" wrapping under the divider. */
-  /** Date row — category aligns right and ellipsizes. */
-  cardMetaCategory: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    gap: 6,
-    flex: 1,
-    minWidth: 0,
-  },
-  /** IVA row — status + source pill stay one line, never crushed under the divider. */
-  cardMetaStatus: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    gap: 8,
+  cardAmountBlock: {
+    alignItems: "flex-end",
+    gap: 2,
+    minWidth: 92,
     flexShrink: 0,
+  },
+  cardAmountStatus: {
+    minHeight: 16,
+  },
+  cardMetaInlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 4,
+    minHeight: 18,
+  },
+  cardMetaDivider: {
+    fontSize: 10,
+    lineHeight: 12,
   },
   statusRow: {
     flexDirection: "row",
@@ -600,11 +553,8 @@ const styles = StyleSheet.create({
     gap: 5,
     flexShrink: 0,
   },
-  cardMetaText: { fontSize: 12, fontWeight: "600" },
-  cardCategoryText: { flexGrow: 1, flexShrink: 1, minWidth: 0, textAlign: "right" },
-  cardIvaAmount: { fontWeight: "800" },
+  cardMetaText: { fontSize: 12, fontWeight: "600", lineHeight: 16 },
   cardStatusText: { fontWeight: "800" },
-  ivaLabel: { fontSize: 11, fontWeight: "800", marginRight: 2 },
   emptyState: { alignItems: "center", paddingTop: 60, paddingHorizontal: 40, gap: 12 },
   emptyTitle: { fontSize: 20, fontWeight: "700" },
   emptyDesc: { fontSize: 15, textAlign: "center", lineHeight: 22 },

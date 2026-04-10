@@ -186,6 +186,14 @@ export default function ReceiptDetailScreen() {
       });
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if ((result.duplicateSummary?.insertedDuplicateCount ?? 0) > 0) {
+        Alert.alert(
+          "Duplicate row uploaded",
+          "A duplicate invoice row was added to Google Sheets on purpose. The new row is highlighted so you can review it easily.",
+          [{ text: "OK" }],
+        );
+        return;
+      }
       if (
         result.receiptImageMissing &&
         (invoice.imageUri || (invoice.source === "email" && invoice.emailId))

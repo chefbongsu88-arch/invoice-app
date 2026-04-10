@@ -14,7 +14,7 @@ import { useColors } from "@/hooks/use-colors";
 import { translucentTile } from "@/lib/translucent-ui";
 
 const screenWidth = Dimensions.get("window").width;
-const STATS_CHART_WIDTH = screenWidth - 48;
+const STATS_CHART_WIDTH = screenWidth - 70;
 
 export default function StatisticsScreen() {
   const colors = useColors();
@@ -120,10 +120,10 @@ export default function StatisticsScreen() {
                 <LineChart
                   data={monthlyChartData}
                   width={STATS_CHART_WIDTH}
-                  height={220}
+                  height={180}
                   chartConfig={chartConfig}
                   bezier
-                  style={{ marginLeft: -20 }}
+                  style={{ marginLeft: -10 }}
                 />
               </View>
 
@@ -162,12 +162,12 @@ export default function StatisticsScreen() {
                 <PieChart
                   data={categoryChartData}
                   width={STATS_CHART_WIDTH}
-                  height={220}
+                  height={190}
                   chartConfig={chartConfig}
                   accessor="population"
                   backgroundColor="transparent"
-                  paddingLeft="15"
-                  style={{ marginLeft: -20 }}
+                  paddingLeft="6"
+                  style={{ marginLeft: -8 }}
                 />
               </View>
 
@@ -216,7 +216,7 @@ const styles = StyleSheet.create({
     paddingTop: 22,
     paddingBottom: 24,
   },
-  sectionGap: { gap: 24 },
+  sectionGap: { gap: 20 },
   headerBlock: { gap: 8 },
   screenTitle: APP_SCREEN_HEADER,
   screenSubtitle: APP_STATS_SUBTITLE,
@@ -225,18 +225,20 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     borderRadius: 16,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
+    minHeight: 88,
   },
   statLabel: { fontSize: 12, marginBottom: 4 },
-  statValue: { fontSize: 24, fontWeight: "700" },
+  statValue: { fontSize: 22, fontWeight: "700" },
   tabBar: { flexDirection: "row", gap: 8, borderRadius: 12, padding: 5, borderWidth: 1 },
   tabBtn: { flex: 1, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 9, alignItems: "center" },
   tabBtnText: { fontSize: 15, fontWeight: "700", textAlign: "center" },
   sectionTitle: APP_STATS_SECTION,
   chartCard: {
     borderRadius: 16,
-    padding: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
     borderWidth: 1,
     overflow: "hidden",
     alignItems: "center",

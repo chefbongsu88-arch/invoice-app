@@ -23,7 +23,9 @@ export default function TabLayout() {
           borderTopWidth: 0.5,
         }
       : {
-          paddingTop: 6,
+          paddingTop: 4,
+          paddingBottom: 4,
+          minHeight: 58,
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
           borderTopWidth: 0.5,
@@ -42,8 +44,8 @@ export default function TabLayout() {
         /** Equal width per tab so the bar doesn’t leave a dead zone on the right (iOS). */
         tabBarItemStyle: Platform.OS === "web" ? undefined : { flex: 1 },
         tabBarLabelStyle: {
-          fontSize: 9,
-          fontWeight: "600",
+          fontSize: 10,
+          fontWeight: "700",
         },
       }}
     >
@@ -78,14 +80,14 @@ export default function TabLayout() {
       <Tabs.Screen
         name="settings"
         options={{
-          title: "Settings",
+          title: "Prefs",
           tabBarIcon: ({ color }) => <IconSymbol size={24} name="gearshape.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="gmail"
         options={{
-          title: "gmail",
+          title: "Gmail",
           tabBarIcon: ({ color }) => <IconSymbol size={24} name="envelope.fill" color={color} />,
         }}
       />

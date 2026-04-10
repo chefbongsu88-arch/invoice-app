@@ -6,7 +6,6 @@ import {
   receiptImageSheetsFormula,
   receiptPdfSheetsHyperlinkFormula,
 } from "../shared/sheets-defaults.js";
-import { isMeatCategory } from "../shared/invoice-types.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import {
   ENV,
@@ -135,6 +134,7 @@ function duplicateRowKey(vendor: string, dateRaw: string, amountRaw: unknown): s
 type GmailFetchResult = {
   messages: {
     id: string;
+    threadId?: string;
     subject: string;
     from: string;
     date: string;
@@ -144,6 +144,76 @@ type GmailFetchResult = {
   }[];
   nextPageToken?: string;
 };
+
+type DuplicateReason =
+  | "invoice_number"
+  | "vendor_date_amount"
+  | "batch_invoice_number"
+  | "batch_vendor_date_amount";
+
+function describeDuplicateReason(reason: DuplicateReason): string {
+  switch (reason) {
+    case "invoice_number":
+      return "Same invoice number already exists in Google Sheets";
+    case "vendor_date_amount":
+      return "Same vendor, date, and amount already exist in Google Sheets";
+    case "batch_invoice_number":
+      return "Same invoice number appears more than once in this upload";
+    case "batch_vendor_date_amount":
+      return "Same vendor, date, and amount appear more than once in this upload";
+  }
+}
+
+async function applyDuplicateHighlightToGridRows(
+  spreadsheetId: string,
+  accessToken: string,
+  sheetId: number,
+  rowRanges: Array<{
+    startRowIndex: number;
+    endRowIndex: number;
+    startColumnIndex: number;
+    endColumnIndex: number;
+  }>,
+): Promise<void> {
+  if (rowRanges.length === 0) return;
+  const batchRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        requests: rowRanges.map((range) => ({
+          repeatCell: {
+            range: { sheetId, ...range },
+            cell: {
+              userEnteredFormat: {
+                backgroundColor: {
+                  red: 1,
+                  green: 0.95,
+                  blue: 0.8,
+                },
+                textFormat: {
+                  foregroundColor: {
+                    red: 0.64,
+                    green: 0.18,
+                    blue: 0.12,
+                  },
+                },
+              },
+            },
+            fields: "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat.foregroundColor",
+          },
+        })),
+      }),
+    },
+  );
+  if (!batchRes.ok) {
+    console.warn("[Sheets] duplicate highlight failed:", await batchRes.text());
+  }
+}
 
 const GMAIL_FETCH_CACHE_MS = 12_000;
 const gmailFetchCache = new Map<string, { expiresAt: number; result: GmailFetchResult }>();
@@ -564,6 +634,71 @@ type ParsedEmailInvoiceCandidate = {
   items: unknown[];
 };
 
+function normalizeParsedMeatItems(raw: unknown): {
+  partName: string;
+  quantity: number;
+  unit: "kg";
+  pricePerUnit: number;
+  total: number;
+}[] {
+  if (!Array.isArray(raw)) return [];
+  const out: {
+    partName: string;
+    quantity: number;
+    unit: "kg";
+    pricePerUnit: number;
+    total: number;
+  }[] = [];
+
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const partName = String(
+      row.partName ??
+        row.part ??
+        row.cutName ??
+        row.cut ??
+        row.name ??
+        row.product ??
+        row.description ??
+        row.descripcion ??
+        "",
+    ).trim();
+    if (!partName) continue;
+
+    const rawUnit = String(row.unit ?? row.uom ?? row.measure ?? "kg").trim().toLowerCase();
+    let quantity = parseMoneyNumber(
+      row.quantity ?? row.qty ?? row.kg ?? row.kilos ?? row.weight ?? row.peso ?? 0,
+    );
+    if (rawUnit === "g" || rawUnit === "gram" || rawUnit === "grams" || rawUnit === "gr") {
+      quantity = quantity / 1000;
+    }
+
+    let pricePerUnit = parseMoneyNumber(
+      row.pricePerUnit ?? row.price_per_unit ?? row.unitPrice ?? row.priceKg ?? row.price_kg ?? 0,
+    );
+    let total = parseMoneyNumber(row.total ?? row.amount ?? row.importe ?? row.lineTotal ?? 0);
+
+    if (quantity > 0 && total > 0 && pricePerUnit <= 0) {
+      pricePerUnit = total / quantity;
+    }
+    if (quantity > 0 && pricePerUnit > 0 && total <= 0) {
+      total = quantity * pricePerUnit;
+    }
+    if (quantity <= 0 || total <= 0) continue;
+
+    out.push({
+      partName,
+      quantity: Math.round(quantity * 1000) / 1000,
+      unit: "kg",
+      pricePerUnit: Math.round(pricePerUnit * 100) / 100,
+      total: Math.round(total * 100) / 100,
+    });
+  }
+
+  return out;
+}
+
 function scoreEmailInvoiceCandidate(candidate: Partial<ParsedEmailInvoiceCandidate> | null | undefined): number {
   if (!candidate) return -1;
   let score = 0;
@@ -659,7 +794,7 @@ function receiptLikeCandidateFromRawParsed(
     tipAmount: parseMoneyNumber(parsed.tipAmount),
     category: String(parsed.category ?? "Other").trim() || "Other",
     subject: opts.subject ?? "",
-    items: Array.isArray(parsed.items) ? parsed.items : [],
+    items: normalizeParsedMeatItems(parsed.items),
   };
 }
 
@@ -766,6 +901,13 @@ function normalizeEmailInvoiceModelFields(
   dateIso: string;
   invoiceNumber: string;
   category: string;
+  items: {
+    partName: string;
+    quantity: number;
+    unit: "kg";
+    pricePerUnit: number;
+    total: number;
+  }[];
 } {
   const nested =
     raw.amounts && typeof raw.amounts === "object" && !Array.isArray(raw.amounts)
@@ -877,6 +1019,7 @@ function normalizeEmailInvoiceModelFields(
     dateIso,
     invoiceNumber,
     category,
+    items: normalizeParsedMeatItems(flat.items),
   };
 }
 
@@ -1184,7 +1327,13 @@ Return ONLY a valid JSON object with these exact keys:
 - tipAmount: number (tip/gratuity amount in EUR, 0 if not found)
 - category: string (one of: "Meat", "Seafood", "Vegetables", "Restaurant", "Gas Station", "Water", "Beverages", "Asian Market", "Caviar", "Truffle", "Organic Farm", "Hardware Store", "Other")
 - subject: string (email subject line)
-- items: array (return empty array [] for email invoices)
+- items: array of {partName, quantity, unit:"kg", pricePerUnit, total}
+
+For Meat invoices:
+- If the attachment or email clearly shows butcher / meat line items, return those items.
+- Include only actual meat cuts or weighted meat line items.
+- Do not include packaging, sauces, drinks, vegetables, fish, or other non-meat products.
+- If line items are not clear, return [].
 
 Return only the JSON, no markdown, no explanation.`;
 
@@ -1655,7 +1804,7 @@ export const appRouter = router({
             ivaAmount: parseMoneyNumber(parsed.ivaAmount),
             tipAmount: parseMoneyNumber(parsed.tipAmount),
             category: String(parsed.category ?? "Other").trim() || "Other",
-            items: Array.isArray(parsed.items) ? parsed.items : [],
+            items: normalizeParsedMeatItems(parsed.items),
           };
         } catch (err) {
           if (err instanceof TRPCError) throw err;
@@ -2253,7 +2402,7 @@ export const appRouter = router({
             tipAmount: norm.tipAmount,
             category: norm.category,
             subject: input.subject ?? "",
-            items: [],
+            items: norm.items,
           };
           const mergedCandidate = mergeEmailInvoiceCandidates(llmCandidate, attachmentBestCandidate);
           if (!mergedCandidate.totalAmount || mergedCandidate.totalAmount <= 0 || !mergedCandidate.vendor) {
@@ -2401,28 +2550,21 @@ export const appRouter = router({
           }
         }
 
-        // Check for duplicates before appending (skip if skipDuplicateCheck is true)
-        let newRows = rows;
-        if (!skipDuplicateCheck) {
         const existingUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A:L")}`;
         const existingRes = await fetch(existingUrl, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
           },
         });
-        
+
         const existingData = await existingRes.json() as { values?: string[][] };
-        // Create a set of existing invoices using multiple checks for accuracy
-        // Check 1: Invoice Number (if available)
-        // Check 2: Vendor + Date + Amount (fallback for missing invoice numbers)
         const existingInvoicesByNumber = new Set(
           existingData.values?.slice(1).map((row) => {
-            // row[1] = Invoice #
             const invoiceNum = normalizeInvoiceNumberKey(row[1] ?? "");
             return invoiceNum;
           }).filter(num => num.length > 0) || []
         );
-        
+
         const existingInvoicesByVendorDateAmount = new Set(
           existingData.values?.slice(1).map((row) => {
             const vendor = row[2] || "";
@@ -2432,35 +2574,93 @@ export const appRouter = router({
           }) || [],
         );
 
-        newRows = rows.filter((r) => {
-          const invoiceNumKey = normalizeInvoiceNumberKey(r.invoiceNumber);
-          if (invoiceNumKey.length > 0) {
-            if (existingInvoicesByNumber.has(invoiceNumKey)) {
-              console.warn(`[Export] Skipping duplicate invoice (by Invoice #): ${r.invoiceNumber}`);
-              return false;
-            }
-          }
+        const requestInvoicesByNumber = new Set<string>();
+        const requestInvoicesByVendorDateAmount = new Set<string>();
+        const duplicateRows = rows
+          .map((r, index) => {
+            const invoiceNumKey = normalizeInvoiceNumberKey(r.invoiceNumber);
+            const key = duplicateRowKey(r.vendor, r.date, r.totalAmount);
+            let reason: DuplicateReason | null = null;
 
-          const key = duplicateRowKey(r.vendor, r.date, r.totalAmount);
-          if (existingInvoicesByVendorDateAmount.has(key)) {
-            console.warn(
-              `[Export] Skipping duplicate (Vendor+Date+Amount): ${r.vendor} | ${r.date} | €${r.totalAmount.toFixed(2)}`,
-            );
+            if (invoiceNumKey.length > 0 && existingInvoicesByNumber.has(invoiceNumKey)) {
+              reason = "invoice_number";
+            } else if (existingInvoicesByVendorDateAmount.has(key)) {
+              reason = "vendor_date_amount";
+            } else if (invoiceNumKey.length > 0 && requestInvoicesByNumber.has(invoiceNumKey)) {
+              reason = "batch_invoice_number";
+            } else if (requestInvoicesByVendorDateAmount.has(key)) {
+              reason = "batch_vendor_date_amount";
+            }
+
+            if (invoiceNumKey.length > 0) {
+              requestInvoicesByNumber.add(invoiceNumKey);
+            }
+            requestInvoicesByVendorDateAmount.add(key);
+
+            return reason
+              ? {
+                  index,
+                  invoiceNumber: r.invoiceNumber,
+                  vendor: r.vendor,
+                  date: r.date,
+                  totalAmount: r.totalAmount,
+                  reason,
+                }
+              : null;
+          })
+          .filter(
+            (
+              item,
+            ): item is {
+              index: number;
+              invoiceNumber: string;
+              vendor: string;
+              date: string;
+              totalAmount: number;
+              reason: DuplicateReason;
+            } => item !== null,
+          );
+
+        const duplicateIndexSet = new Set(duplicateRows.map((row) => row.index));
+        duplicateRows.forEach((row) => {
+          const prefix =
+            row.reason === "invoice_number" || row.reason === "batch_invoice_number"
+              ? "[Export] Duplicate invoice"
+              : "[Export] Duplicate vendor/date/amount";
+          console.warn(
+            `${prefix}: ${row.invoiceNumber || "(no invoice #)"} | ${row.vendor} | ${row.date} | €${row.totalAmount.toFixed(2)} | ${describeDuplicateReason(row.reason)}`,
+          );
+        });
+
+        const duplicateSummary = {
+          skippedCount: skipDuplicateCheck ? 0 : duplicateRows.length,
+          insertedDuplicateCount: skipDuplicateCheck ? duplicateRows.length : 0,
+          details: duplicateRows.map((row) => ({
+            invoiceNumber: row.invoiceNumber,
+            vendor: row.vendor,
+            date: row.date,
+            totalAmount: row.totalAmount,
+            reason: describeDuplicateReason(row.reason),
+          })),
+        };
+
+        // Check for duplicates before appending (skip if skipDuplicateCheck is true)
+        const newRows = rows.filter((_, index) => {
+          if (skipDuplicateCheck) return true;
+          if (duplicateIndexSet.has(index)) {
             return false;
           }
-
-          // Also dedupe within the current request batch so camera/email duplicates only append once.
-          if (invoiceNumKey.length > 0) {
-            existingInvoicesByNumber.add(invoiceNumKey);
-          }
-          existingInvoicesByVendorDateAmount.add(key);
           return true;
         });
-        
+
         if (newRows.length === 0) {
-          return { success: true, rowsAdded: 0, message: "All invoices are duplicates. No new data added." };
+          return {
+            success: true,
+            rowsAdded: 0,
+            message: "All invoices are duplicates. No new data added.",
+            duplicateSummary,
+          };
         }
-        } // end of !skipDuplicateCheck block
 
         // Append data rows with image upload
         const now = new Date().toISOString();
@@ -2711,6 +2911,37 @@ export const appRouter = router({
               sheetIdForFormat,
               grid,
             );
+            if (skipDuplicateCheck && duplicateRows.length > 0) {
+              const duplicateHighlightRanges = duplicateRows
+                .map((row) => {
+                  const appendedRowOffset = row.index;
+                  const startRowIndex = grid.startRowIndex + appendedRowOffset;
+                  const endRowIndex = startRowIndex + 1;
+                  if (startRowIndex >= grid.endRowIndex) return null;
+                  return {
+                    startRowIndex,
+                    endRowIndex,
+                    startColumnIndex: grid.startColumnIndex,
+                    endColumnIndex: grid.endColumnIndex,
+                  };
+                })
+                .filter(
+                  (
+                    item,
+                  ): item is {
+                    startRowIndex: number;
+                    endRowIndex: number;
+                    startColumnIndex: number;
+                    endColumnIndex: number;
+                  } => item !== null,
+                );
+              await applyDuplicateHighlightToGridRows(
+                spreadsheetId,
+                accessToken,
+                sheetIdForFormat,
+                duplicateHighlightRanges,
+              );
+            }
           }
         }
 
@@ -2718,7 +2949,7 @@ export const appRouter = router({
         // Always run automation to keep monthly/quarterly sheets in sync
         if (input.automateSheets) {
           try {
-            const { automateGoogleSheets, updateMeatMonthlySheet } = await import("./sheets-automation-vendor-aggregated");
+            const { automateGoogleSheets } = await import("./sheets-automation-vendor-aggregated");
             
             // Fetch ALL data from 2026 Invoice tracker sheet for complete monthly/quarterly aggregation
             // FORMULA so L column returns =IMAGE("https://...") for automation (display values are often empty)
@@ -2780,21 +3011,6 @@ export const appRouter = router({
               invoiceData: allInvoiceData,
             }, ["La Portenia", "Es Cuco"]);
 
-            // Meat_Monthly: optional pivot — failure must not mark all automation as failed
-            const meatRows = newRows.filter(
-              (r) => Boolean(r.items?.length) && isMeatCategory(r.category),
-            );
-            if (meatRows.length > 0) {
-              try {
-                await updateMeatMonthlySheet(accessToken, spreadsheetId, meatRows);
-              } catch (meatErr) {
-                console.error("❌ Meat_Monthly update failed:", meatErr);
-                console.warn(
-                  "⚠️ Main sheet + month/quarter sheets are still updated; only Meat_Monthly failed.",
-                );
-              }
-            }
-
             console.log("✅ Automation completed successfully");
           } catch (error) {
             console.error("❌ Automation failed:", error);
@@ -2810,6 +3026,7 @@ export const appRouter = router({
           message: "Invoice exported successfully",
           /** True if the client sent image data but storage upload failed so the sheet row has no image URL */
           receiptImageMissing,
+          duplicateSummary,
         };
       }),
 
@@ -2822,13 +3039,16 @@ export const appRouter = router({
           pageToken: z.string().optional(),
           /** If set, search is only label:"…" (must match Gmail label name). */
           preparingLabelName: z.string().optional(),
+          /** If set, exclude this label from fetch results. */
+          excludeLabelName: z.string().optional(),
         }),
       )
       .mutation(async ({ input }) => {
-        const { accessToken, maxResults, pageToken, preparingLabelName } = input;
+        const { accessToken, maxResults, pageToken, preparingLabelName, excludeLabelName } = input;
 
         const trimmedLabel = preparingLabelName?.trim() ?? "";
-        const cacheKey = `${accessToken}|${trimmedLabel.toLowerCase()}|${maxResults}|${pageToken ?? ""}`;
+        const trimmedExcludeLabel = excludeLabelName?.trim() ?? "";
+        const cacheKey = `${accessToken}|${trimmedLabel.toLowerCase()}|${trimmedExcludeLabel.toLowerCase()}|${maxResults}|${pageToken ?? ""}`;
         const nowMs = Date.now();
         pruneExpiredGmailFetchCache(nowMs);
         const cached = gmailFetchCache.get(cacheKey);
@@ -2848,6 +3068,10 @@ export const appRouter = router({
         } else {
           searchQuery =
             "subject:(factura OR invoice OR recibo OR receipt OR albarán) has:attachment OR subject:(factura OR invoice OR recibo)";
+        }
+        if (trimmedExcludeLabel) {
+          const safeExclude = trimmedExcludeLabel.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+          searchQuery += ` -label:"${safeExclude}"`;
         }
         const query = encodeURIComponent(searchQuery);
         let listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=${maxResults}`;
@@ -2879,6 +3103,7 @@ export const appRouter = router({
           if (!detailRes.ok) return null;
           const detail = await detailRes.json() as {
             id: string;
+            threadId?: string;
             payload?: {
               headers?: { name: string; value: string }[];
               parts?: {
@@ -2982,6 +3207,7 @@ export const appRouter = router({
 
           return {
             id: msg.id,
+            threadId: detail.threadId,
             subject,
             from,
             date: dateHeader,
@@ -3027,12 +3253,13 @@ export const appRouter = router({
         z.object({
           accessToken: z.string(),
           messageId: z.string(),
+          threadId: z.string().optional(),
           removeLabelName: z.string().optional(),
           addLabelName: z.string().optional(),
         }),
       )
       .mutation(async ({ input }) => {
-        const { accessToken, messageId, removeLabelName, addLabelName } = input;
+        const { accessToken, messageId, threadId, removeLabelName, addLabelName } = input;
         const listRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", {
           headers: { Authorization: `Bearer ${accessToken}` },
         });
@@ -3072,6 +3299,26 @@ export const appRouter = router({
           return { success: true, skipped: true as const };
         }
 
+        const modifyBody = JSON.stringify({ addLabelIds, removeLabelIds });
+        if (threadId?.trim()) {
+          const threadRes = await fetch(
+            `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}/modify`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+              },
+              body: modifyBody,
+            },
+          );
+          if (threadRes.ok) {
+            return { success: true, skipped: false as const, scope: "thread" as const };
+          }
+          const threadErr = await threadRes.text();
+          console.warn(`[Gmail] Thread relabel failed, falling back to message modify: ${threadErr}`);
+        }
+
         const modRes = await fetch(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
           {
@@ -3080,13 +3327,13 @@ export const appRouter = router({
               Authorization: `Bearer ${accessToken}`,
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ addLabelIds, removeLabelIds }),
+            body: modifyBody,
           },
         );
         if (!modRes.ok) {
           throw new Error(`Gmail modify failed: ${await modRes.text()}`);
         }
-        return { success: true, skipped: false as const };
+        return { success: true, skipped: false as const, scope: "message" as const };
       }),
 
     // Delete a single invoice row from the main tracker sheet
@@ -3304,7 +3551,16 @@ export const appRouter = router({
         }
 
         // Clear data from meat tracking sheets
-        const meatSheets = ["Meat_Monthly", "Meat_Quarterly", "Meat_Analysis", "Meat_Detail"];
+        const meatSheets = [
+          "Meat_Line_Items",
+          "Meat_Orders",
+          "Meat_Cut_Summary",
+          "Meat_Monthly_Summary",
+          "Meat_Monthly",
+          "Meat_Quarterly",
+          "Meat_Analysis",
+          "Meat_Detail",
+        ];
         for (const meatSheet of meatSheets) {
           if (sheetNames.includes(meatSheet)) {
             await sheets.spreadsheets.values.clear({

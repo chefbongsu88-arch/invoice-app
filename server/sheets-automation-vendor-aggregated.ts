@@ -432,43 +432,9 @@ async function createQuarterlySheets(
   }
 }
 
-// ─── Meat Monthly Sheet ───────────────────────────────────────────────────────
+// ─── Meat Item Sheets ─────────────────────────────────────────────────────────
 
-type MeatVendorName = "La Portenia" | "Es Cuco";
-const MEAT_VENDOR_SHEETS: readonly { vendor: MeatVendorName; sheet: string }[] = [
-  { vendor: "La Portenia", sheet: "Meat_La_Portenia" },
-  { vendor: "Es Cuco", sheet: "Meat_Es_Cuco" },
-];
 const MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-
-function isMeatVendor(vendor: string): boolean {
-  const lv = String(vendor ?? "").toLowerCase();
-  return (
-    lv.includes("porteni") ||
-    lv.includes("rapolteni") ||
-    lv.includes("lapolteni") ||
-    lv.includes("cuco") ||
-    lv.includes("coco") ||
-    lv.includes("escoco") ||
-    lv.includes("es cuco")
-  );
-}
-
-function normalizeMeatVendor(vendor: string): string {
-  const lv = String(vendor ?? "").toLowerCase();
-  if (lv.includes("porteni") || lv.includes("rapolteni") || lv.includes("lapolteni")) {
-    return "La Portenia";
-  }
-  if (
-    lv.includes("cuco") ||
-    lv.includes("coco") ||
-    lv.includes("escoco") ||
-    lv.includes("es cuco")
-  ) {
-    return "Es Cuco";
-  }
-  return vendor;
-}
 
 function getMonthIndexFromDate(dateStr: string): number {
   if (!dateStr) return -1;
@@ -482,58 +448,149 @@ function getMonthIndexFromDate(dateStr: string): number {
   return -1;
 }
 
-/**
- * Build the Meat_Monthly pivot table header row
- * Vendor | Cut Name | Jan(kg) | Jan(€) | Feb(kg) | Feb(€) | ... | Total(kg) | Total(€)
- */
-function buildMeatHeader(): string[] {
-  const cols: string[] = ["Vendor", "Cut Name"];
-  for (const abbr of MONTH_ABBR) {
-    cols.push(`${abbr}(kg)`, `${abbr}(€)`);
-  }
-  cols.push("Total(kg)", "Total(€)");
-  return cols;
+function normalizeMeatVendorName(vendor: string): string {
+  return String(vendor ?? "").trim().replace(/\s+/g, " ") || "Unknown";
 }
 
-interface MeatMonthData { kg: number; eur: number }
+function normalizeMeatCutName(cutName: string): string {
+  return String(cutName ?? "").trim().replace(/\s+/g, " ") || "Unknown Cut";
+}
 
-function buildMeatSheetDataRows(
-  aggMap: Map<string, MeatMonthData[]>,
-  vendorFilter?: MeatVendorName,
-): any[][] {
-  const dataRows: any[][] = [];
-  const sortedKeys = Array.from(aggMap.keys())
-    .filter((key) => {
-      if (!vendorFilter) return true;
-      const [vendor] = key.split("|||");
-      return vendor === vendorFilter;
-    })
-    .sort((a, b) => {
-      const [vA, cA] = a.split("|||");
-      const [vB, cB] = b.split("|||");
-      const vendorOrder = (v: string) => (v === "La Portenia" ? 0 : 1);
-      if (vendorOrder(vA) !== vendorOrder(vB)) return vendorOrder(vA) - vendorOrder(vB);
-      return cA.localeCompare(cB);
-    });
+type MeatItemRow = {
+  month: string;
+  monthIndex: number;
+  date: string;
+  vendor: string;
+  invoiceNumber: string;
+  cutName: string;
+  quantityKg: number;
+  pricePerKg: number;
+  totalEur: number;
+  source: string;
+};
 
-  for (const key of sortedKeys) {
-    const [vendor, cutName] = key.split("|||");
-    const months = aggMap.get(key)!;
-    const row: any[] = [vendor, cutName];
-    let totalKg = 0;
-    let totalEur = 0;
-    for (const m of months) {
-      row.push(Math.round(m.kg * 1000) / 1000);
-      row.push(Math.round(m.eur * 100) / 100);
-      totalKg += m.kg;
-      totalEur += m.eur;
+function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
+  const rows: MeatItemRow[] = [];
+  for (const inv of invoices) {
+    if (!isMeatCategory(inv.category) || !Array.isArray(inv.items) || inv.items.length === 0) {
+      continue;
     }
-    row.push(Math.round(totalKg * 1000) / 1000);
-    row.push(Math.round(totalEur * 100) / 100);
-    dataRows.push(row);
+    const vendor = normalizeMeatVendorName(inv.vendor);
+    const monthIndex = getMonthIndexFromDate(inv.date || "");
+    if (monthIndex < 0 || monthIndex > 11) continue;
+    const month = MONTH_ABBR[monthIndex];
+    for (const item of inv.items) {
+      const cutName = normalizeMeatCutName(item?.partName);
+      const quantityKg = parseAmount(item?.quantity);
+      const pricePerKg = parseAmount(item?.pricePerUnit);
+      const totalEur = parseAmount(item?.total);
+      if (!cutName || quantityKg <= 0 || totalEur <= 0) continue;
+      rows.push({
+        month,
+        monthIndex,
+        date: String(inv.date ?? "").trim(),
+        vendor,
+        invoiceNumber: String(inv.invoiceNumber ?? "").trim(),
+        cutName,
+        quantityKg: Math.round(quantityKg * 1000) / 1000,
+        pricePerKg: Math.round((pricePerKg > 0 ? pricePerKg : totalEur / quantityKg) * 100) / 100,
+        totalEur: Math.round(totalEur * 100) / 100,
+        source: String(inv.source ?? "").toLowerCase() === "camera" ? "Camera" : "Email",
+      });
+    }
   }
+  rows.sort((a, b) => {
+    if (a.monthIndex !== b.monthIndex) return a.monthIndex - b.monthIndex;
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    if (a.vendor !== b.vendor) return a.vendor.localeCompare(b.vendor);
+    return a.cutName.localeCompare(b.cutName);
+  });
+  return rows;
+}
 
-  return dataRows;
+function buildMeatOrdersRows(items: MeatItemRow[]): any[][] {
+  const byMonthVendor = new Map<string, { month: string; vendor: string; totalKg: number; totalEur: number; invoiceNumbers: Set<string> }>();
+  for (const item of items) {
+    const key = `${item.month}|||${item.vendor}`;
+    if (!byMonthVendor.has(key)) {
+      byMonthVendor.set(key, {
+        month: item.month,
+        vendor: item.vendor,
+        totalKg: 0,
+        totalEur: 0,
+        invoiceNumbers: new Set<string>(),
+      });
+    }
+    const entry = byMonthVendor.get(key)!;
+    entry.totalKg += item.quantityKg;
+    entry.totalEur += item.totalEur;
+    if (item.invoiceNumber) entry.invoiceNumbers.add(item.invoiceNumber);
+  }
+  return Array.from(byMonthVendor.values())
+    .sort((a, b) => a.month.localeCompare(b.month) || a.vendor.localeCompare(b.vendor))
+    .map((entry) => [
+      entry.month,
+      entry.vendor,
+      entry.invoiceNumbers.size,
+      Math.round(entry.totalKg * 1000) / 1000,
+      Math.round(entry.totalEur * 100) / 100,
+    ]);
+}
+
+function buildMeatCutSummaryRows(items: MeatItemRow[]): any[][] {
+  const byMonthCut = new Map<string, { month: string; cutName: string; totalKg: number; totalEur: number }>();
+  for (const item of items) {
+    const key = `${item.month}|||${item.cutName}`;
+    if (!byMonthCut.has(key)) {
+      byMonthCut.set(key, {
+        month: item.month,
+        cutName: item.cutName,
+        totalKg: 0,
+        totalEur: 0,
+      });
+    }
+    const entry = byMonthCut.get(key)!;
+    entry.totalKg += item.quantityKg;
+    entry.totalEur += item.totalEur;
+  }
+  return Array.from(byMonthCut.values())
+    .sort((a, b) => a.month.localeCompare(b.month) || a.cutName.localeCompare(b.cutName))
+    .map((entry) => [
+      entry.month,
+      entry.cutName,
+      Math.round(entry.totalKg * 1000) / 1000,
+      Math.round(entry.totalEur * 100) / 100,
+      entry.totalKg > 0 ? Math.round((entry.totalEur / entry.totalKg) * 100) / 100 : 0,
+    ]);
+}
+
+function buildMeatMonthlySummaryRows(items: MeatItemRow[]): any[][] {
+  const byMonth = new Map<string, { month: string; totalKg: number; totalEur: number; vendors: Set<string>; invoiceNumbers: Set<string> }>();
+  for (const item of items) {
+    if (!byMonth.has(item.month)) {
+      byMonth.set(item.month, {
+        month: item.month,
+        totalKg: 0,
+        totalEur: 0,
+        vendors: new Set<string>(),
+        invoiceNumbers: new Set<string>(),
+      });
+    }
+    const entry = byMonth.get(item.month)!;
+    entry.totalKg += item.quantityKg;
+    entry.totalEur += item.totalEur;
+    entry.vendors.add(item.vendor);
+    if (item.invoiceNumber) entry.invoiceNumbers.add(item.invoiceNumber);
+  }
+  return Array.from(byMonth.values())
+    .sort((a, b) => MONTH_ABBR.indexOf(a.month) - MONTH_ABBR.indexOf(b.month))
+    .map((entry) => [
+      entry.month,
+      Math.round(entry.totalKg * 1000) / 1000,
+      Math.round(entry.totalEur * 100) / 100,
+      entry.invoiceNumbers.size,
+      entry.vendors.size,
+    ]);
 }
 
 async function rewriteMeatSheet(
@@ -575,96 +632,54 @@ async function rewriteMeatSheet(
   }
 }
 
-/**
- * Update (incremental) the Meat_Monthly sheet with new invoice items.
- * Reads the existing sheet, merges new data, and rewrites.
- */
-export async function updateMeatMonthlySheet(
+export async function updateMeatSheets(
   accessToken: string,
   spreadsheetId: string,
-  newInvoices: any[]  // invoices that may have items[]
+  invoices: any[]
 ): Promise<void> {
-  const SHEET = "Meat_Monthly";
-
-  // Line items only when vendor is meat and category is Meat (exclude veg receipts from same store)
-  const meatInvoices = newInvoices.filter(
-    (inv) =>
-      inv.items &&
-      inv.items.length > 0 &&
-      isMeatVendor(inv.vendor || "") &&
-      isMeatCategory(inv.category),
-  );
-  if (meatInvoices.length === 0) {
-    console.log("ℹ️  No meat invoices with items — Meat_Monthly not updated");
+  const meatItems = buildMeatLineItems(invoices);
+  if (meatItems.length === 0) {
+    console.log("ℹ️  No meat line items found — meat sheets not updated");
     return;
   }
 
-  const meatHeader = buildMeatHeader();
+  const lineItemHeader = [
+    "Month",
+    "Date",
+    "Vendor",
+    "Invoice #",
+    "Cut Name",
+    "Quantity (kg)",
+    "Price / kg (€)",
+    "Total (€)",
+    "Source",
+  ];
+  const lineItemRows = meatItems.map((item) => [
+    item.month,
+    item.date,
+    item.vendor,
+    item.invoiceNumber,
+    item.cutName,
+    item.quantityKg,
+    item.pricePerKg,
+    item.totalEur,
+    item.source,
+  ]);
+  await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Line_Items", lineItemHeader, lineItemRows);
 
-  // ── 1. Read existing sheet data ────────────────────────────────────────────
-  const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(SHEET, "A:AZ")}`;
-  const readRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
-  let existingRows: any[][] = [];
-  if (readRes.ok) {
-    const data = await readRes.json() as { values?: any[][] };
-    existingRows = data.values ?? [];
-  }
+  const ordersHeader = ["Month", "Vendor", "Order Count", "Total Meat Kg", "Total Meat Spend (€)"];
+  const ordersRows = buildMeatOrdersRows(meatItems);
+  await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Orders", ordersHeader, ordersRows);
 
-  // ── 2. Build aggregation map from existing data ────────────────────────────
-  // map key: `${vendor}|||${cutName}` → monthData[0..11]
-  const aggMap = new Map<string, MeatMonthData[]>();
+  const cutSummaryHeader = ["Month", "Cut Name", "Total Kg", "Total Spend (€)", "Avg Price / Kg (€)"];
+  const cutSummaryRows = buildMeatCutSummaryRows(meatItems);
+  await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Cut_Summary", cutSummaryHeader, cutSummaryRows);
 
-  const existingHeader = existingRows[0] ?? [];
-  const isValidHeader = existingHeader[0] === "Vendor" && existingHeader[1] === "Cut Name";
+  const monthlySummaryHeader = ["Month", "Total Meat Kg", "Total Meat Spend (€)", "Invoice Count", "Vendor Count"];
+  const monthlySummaryRows = buildMeatMonthlySummaryRows(meatItems);
+  await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Monthly_Summary", monthlySummaryHeader, monthlySummaryRows);
 
-  if (isValidHeader && existingRows.length > 1) {
-    for (let r = 1; r < existingRows.length; r++) {
-      const row = existingRows[r];
-      const vendor  = String(row[0] ?? "").trim();
-      const cutName = String(row[1] ?? "").trim();
-      if (!vendor || !cutName) continue;
-
-      const key = `${vendor}|||${cutName}`;
-      const months: MeatMonthData[] = [];
-      for (let m = 0; m < 12; m++) {
-        const kg  = parseFloat(String(row[2 + m * 2] ?? "0")) || 0;
-        const eur = parseFloat(String(row[3 + m * 2] ?? "0")) || 0;
-        months.push({ kg, eur });
-      }
-      aggMap.set(key, months);
-    }
-  }
-
-  // ── 3. Merge new invoice items into aggMap ─────────────────────────────────
-  for (const inv of meatInvoices) {
-    const vendor   = normalizeMeatVendor(inv.vendor || "");
-    const monthIdx = getMonthIndexFromDate(inv.date || "");
-    if (monthIdx < 0 || monthIdx > 11) continue;
-
-    for (const item of (inv.items || [])) {
-      const cutName = String(item.partName || "").trim();
-      if (!cutName) continue;
-
-      const key = `${vendor}|||${cutName}`;
-      if (!aggMap.has(key)) {
-        aggMap.set(key, Array.from({ length: 12 }, () => ({ kg: 0, eur: 0 })));
-      }
-      const months = aggMap.get(key)!;
-      months[monthIdx].kg  += parseAmount(item.quantity);
-      months[monthIdx].eur += parseAmount(item.total);
-    }
-  }
-
-  // ── 4. Rewrite combined + per-vendor sheets ────────────────────────────────
-  const combinedRows = buildMeatSheetDataRows(aggMap);
-  await rewriteMeatSheet(accessToken, spreadsheetId, SHEET, meatHeader, combinedRows);
-  console.log(`✅ Meat_Monthly updated: ${combinedRows.length} cut rows across ${meatInvoices.length} invoices`);
-
-  for (const target of MEAT_VENDOR_SHEETS) {
-    const vendorRows = buildMeatSheetDataRows(aggMap, target.vendor);
-    await rewriteMeatSheet(accessToken, spreadsheetId, target.sheet, meatHeader, vendorRows);
-    console.log(`✅ ${target.sheet} updated: ${vendorRows.length} cut rows`);
-  }
+  console.log(`✅ Meat sheets updated: ${meatItems.length} line items`);
 }
 
 /**
@@ -686,6 +701,8 @@ export async function automateGoogleSheets(
 
   // Create quarterly sheets
   await createQuarterlySheets(config.accessToken, config.spreadsheetId, config.invoiceData);
+
+  await updateMeatSheets(config.accessToken, config.spreadsheetId, config.invoiceData);
 
   console.log("✅ Automation complete!");
 }

@@ -29,6 +29,7 @@ import {
 } from "@/shared/invoice-types";
 import { getOcrAlertForUser } from "@/lib/ocr-user-message";
 import { trpc } from "@/lib/trpc";
+import { translucentTile } from "@/lib/translucent-ui";
 
 /** iOS 15+ ImagePicker defaults to `.current` (keeps HEIC). Use `.compatible` so library/camera return JPEG when possible — avoids server sharp/heic issues. */
 const IOS_PICKER_HEIC_SAFE =
@@ -171,6 +172,7 @@ function FieldRow({
 
 export default function ScanScreen() {
   const colors = useColors();
+  const tile = translucentTile(colors);
   const router = useRouter();
   const { addInvoice, checkDuplicate } = useInvoices();
   const [step, setStep] = useState<ScanStep>("capture");
@@ -516,34 +518,60 @@ export default function ScanScreen() {
               </Text>
             </View>
 
-            <View style={styles.captureActions}>
-              <Pressable
-                onPress={pickFromCamera}
-                style={({ pressed }) => [
-                  styles.primaryBtn,
-                  { backgroundColor: colors.camera },
-                  pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
-                ]}
-              >
-                <IconSymbol name="camera.fill" size={20} color="#FFFFFF" />
-                <Text style={[styles.primaryBtnText, styles.primaryBtnLabel, { color: "#FFFFFF" }]}>
-                  Open Camera
-                </Text>
-              </Pressable>
+            <View
+              style={[
+                styles.captureActionsShell,
+                { backgroundColor: tile.bg, borderColor: tile.border },
+              ]}
+            >
+              <View style={styles.captureActions}>
+                <Pressable
+                  onPress={pickFromCamera}
+                  style={({ pressed }) => [
+                    styles.captureActionBtn,
+                    styles.primaryBtn,
+                    { backgroundColor: colors.camera },
+                    pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
+                  ]}
+                >
+                  <View style={[styles.captureActionIcon, { backgroundColor: "#FFFFFF22" }]}>
+                    <IconSymbol name="camera.fill" size={22} color="#FFFFFF" />
+                  </View>
+                  <View style={styles.captureActionText}>
+                    <Text style={[styles.primaryBtnText, styles.primaryBtnLabel, { color: "#FFFFFF" }]}>
+                      Open Camera
+                    </Text>
+                    <Text style={styles.captureActionSubtleText}>Take photo</Text>
+                  </View>
+                </Pressable>
 
-              <Pressable
-                onPress={() => pickFromLibrary()}
-                style={({ pressed }) => [
-                  styles.secondaryBtn,
-                  { borderColor: colors.border, backgroundColor: colors.surface },
-                  pressed && { opacity: 0.75 },
-                ]}
-              >
-                <IconSymbol name="photo.fill" size={20} color={colors.primary} />
-                <Text style={[styles.secondaryBtnText, styles.secondaryBtnLabel, { color: colors.foreground }]}>
-                  Choose from Library
-                </Text>
-              </Pressable>
+                <Pressable
+                  onPress={() => pickFromLibrary()}
+                  style={({ pressed }) => [
+                    styles.captureActionBtn,
+                    styles.secondaryBtn,
+                    {
+                      borderColor: colors.border + "AA",
+                      backgroundColor: colors.surface + "E6",
+                    },
+                    pressed && { opacity: 0.75 },
+                  ]}
+                >
+                  <View style={[styles.captureActionIcon, { backgroundColor: colors.primary + "18" }]}>
+                    <IconSymbol name="photo.fill" size={22} color={colors.primary} />
+                  </View>
+                  <View style={styles.captureActionText}>
+                    <Text
+                      style={[styles.secondaryBtnText, styles.secondaryBtnLabel, { color: colors.foreground }]}
+                    >
+                      Choose from Library
+                    </Text>
+                    <Text style={[styles.captureActionSubtleText, { color: colors.muted }]}>
+                      Use saved image
+                    </Text>
+                  </View>
+                </Pressable>
+              </View>
             </View>
           </View>
         </ScrollView>
@@ -745,32 +773,63 @@ const styles = StyleSheet.create({
   captureScrollContent: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 24,
+    paddingTop: 20,
     paddingBottom: 32,
   },
-  captureContainer: { gap: 20 },
+  captureContainer: { gap: 16 },
   captureTitle: APP_SCAN_STEP_TITLE,
-  captureSubtitle: { fontSize: 14, lineHeight: 20, marginTop: -12 },
+  captureSubtitle: { fontSize: 14, lineHeight: 20, marginTop: -10 },
   captureArea: {
-    minHeight: 240,
+    minHeight: 220,
     borderRadius: 20,
     borderWidth: 2,
     borderStyle: "dashed",
     alignItems: "center",
     justifyContent: "center",
-    gap: 16,
-    padding: 32,
+    gap: 14,
+    padding: 28,
   },
   captureIcon: { width: 96, height: 96, borderRadius: 24, alignItems: "center", justifyContent: "center" },
   captureHint: { fontSize: 14, textAlign: "center", lineHeight: 20 },
+  captureActionsShell: {
+    borderRadius: 18,
+    borderWidth: 1.5,
+    padding: 10,
+    marginTop: 0,
+  },
   captureActions: { gap: 12 },
+  captureActionBtn: {
+    minHeight: 76,
+    justifyContent: "flex-start",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  captureActionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  captureActionText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  captureActionSubtleText: {
+    color: "#D8DEEA",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "500",
+  },
   primaryBtn: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 14,
   },
   primaryBtnText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
@@ -779,10 +838,9 @@ const styles = StyleSheet.create({
   secondaryBtn: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 14,
     borderWidth: 1,
   },
