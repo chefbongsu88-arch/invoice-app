@@ -2945,6 +2945,43 @@ export const appRouter = router({
           }
         }
 
+        const trackerSheetId = await getSheetIdByTitle(spreadsheetId, sheetName, accessToken);
+        if (trackerSheetId != null) {
+          const sortRes = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+              },
+              body: JSON.stringify({
+                requests: [
+                  {
+                    sortRange: {
+                      range: {
+                        sheetId: trackerSheetId,
+                        startRowIndex: 1,
+                        startColumnIndex: 0,
+                        endColumnIndex: 13,
+                      },
+                      sortSpecs: [
+                        {
+                          dimensionIndex: 3,
+                          sortOrder: "DESCENDING",
+                        },
+                      ],
+                    },
+                  },
+                ],
+              }),
+            },
+          );
+          if (!sortRes.ok) {
+            console.warn("[Sheets] Main tracker date sort failed:", await sortRes.text());
+          }
+        }
+
         // Automatically trigger sheet automation on every upload
         // Always run automation to keep monthly/quarterly sheets in sync
         if (input.automateSheets) {
