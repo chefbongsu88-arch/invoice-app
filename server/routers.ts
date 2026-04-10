@@ -2998,6 +2998,14 @@ export const appRouter = router({
               }
             }
             
+            // Preserve line items from the just-uploaded invoices; the main tracker sheet does not store `items[]`.
+            const itemLookup = new Map(
+              newRows.map((row) => [
+                `${String(row.invoiceNumber ?? "").trim()}|||${String(row.vendor ?? "").trim()}|||${String(row.date ?? "").trim()}`,
+                Array.isArray(row.items) ? row.items : undefined,
+              ]),
+            );
+
             // Use all data for automation (includes all rows from main sheet)
             console.log(`📊 Automation: Processing ${allInvoiceData.length} invoices from main sheet`);
             
@@ -3008,7 +3016,11 @@ export const appRouter = router({
             await automateGoogleSheets({
               spreadsheetId,
               accessToken,
-              invoiceData: allInvoiceData,
+              invoiceData: allInvoiceData.map((invoice) => {
+                const key = `${String(invoice.invoiceNumber ?? "").trim()}|||${String(invoice.vendor ?? "").trim()}|||${String(invoice.date ?? "").trim()}`;
+                const items = itemLookup.get(key);
+                return items && items.length > 0 ? { ...invoice, items } : invoice;
+              }),
             }, ["La Portenia", "Es Cuco"]);
 
             console.log("✅ Automation completed successfully");
