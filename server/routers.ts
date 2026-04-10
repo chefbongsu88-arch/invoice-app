@@ -3338,6 +3338,47 @@ export const appRouter = router({
           }
           const threadErr = await threadRes.text();
           console.warn(`[Gmail] Thread relabel failed, falling back to message modify: ${threadErr}`);
+
+          if (dedupedRemoveLabelIds.length > 0) {
+            try {
+              const threadGetRes = await fetch(
+                `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=minimal`,
+                {
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                },
+              );
+              if (threadGetRes.ok) {
+                const threadJson = (await threadGetRes.json()) as {
+                  messages?: Array<{ id?: string }>;
+                };
+                const threadMessageIds = (threadJson.messages ?? [])
+                  .map((m) => String(m.id ?? "").trim())
+                  .filter(Boolean);
+                for (const mid of threadMessageIds) {
+                  const removeOnlyRes = await fetch(
+                    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(mid)}/modify`,
+                    {
+                      method: "POST",
+                      headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({ addLabelIds: [], removeLabelIds: dedupedRemoveLabelIds }),
+                    },
+                  );
+                  if (!removeOnlyRes.ok) {
+                    console.warn(
+                      `[Gmail] Thread fallback remove failed for message ${mid}: ${await removeOnlyRes.text()}`,
+                    );
+                  }
+                }
+              } else {
+                console.warn(`[Gmail] Thread fetch for fallback remove failed: ${await threadGetRes.text()}`);
+              }
+            } catch (threadFetchErr) {
+              console.warn("[Gmail] Thread fallback remove fetch failed:", threadFetchErr);
+            }
+          }
         }
 
         const modRes = await fetch(
