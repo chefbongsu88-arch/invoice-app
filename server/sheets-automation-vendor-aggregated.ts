@@ -1,6 +1,7 @@
 import { isMeatCategory } from "../shared/invoice-types";
 import { receiptImageSheetsFormula } from "../shared/sheets-defaults";
 import {
+  applyBoldTextFormatToGridRange,
   applyThinTextFormatToGridRange,
   encodeValuesRange,
   ensureSheetExists,
@@ -312,12 +313,20 @@ async function createMonthlySheets(
 
     const monthSheetId = await getSheetIdByTitle(spreadsheetId, month, accessToken);
     if (monthSheetId != null && sheetRows.length > 0) {
-      await applyThinTextFormatToGridRange(spreadsheetId, accessToken, monthSheetId, {
+      await applyBoldTextFormatToGridRange(spreadsheetId, accessToken, monthSheetId, {
         startRowIndex: 0,
-        endRowIndex: sheetRows.length,
+        endRowIndex: Math.min(2, sheetRows.length),
         startColumnIndex: 0,
         endColumnIndex: TRACKER_COLUMN_COUNT,
       });
+      if (sheetRows.length > 2) {
+        await applyThinTextFormatToGridRange(spreadsheetId, accessToken, monthSheetId, {
+          startRowIndex: 2,
+          endRowIndex: sheetRows.length,
+          startColumnIndex: 0,
+          endColumnIndex: TRACKER_COLUMN_COUNT,
+        });
+      }
     }
 
     console.log(`✅ Updated ${month} sheet: ${aggregated.length} vendors`);
@@ -420,12 +429,20 @@ async function createQuarterlySheets(
 
     const quarterSheetId = await getSheetIdByTitle(spreadsheetId, quarter, accessToken);
     if (quarterSheetId != null && sheetRows.length > 0) {
-      await applyThinTextFormatToGridRange(spreadsheetId, accessToken, quarterSheetId, {
+      await applyBoldTextFormatToGridRange(spreadsheetId, accessToken, quarterSheetId, {
         startRowIndex: 0,
-        endRowIndex: sheetRows.length,
+        endRowIndex: Math.min(2, sheetRows.length),
         startColumnIndex: 0,
         endColumnIndex: TRACKER_COLUMN_COUNT,
       });
+      if (sheetRows.length > 2) {
+        await applyThinTextFormatToGridRange(spreadsheetId, accessToken, quarterSheetId, {
+          startRowIndex: 2,
+          endRowIndex: sheetRows.length,
+          startColumnIndex: 0,
+          endColumnIndex: TRACKER_COLUMN_COUNT,
+        });
+      }
     }
 
     console.log(`✅ Updated ${quarter} sheet: ${aggregated.length} vendors`);
@@ -623,12 +640,20 @@ async function rewriteMeatSheet(
   const sheetId = await getSheetIdByTitle(spreadsheetId, sheetTitle, accessToken);
   if (sheetId != null && sheetData.length > 0) {
     const nCols = sheetData.reduce((m, r) => Math.max(m, r.length), 0);
-    await applyThinTextFormatToGridRange(spreadsheetId, accessToken, sheetId, {
+    await applyBoldTextFormatToGridRange(spreadsheetId, accessToken, sheetId, {
       startRowIndex: 0,
-      endRowIndex: sheetData.length,
+      endRowIndex: 1,
       startColumnIndex: 0,
       endColumnIndex: Math.max(nCols, 1),
     });
+    if (sheetData.length > 1) {
+      await applyThinTextFormatToGridRange(spreadsheetId, accessToken, sheetId, {
+        startRowIndex: 1,
+        endRowIndex: sheetData.length,
+        startColumnIndex: 0,
+        endColumnIndex: Math.max(nCols, 1),
+      });
+    }
   }
 }
 

@@ -185,6 +185,51 @@ export async function applyThinTextFormatToGridRange(
   }
 }
 
+export async function applyBoldTextFormatToGridRange(
+  spreadsheetId: string,
+  accessToken: string,
+  sheetId: number,
+  range: {
+    startRowIndex: number;
+    endRowIndex: number;
+    startColumnIndex: number;
+    endColumnIndex: number;
+  },
+): Promise<void> {
+  const batchRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        requests: [
+          {
+            repeatCell: {
+              range: { sheetId, ...range },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: true,
+                    fontSize: 10,
+                    fontFamily: "Roboto",
+                  },
+                },
+              },
+              fields: "userEnteredFormat.textFormat",
+            },
+          },
+        ],
+      }),
+    },
+  );
+  if (!batchRes.ok) {
+    console.warn("[Sheets] applyBoldTextFormatToGridRange failed:", await batchRes.text());
+  }
+}
+
 /**
  * Create or update a sheet with headers
  */
