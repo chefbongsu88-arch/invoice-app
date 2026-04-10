@@ -3307,11 +3307,20 @@ export const appRouter = router({
           removeLabelIds.push(id);
         }
 
-        if (addLabelIds.length === 0 && removeLabelIds.length === 0) {
+        // Gmail rejects requests that add and remove the same label id.
+        const addSet = new Set(addLabelIds);
+        const dedupedRemoveLabelIds = removeLabelIds.filter((id) => !addSet.has(id));
+        if (dedupedRemoveLabelIds.length !== removeLabelIds.length) {
+          console.warn(
+            `[Gmail] Skipping removeLabel because it resolves to the same label as addLabel. add="${addLabelName ?? ""}" remove="${removeLabelName ?? ""}"`,
+          );
+        }
+
+        if (addLabelIds.length === 0 && dedupedRemoveLabelIds.length === 0) {
           return { success: true, skipped: true as const };
         }
 
-        const modifyBody = JSON.stringify({ addLabelIds, removeLabelIds });
+        const modifyBody = JSON.stringify({ addLabelIds, removeLabelIds: dedupedRemoveLabelIds });
         if (threadId?.trim()) {
           const threadRes = await fetch(
             `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}/modify`,

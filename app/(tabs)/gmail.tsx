@@ -784,6 +784,13 @@ export default function GmailScreen() {
   const saveGmailLabelSettings = useCallback(async () => {
     const prep = gmailPreparingLabel.trim();
     const done = gmailCompleteLabel.trim();
+    if (prep && done && prep.toLowerCase() === done.toLowerCase()) {
+      Alert.alert(
+        "Label names must be different",
+        "Preparing and Complete cannot use the same Gmail label name. Use different labels or leave Preparing empty.",
+      );
+      return;
+    }
     await mergeAppSettingsPatch({
       gmailPreparingLabel: prep,
       gmailCompleteLabel: done,
