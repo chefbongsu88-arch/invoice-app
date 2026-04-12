@@ -11,6 +11,7 @@ import {
   FlatList,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -146,19 +147,11 @@ function LoginCard({
       <Text style={[styles.connectDesc, { color: colors.muted }]}>
         Sign in with your Google account to automatically fetch and parse invoice emails from your inbox.
       </Text>
-      <Text style={[styles.apiBaseHint, { color: colors.muted }]} selectable>
-        API: {apiBase}
-      </Text>
       {oauthRedirectBase == null ? (
-        <Text style={[styles.apiBaseHint, { color: colors.muted, marginTop: 6 }]}>
-          On iPhone and Android, sign-in uses Google’s system dialog — no browser redirect. Your data still goes
-          through the API above.
+        <Text style={[styles.apiBaseHint, { color: colors.muted }]}>
+          On iPhone and Android, sign-in uses Google&apos;s system dialog.
         </Text>
-      ) : oauthDiffers ? (
-        <Text style={[styles.apiBaseHint, { color: colors.muted, marginTop: 6 }]} selectable>
-          Web Gmail sign-in redirect: {oauthRedirectBase}
-        </Text>
-      ) : null}
+      ) : oauthDiffers ? null : null}
       {hostMismatch ? (
         <Text style={[styles.apiBaseWarn, { color: colors.warning }]}>
           This app is using a different API host than the project default. For Gmail sign-in to work, the browser
@@ -181,13 +174,16 @@ function LoginCard({
           pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
         ]}
       >
-        <View style={styles.connectBtnIconBox}>
-          <IconSymbol name="envelope.fill" size={20} color="#fff" />
+        <View style={styles.connectBtnTopRow}>
+          <View style={styles.connectBtnIconBox}>
+            <IconSymbol name="envelope.fill" size={20} color="#fff" />
+          </View>
+          <View style={styles.connectBtnTextBlock}>
+            <Text style={styles.connectBtnText}>Sign in with Google</Text>
+            <Text style={styles.connectBtnSubtext}>Connect your Gmail inbox</Text>
+          </View>
         </View>
-        <View style={styles.connectBtnTextBlock}>
-          <Text style={styles.connectBtnText}>Sign in with Google</Text>
-          <Text style={styles.connectBtnSubtext}>Connect your Gmail inbox</Text>
-        </View>
+        <Text style={styles.connectBtnFooter}>Tap to continue</Text>
       </Pressable>
     </View>
   );
@@ -939,11 +935,18 @@ export default function GmailScreen() {
   if (!isLoggedIn) {
     return (
       <ScreenContainer containerClassName="bg-background">
-        <LoginCard
-          onLogin={handleGoogleLogin}
-          apiBase={getApiBaseUrl()}
-          oauthRedirectBase={getGmailOAuthRedirectBaseUrl()}
-        />
+        <ScrollView
+          style={{ flex: 1, backgroundColor: colors.background }}
+          contentContainerStyle={styles.connectScrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <LoginCard
+            onLogin={handleGoogleLogin}
+            apiBase={getApiBaseUrl()}
+            oauthRedirectBase={getGmailOAuthRedirectBaseUrl()}
+          />
+        </ScrollView>
       </ScreenContainer>
     );
   }
@@ -1147,12 +1150,23 @@ export default function GmailScreen() {
 }
 
 const styles = StyleSheet.create({
+  connectScrollContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    paddingTop: 72,
+    paddingBottom: 36,
+  },
   connectCard: {
-    flex: 1,
+    width: "100%",
+    maxWidth: 420,
+    alignSelf: "center",
     alignItems: "center",
     justifyContent: "center",
-    padding: 24,
-    gap: 14,
+    paddingVertical: 28,
+    paddingHorizontal: 22,
+    gap: 16,
+    borderRadius: 22,
   },
   connectIcon: {
     width: 88,
@@ -1163,19 +1177,27 @@ const styles = StyleSheet.create({
   },
   connectTitle: { fontSize: 22, fontWeight: "700", textAlign: "center" },
   connectDesc: { fontSize: 14, textAlign: "center", lineHeight: 21 },
-  apiBaseHint: { fontSize: 11, textAlign: "center", marginTop: 10, lineHeight: 16 },
-  apiBaseWarn: { fontSize: 12, textAlign: "left", marginTop: 10, lineHeight: 18, paddingHorizontal: 4 },
+  apiBaseHint: { fontSize: 12, textAlign: "center", lineHeight: 18, maxWidth: 280 },
+  apiBaseWarn: { fontSize: 12, textAlign: "left", marginTop: 4, lineHeight: 18, paddingHorizontal: 4 },
   connectBtn: {
+    width: "100%",
+    maxWidth: 320,
+    minHeight: 96,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    borderRadius: 20,
+    marginTop: 6,
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  connectBtnTopRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    width: "100%",
-    maxWidth: 320,
-    minHeight: 72,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 18,
-    marginTop: 8,
   },
   connectBtnIconBox: {
     width: 40,
@@ -1190,8 +1212,9 @@ const styles = StyleSheet.create({
     minWidth: 0,
     gap: 2,
   },
-  connectBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  connectBtnText: { color: "#fff", fontSize: 17, fontWeight: "800", textAlign: "left" },
   connectBtnSubtext: { color: "#E5EDF9", fontSize: 12, lineHeight: 16, fontWeight: "500" },
+  connectBtnFooter: { color: "#F5F9FF", fontSize: 12, fontWeight: "700", marginTop: 12, textAlign: "center" },
   header: { padding: 20, paddingBottom: 6 },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, gap: 12 },
   title: { fontSize: 26, fontWeight: "700" },

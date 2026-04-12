@@ -11,7 +11,6 @@ import {
   View,
 } from "react-native";
 import { applyApiUrlFromAppSettings, requestTrpcClientRecreate } from "@/constants/oauth";
-import { PRODUCTION_API_ORIGIN } from "@/constants/receipt-api-origin";
 import { trpc } from "@/lib/trpc";
 import { DEFAULT_MAIN_TRACKER_SHEET_NAME } from "@/shared/sheets-defaults";
 
@@ -231,13 +230,6 @@ export default function SettingsScreen() {
         <SectionHeader title="Google Sheets Configuration" />
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <EditableField
-            label="API server URL (optional)"
-            value={settings.apiBaseUrlOverride ?? ""}
-            placeholder={PRODUCTION_API_ORIGIN}
-            onSave={(v) => saveSettings({ ...settings, apiBaseUrlOverride: v })}
-            hint="Leave empty: app uses your build default, or auto-switches from legacy app-production-… to invoice-app-production-…. Set manually only if you use a custom API host."
-          />
-          <EditableField
             label="Spreadsheet ID"
             value={settings.spreadsheetId}
             placeholder="Paste your Spreadsheet ID here"
@@ -312,68 +304,76 @@ export default function SettingsScreen() {
         {/* Testing & Maintenance */}
         <SectionHeader title="Testing & Maintenance" />
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Pressable
-            onPress={() => {
-              Alert.alert(
-                "Reset All Data",
-                "This will:\n• Clear Google Sheets (main, monthly, quarterly, Meat tabs). Row 1 headers stay.\n• Remove every invoice from this device’s Receipts list.\n\nAre you sure?",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Reset",
-                    style: "destructive",
-                    onPress: async () => {
-                      const spreadsheetId = settings.spreadsheetId || "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
-                      try {
-                        await resetAllDataMutation.mutateAsync({ spreadsheetId });
-                        await clearLocalInvoiceStorage();
-                        await reloadInvoices();
-                        Alert.alert(
-                          "Done",
-                          "Check Google Sheets (data rows gone, headers kept) and the Receipts tab (empty).",
-                        );
-                      } catch (err) {
-                        Alert.alert("Error", "Reset failed: " + String(err));
-                      }
+          <View style={styles.maintenanceButtonsWrap}>
+            <Pressable
+              onPress={() => {
+                Alert.alert(
+                  "Reset All Data",
+                  "This will:\n• Clear Google Sheets (main, monthly, quarterly, Meat tabs). Row 1 headers stay.\n• Remove every invoice from this device’s Receipts list.\n\nAre you sure?",
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Reset",
+                      style: "destructive",
+                      onPress: async () => {
+                        const spreadsheetId = settings.spreadsheetId || "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
+                        try {
+                          await resetAllDataMutation.mutateAsync({ spreadsheetId });
+                          await clearLocalInvoiceStorage();
+                          await reloadInvoices();
+                          Alert.alert(
+                            "Done",
+                            "Check Google Sheets (data rows gone, headers kept) and the Receipts tab (empty).",
+                          );
+                        } catch (err) {
+                          Alert.alert("Error", "Reset failed: " + String(err));
+                        }
+                      },
                     },
-                  },
-                ]
-              );
-            }}
-            accessibilityRole="button"
-            accessibilityLabel="Reset all data"
-            style={({ pressed }) => [
-              styles.maintenancePrimaryBtn,
-              { backgroundColor: colors.error },
-              pressed && { opacity: 0.92 },
-            ]}
-          >
-            <Text style={styles.maintenancePrimaryBtnText}>Reset All Data</Text>
-          </Pressable>
-          <Text style={[styles.maintenanceHint, { color: colors.muted }]}>
-            Clears the linked spreadsheet (headers preserved) and empties Receipts on this device.
-          </Text>
+                  ]
+                );
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Reset all data"
+              style={({ pressed }) => [
+                styles.maintenancePrimaryBtn,
+                { backgroundColor: colors.error },
+                pressed && { opacity: 0.92, transform: [{ scale: 0.985 }] },
+              ]}
+            >
+              <IconSymbol name="trash.fill" size={15} color="#fff" />
+              <View style={styles.maintenanceButtonTextWrap}>
+                <Text style={styles.maintenancePrimaryBtnText}>Reset All Data</Text>
+                <Text style={styles.maintenancePrimarySubtext}>
+                  Clear Sheets and remove all local receipts
+                </Text>
+              </View>
+            </Pressable>
 
-          <Pressable
-            onPress={handleClearCache}
-            accessibilityRole="button"
-            accessibilityLabel="Clear local cache"
-            style={({ pressed }) => [
-              styles.maintenanceSecondaryBtn,
-              {
-                backgroundColor: colors.border,
-                borderTopColor: colors.foreground + "14",
-              },
-              pressed && { opacity: 0.92 },
-            ]}
-          >
-            <Text style={[styles.maintenanceSecondaryBtnText, { color: colors.foreground }]}>
-              Clear Local Cache
-            </Text>
-          </Pressable>
-          <Text style={[styles.maintenanceHint, styles.maintenanceHintLast, { color: colors.muted }]}>
-            Deletes local invoice records only. Google Sheets will not be affected.
-          </Text>
+            <Pressable
+              onPress={handleClearCache}
+              accessibilityRole="button"
+              accessibilityLabel="Clear local cache"
+              style={({ pressed }) => [
+                styles.maintenanceSecondaryBtn,
+                {
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
+                },
+                pressed && { opacity: 0.92, transform: [{ scale: 0.985 }] },
+              ]}
+            >
+              <IconSymbol name="xmark.bin.fill" size={15} color={colors.foreground} />
+              <View style={styles.maintenanceButtonTextWrap}>
+                <Text style={[styles.maintenanceSecondaryBtnText, { color: colors.foreground }]}>
+                  Clear Local Cache
+                </Text>
+                <Text style={[styles.maintenanceSecondarySubtext, { color: colors.muted }]}>
+                  Remove this device&apos;s invoice cache only
+                </Text>
+              </View>
+            </Pressable>
+          </View>
         </View>
 
         {/* Quick Start Guide */}
@@ -519,43 +519,54 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: -0.35,
   },
+  maintenanceButtonsWrap: {
+    padding: 14,
+    gap: 12,
+  },
   maintenancePrimaryBtn: {
     width: "100%",
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    minHeight: 52,
+    gap: 12,
+    justifyContent: "flex-start",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    minHeight: 58,
+    borderRadius: 14,
   },
+  maintenanceButtonTextWrap: { flex: 1, gap: 2 },
   maintenancePrimaryBtnText: {
     color: "#fff",
-    fontSize: 17,
+    fontSize: 14,
     fontWeight: "800",
     letterSpacing: -0.3,
+  },
+  maintenancePrimarySubtext: {
+    color: "#FFE6E6",
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "600",
   },
   maintenanceSecondaryBtn: {
     width: "100%",
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    minHeight: 52,
-    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 12,
+    justifyContent: "flex-start",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    minHeight: 58,
+    borderWidth: 1,
+    borderRadius: 14,
   },
   maintenanceSecondaryBtnText: {
-    fontSize: 17,
+    fontSize: 14,
     fontWeight: "800",
     letterSpacing: -0.3,
   },
-  maintenanceHint: {
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: "500",
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 4,
-  },
-  maintenanceHintLast: {
-    paddingBottom: 14,
+  maintenanceSecondarySubtext: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "600",
   },
 });
