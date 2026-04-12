@@ -44,12 +44,18 @@ const MIN_PNG_B64 =
 async function main() {
   console.log("=== Forge storage (Sheets receipt URL) check ===\n");
 
-  const baseUrl = process.env.BUILT_IN_FORGE_API_URL?.trim().replace(/\/+$/, "");
-  const apiKey = process.env.BUILT_IN_FORGE_API_KEY?.trim();
+  const baseUrl =
+    process.env.BUILT_IN_FORGE_API_URL?.trim().replace(/\/+$/, "") ||
+    process.env.VITE_FRONTEND_FORGE_API_URL?.trim().replace(/\/+$/, "");
+  const apiKey =
+    process.env.BUILT_IN_FORGE_API_KEY?.trim() ||
+    process.env.VITE_FRONTEND_FORGE_API_KEY?.trim();
 
   if (!baseUrl || !apiKey) {
-    console.error("FAIL: BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY must both be set.");
-    console.error("      Copy .env.example → .env.local and fill the values (or use Railway Variables).");
+    console.error(
+      "FAIL: Set both URL and key — e.g. BUILT_IN_FORGE_API_URL + BUILT_IN_FORGE_API_KEY, or Manus names VITE_FRONTEND_FORGE_API_URL + VITE_FRONTEND_FORGE_API_KEY.",
+    );
+    console.error("      Copy .env.example → .env.local (or Railway Variables).");
     process.exitCode = 1;
     return;
   }

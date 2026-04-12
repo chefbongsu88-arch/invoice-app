@@ -39,12 +39,29 @@ export function resolvePublicBaseForReceiptImages(clientBaseUrl?: string | null)
   return getPublicServerBaseUrl() || PRODUCTION_API_ORIGIN;
 }
 
+/**
+ * Manus WebDev often injects `VITE_FRONTEND_FORGE_*`; self-hosted Railway may use `BUILT_IN_FORGE_*`.
+ * Accept either so the same values from Manus → Secrets can be copied to Railway.
+ */
+function resolveForgeApiUrl(): string {
+  const raw =
+    process.env.BUILT_IN_FORGE_API_URL?.trim() ||
+    process.env.VITE_FRONTEND_FORGE_API_URL?.trim() ||
+    "";
+  return raw.replace(/\/+$/, "");
+}
+
+function resolveForgeApiKey(): string {
+  return (
+    process.env.BUILT_IN_FORGE_API_KEY?.trim() ||
+    process.env.VITE_FRONTEND_FORGE_API_KEY?.trim() ||
+    ""
+  );
+}
+
 /** True when Forge storage env vars are set (may still fail at runtime if invalid). */
 export function isForgeStorageConfigured(): boolean {
-  return (
-    Boolean(process.env.BUILT_IN_FORGE_API_URL?.trim()) &&
-    Boolean(process.env.BUILT_IN_FORGE_API_KEY?.trim())
-  );
+  return Boolean(resolveForgeApiUrl()) && Boolean(resolveForgeApiKey());
 }
 
 export const ENV = {
@@ -54,8 +71,8 @@ export const ENV = {
   oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
   ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
   isProduction: process.env.NODE_ENV === "production",
-  forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
-  forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  forgeApiUrl: resolveForgeApiUrl(),
+  forgeApiKey: resolveForgeApiKey(),
   /** Direct Anthropic API — used for receipt vision when set (preferred over Forge/Gemini). */
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   /** Vision-capable Claude id — see https://docs.anthropic.com/en/docs/about-claude/models */
