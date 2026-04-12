@@ -64,6 +64,12 @@ async function main() {
   const storagePath = `invoices/forge-verify/${Date.now()}-probe.png`;
   const uploadUrl = buildUploadUrl(baseUrl, storagePath);
 
+  console.log("Using base URL:", baseUrl);
+  console.log("POST:", `${uploadUrl.origin}${uploadUrl.pathname}?path=…`);
+  console.log(
+    "Tip: the URL must be the Manus storage proxy API origin (from Application secrets Reveal), not the forge.manus.ai website unless that row shows exactly that.\n",
+  );
+
   const form = new FormData();
   form.append("file", new Blob([buf], { type: "image/png" }), "probe.png");
 
