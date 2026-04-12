@@ -22,8 +22,8 @@ async function main() {
   const markers = await import("node:fs/promises").then((fs) =>
     fs.readFile(distEnv, "utf8").catch(() => ""),
   );
-  if (!markers.includes("image_pipeline=receipt-share-v3-hyperlink")) {
-    console.error("FAIL: dist/index.mjs missing image_pipeline=receipt-share-v3-hyperlink");
+  if (!markers.includes("image_pipeline=receipt-plain-url-v1")) {
+    console.error("FAIL: dist/index.mjs missing image_pipeline=receipt-plain-url-v1");
     console.error("      Run: pnpm run build:server");
     process.exitCode = 1;
     return;
@@ -33,7 +33,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  console.log("OK: dist/index.mjs contains receipt-share-v3-hyperlink export marker");
+  console.log("OK: dist/index.mjs contains receipt-plain-url-v1 export marker");
   console.log("OK: dist does not contain old 'Image uploaded for ... fileName=' pattern\n");
 
   // Run vitest subset

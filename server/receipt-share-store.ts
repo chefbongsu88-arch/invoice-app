@@ -1,10 +1,14 @@
 /**
  * Short-lived public receipt images for Google Sheets =IMAGE().
  * Forge/Manus storage is preferred; this is an in-memory fallback when those env vars are unset.
+ * Optional RECEIPT_SHARE_DISK_DIR: persist blobs on disk so a single Railway instance survives restarts
+ * (mount a volume on that path for durability). Multi-replica still needs Forge or shared storage.
  * Tokens are unguessable; anyone with the link can view until expiry (or server restart clears RAM).
  */
 
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 const TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 const MAX_ENTRIES = 250;
@@ -13,6 +17,62 @@ const MAX_BYTES = 20 * 1024 * 1024; // 20 MiB per receipt (PDF/image)
 type Entry = { buffer: Buffer; mime: string; expiresAt: number };
 
 const store = new Map<string, Entry>();
+
+function receiptShareDiskDir(): string | null {
+  const d = process.env.RECEIPT_SHARE_DISK_DIR?.trim();
+  return d ? d : null;
+}
+
+function diskMetaPath(token: string, dir: string): string {
+  return path.join(dir, `${token}.json`);
+}
+
+function diskBinPath(token: string, dir: string): string {
+  return path.join(dir, token);
+}
+
+function readReceiptFromDisk(token: string): Entry | null {
+  const dir = receiptShareDiskDir();
+  if (!dir) return null;
+  const metaPath = diskMetaPath(token, dir);
+  const binPath = diskBinPath(token, dir);
+  try {
+    if (!fs.existsSync(metaPath) || !fs.existsSync(binPath)) return null;
+    const meta = JSON.parse(fs.readFileSync(metaPath, "utf8")) as { mime?: string; expiresAt?: number };
+    const expiresAt = Number(meta?.expiresAt ?? 0);
+    const mime = String(meta?.mime ?? "image/jpeg").trim() || "image/jpeg";
+    if (!expiresAt || expiresAt <= Date.now()) {
+      try {
+        fs.unlinkSync(metaPath);
+      } catch {
+        /* ignore */
+      }
+      try {
+        fs.unlinkSync(binPath);
+      } catch {
+        /* ignore */
+      }
+      return null;
+    }
+    const buffer = fs.readFileSync(binPath);
+    if (!buffer.length) return null;
+    return { buffer, mime, expiresAt };
+  } catch {
+    return null;
+  }
+}
+
+function writeReceiptToDisk(token: string, buffer: Buffer, mime: string, expiresAt: number): void {
+  const dir = receiptShareDiskDir();
+  if (!dir) return;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(diskBinPath(token, dir), buffer);
+    fs.writeFileSync(diskMetaPath(token, dir), JSON.stringify({ mime, expiresAt }));
+  } catch (err) {
+    console.error("[receipt-share] disk persist failed:", err);
+  }
+}
 
 function pruneExpired(): void {
   const now = Date.now();
@@ -35,7 +95,9 @@ export function putReceiptShareImage(buffer: Buffer, mime: string): string | nul
   enforceCap();
   const token = crypto.randomBytes(24).toString("hex");
   const m = mime?.trim() || "image/jpeg";
-  store.set(token, { buffer, mime: m, expiresAt: Date.now() + TTL_MS });
+  const expiresAt = Date.now() + TTL_MS;
+  store.set(token, { buffer, mime: m, expiresAt });
+  writeReceiptToDisk(token, buffer, m, expiresAt);
   return token;
 }
 
@@ -45,11 +107,17 @@ export function getReceiptShareImage(
   if (!/^[a-f0-9]{48}$/i.test(token)) return null;
   pruneExpired();
   const e = store.get(token);
-  if (!e || e.expiresAt <= Date.now()) {
-    if (e) store.delete(token);
-    return null;
+  if (e && e.expiresAt > Date.now()) {
+    return { buffer: e.buffer, mime: e.mime };
   }
-  return { buffer: e.buffer, mime: e.mime };
+  if (e) store.delete(token);
+
+  const fromDisk = readReceiptFromDisk(token);
+  if (fromDisk) {
+    store.set(token, fromDisk);
+    return { buffer: fromDisk.buffer, mime: fromDisk.mime };
+  }
+  return null;
 }
 
 export function detectMimeFromBuffer(buf: Buffer): string {

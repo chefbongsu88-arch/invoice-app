@@ -9,23 +9,21 @@ export const DEFAULT_SPREADSHEET_ID =
 export const DEFAULT_MAIN_TRACKER_SHEET_NAME = "2026 Invoice tracker";
 
 /**
- * Google Sheets: mode 4 = fixed pixel size (mode 1 fits cell → tiny).
- * HYPERLINK(..., IMAGE(...)) = same preview, but clicking opens the image URL in the browser (full size).
- * @see https://support.google.com/docs/answer/3093313 (HYPERLINK)
- * @see https://support.google.com/docs/answer/3093333 (IMAGE)
+ * Column L (Receipt): plain HTTPS URL only.
+ * Google Sheets turns `https://…` into a clickable link; no in-cell =IMAGE() preview (stays readable, opens full size in the browser).
  */
-const RECEIPT_IMAGE_SHEETS_HEIGHT_PX = 520;
-const RECEIPT_IMAGE_SHEETS_WIDTH_PX = 400;
-
-/** Column L: clickable preview — click opens the receipt image in a new browser context (zoom with browser). */
-export function receiptImageSheetsFormula(httpsUrl: string): string {
-  const safe = String(httpsUrl ?? "").trim().replace(/"/g, '""');
-  const img = `IMAGE("${safe}", 4, ${RECEIPT_IMAGE_SHEETS_HEIGHT_PX}, ${RECEIPT_IMAGE_SHEETS_WIDTH_PX})`;
-  return `=HYPERLINK("${safe}",${img})`;
+export function receiptSheetsReceiptUrlCell(httpsUrl: string): string {
+  return String(httpsUrl ?? "").trim();
 }
 
-/** PDFs are not reliable in Sheets =IMAGE(); plain https text becomes a clickable link in Sheets. */
+/**
+ * @deprecated Alias for {@link receiptSheetsReceiptUrlCell} — older name when we used =IMAGE() inside HYPERLINK.
+ */
+export function receiptImageSheetsFormula(httpsUrl: string): string {
+  return receiptSheetsReceiptUrlCell(httpsUrl);
+}
+
+/** Same as {@link receiptSheetsReceiptUrlCell}; kept for callers that branch on “PDF vs image”. */
 export function receiptPdfSheetsHyperlinkFormula(httpsUrl: string): string {
-  const safe = String(httpsUrl ?? "").trim().replace(/"/g, '""');
-  return safe;
+  return receiptSheetsReceiptUrlCell(httpsUrl);
 }

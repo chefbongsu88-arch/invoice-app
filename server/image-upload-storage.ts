@@ -5,7 +5,65 @@
  */
 
 import { isForgeStorageConfigured } from "./_core/env";
+import { detectMimeFromBuffer } from "./receipt-share-store";
 import { storagePut } from "./storage";
+
+function extensionForReceiptMime(mime: string): string {
+  const m = mime.toLowerCase();
+  if (m.includes("pdf")) return "pdf";
+  if (m.includes("png")) return "png";
+  if (m.includes("webp")) return "webp";
+  if (m.includes("gif")) return "gif";
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  return "bin";
+}
+
+/** Prefer magic bytes so Gmail wrong Content-Type does not mis-label PDFs as JPEG. */
+function resolveReceiptMimeForUpload(buffer: Buffer, hintMime: string): string {
+  if (buffer.length >= 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+    return "application/pdf";
+  }
+  const magic = detectMimeFromBuffer(buffer);
+  const h = hintMime.trim().toLowerCase();
+  if (h.startsWith("image/") && magic.startsWith("image/")) return magic;
+  if (h === "application/pdf" || h === "application/x-pdf") return h;
+  return magic || h || "application/octet-stream";
+}
+
+/**
+ * Upload receipt bytes to Forge/Manus storage when configured.
+ * Returns a stable HTTPS URL suitable for Google Sheets =IMAGE() (Google fetches later, often from a different host than the export request).
+ */
+export async function uploadReceiptBinaryToForgeIfConfigured(
+  buffer: Buffer,
+  hintMime: string,
+  fileLabel: string,
+): Promise<string> {
+  if (!isForgeStorageConfigured() || !buffer?.length) return "";
+
+  const mime = resolveReceiptMimeForUpload(buffer, hintMime);
+  const ext = extensionForReceiptMime(mime);
+  const slug = String(fileLabel ?? "receipt")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48) || "receipt";
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 10);
+  const storagePath = `invoices/sheets-receipt/${timestamp}-${random}/${slug}.${ext}`;
+
+  try {
+    const { url } = await storagePut(storagePath, buffer, mime);
+    if (url?.trim()) {
+      console.log(`[Image Upload] Sheets receipt (Forge): ${mime} ${slug}`);
+    }
+    return url?.trim() ?? "";
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`[Image Upload] Forge upload for Sheets receipt failed (${slug}):`, msg);
+    return "";
+  }
+}
 
 /**
  * Upload image to platform storage and return public URL
@@ -21,7 +79,7 @@ export async function uploadImageToStorage(
 ): Promise<string> {
   if (!isForgeStorageConfigured()) {
     console.warn(
-      `[Image Upload] Skipped (${fileName}): Forge storage not configured (BUILT_IN_FORGE_API_URL + BUILT_IN_FORGE_API_KEY). For Google Sheets receipt previews use the app’s latest export — it uses /api/receipt-share and does not need Forge.`,
+      `[Image Upload] Skipped (${fileName}): Forge storage not configured (BUILT_IN_FORGE_API_URL + BUILT_IN_FORGE_API_KEY). Sheets =IMAGE() previews are most reliable with Forge (persistent URL); without it the server falls back to /api/receipt-share (RAM unless RECEIPT_SHARE_DISK_DIR is set).`,
     );
     return "";
   }
@@ -62,32 +120,8 @@ export async function uploadImageToStorage(
         throw new Error(`Image too large: ${imageBuffer.length} bytes`);
       }
 
-      // Detect MIME type from buffer signature (magic bytes)
-      let mimeType = "image/jpeg"; // default
-      if (imageBuffer.length >= 4) {
-        const header = imageBuffer.slice(0, 4);
-        // PNG: 89 50 4E 47
-        if (header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4e && header[3] === 0x47) {
-          mimeType = "image/png";
-        }
-        // JPEG: FF D8 FF
-        else if (header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) {
-          mimeType = "image/jpeg";
-        }
-        // GIF: 47 49 46 38
-        else if (header[0] === 0x47 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x38) {
-          mimeType = "image/gif";
-        }
-        // WebP: RIFF...WEBP
-        else if (header[0] === 0x52 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x46) {
-          if (imageBuffer.length >= 12) {
-            const webpCheck = imageBuffer.slice(8, 12);
-            if (webpCheck[0] === 0x57 && webpCheck[1] === 0x45 && webpCheck[2] === 0x42 && webpCheck[3] === 0x50) {
-              mimeType = "image/webp";
-            }
-          }
-        }
-      }
+      let mimeType = resolveReceiptMimeForUpload(imageBuffer, "");
+      if (mimeType === "application/octet-stream") mimeType = "image/jpeg";
 
       console.log(`[Image Upload] Detected MIME type: ${mimeType}`);
 

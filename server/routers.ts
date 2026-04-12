@@ -3,13 +3,13 @@ import { z } from "zod";
 import { COOKIE_NAME } from "../shared/const.js";
 import {
   DEFAULT_MAIN_TRACKER_SHEET_NAME,
-  receiptImageSheetsFormula,
-  receiptPdfSheetsHyperlinkFormula,
+  receiptSheetsReceiptUrlCell,
 } from "../shared/sheets-defaults.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import {
   ENV,
   getPublicServerBaseUrl,
+  isForgeStorageConfigured,
   resolvePublicBaseForReceiptImages,
 } from "./_core/env";
 import { invokeLLM } from "./_core/llm";
@@ -28,7 +28,7 @@ import {
 } from "./_core/receipt-gemini-google";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
-import { uploadImageToStorage } from "./image-upload-storage";
+import { uploadImageToStorage, uploadReceiptBinaryToForgeIfConfigured } from "./image-upload-storage";
 import {
   applyThinTextFormatToGridRange,
   encodeValuesRange,
@@ -2722,7 +2722,7 @@ export const appRouter = router({
         const { spreadsheetId, sheetName, rows, skipDuplicateCheck, publicApiBaseUrl } = input;
         const receiptPublicBase = resolvePublicBaseForReceiptImages(publicApiBaseUrl);
         // If Deploy logs never show this line, the server is still running an old bundle (Forge export).
-        console.log("[Export] image_pipeline=receipt-share-v3-hyperlink");
+        console.log("[Export] image_pipeline=receipt-plain-url-v1");
         console.log(
           `[Export] Sheets row image: publicBase=${receiptPublicBase ? receiptPublicBase.slice(0, 48) : "MISSING"}`,
         );
@@ -2893,7 +2893,6 @@ export const appRouter = router({
               )} vendor=${r.vendor}`,
             );
             let imageUrl = r.imageUrl ?? "";
-            let receiptShareMime = "";
             const userProvidedImage = Boolean(r.imageUrl?.trim());
             const userRequestedGmailAttachment = Boolean(
               r.gmailReceiptFetch?.userAccessToken?.trim() &&
@@ -2914,7 +2913,7 @@ export const appRouter = router({
               );
             }
 
-            // data:/file: → in-memory /api/receipt-share only (Sheets =IMAGE); Forge is not used here
+            // data:/file: → Forge if configured, else in-memory /api/receipt-share
             if (imageUrl && (imageUrl.startsWith("data:") || imageUrl.startsWith("file://"))) {
               try {
                 let base64Data = "";
@@ -2935,17 +2934,23 @@ export const appRouter = router({
                 }
 
                 if (base64Data && !imageUrl.startsWith("file://")) {
-                  const tryReceiptShare = (): void => {
-                    const buf = Buffer.from(base64Data, "base64");
-                    const mime = detectMimeFromBuffer(buf) || mimeFromDataUrl;
+                  const buf = Buffer.from(base64Data, "base64");
+                  const mime = detectMimeFromBuffer(buf) || mimeFromDataUrl;
+                  const base = receiptPublicBase;
+
+                  if (isForgeStorageConfigured()) {
+                    const forgeUrl = await uploadReceiptBinaryToForgeIfConfigured(buf, mime, r.vendor);
+                    if (forgeUrl) {
+                      imageUrl = forgeUrl;
+                      console.log(`[Export] Receipt for Sheets (Forge, persistent): ${r.vendor}`);
+                    }
+                  }
+
+                  if (!String(imageUrl ?? "").trim()) {
                     const token = putReceiptShareImage(buf, mime);
-                    const base = receiptPublicBase;
                     if (token && base) {
                       imageUrl = `${base}/api/receipt-share/${token}`;
-                      receiptShareMime = mime;
-                      console.log(
-                        `[Export] Receipt image for Sheets (/api/receipt-share): ${r.vendor}`,
-                      );
+                      console.log(`[Export] Receipt image for Sheets (/api/receipt-share): ${r.vendor}`);
                     } else if (!base) {
                       console.warn(
                         "[Export] No public API base URL — pass publicApiBaseUrl from the app (getApiBaseUrl) or set PUBLIC_SERVER_URL / RECEIPT_IMAGE_PUBLIC_BASE_URL on the server.",
@@ -2955,12 +2960,11 @@ export const appRouter = router({
                         `[Export] /api/receipt-share skipped (max 8 MiB per image): ${r.vendor}`,
                       );
                     }
-                  };
+                  }
 
-                  tryReceiptShare();
                   if (!String(imageUrl ?? "").trim()) {
                     console.warn(
-                      `[Export] No receipt image URL for ${r.vendor} (check /api/receipt-share token or 8 MiB limit).`,
+                      `[Export] No receipt image URL for ${r.vendor} (check Forge env, /api/receipt-share token, RECEIPT_SHARE_DISK_DIR, or 8 MiB limit).`,
                     );
                   }
                 }
@@ -2994,22 +2998,32 @@ export const appRouter = router({
                       );
                     }
                   }
-                  const token = putReceiptShareImage(buf, mime);
                   const base = receiptPublicBase;
-                  if (token && base) {
-                    imageUrl = `${base}/api/receipt-share/${token}`;
-                    receiptShareMime = mime;
-                    console.log(
-                      `[Export] Gmail attachment → receipt-share: ${r.vendor} (${mime})`,
-                    );
-                  } else if (!token) {
-                    console.warn(
-                      `[Export] Gmail attachment too large or empty for receipt-share: ${r.vendor} (${mime}, bytes=${buf.length})`,
-                    );
-                  } else if (!base) {
-                    console.warn(
-                      "[Export] Gmail attachment skipped — no public API base URL for receipt-share.",
-                    );
+
+                  if (isForgeStorageConfigured()) {
+                    const forgeUrl = await uploadReceiptBinaryToForgeIfConfigured(buf, mime, r.vendor);
+                    if (forgeUrl) {
+                      imageUrl = forgeUrl;
+                      console.log(`[Export] Gmail attachment → Forge (persistent): ${r.vendor} (${mime})`);
+                    }
+                  }
+
+                  if (!String(imageUrl ?? "").trim()) {
+                    const token = putReceiptShareImage(buf, mime);
+                    if (token && base) {
+                      imageUrl = `${base}/api/receipt-share/${token}`;
+                      console.log(
+                        `[Export] Gmail attachment → receipt-share: ${r.vendor} (${mime})`,
+                      );
+                    } else if (!token) {
+                      console.warn(
+                        `[Export] Gmail attachment too large or empty for receipt-share: ${r.vendor} (${mime}, bytes=${buf.length})`,
+                      );
+                    } else if (!base) {
+                      console.warn(
+                        "[Export] Gmail attachment skipped — no public API base URL for receipt-share.",
+                      );
+                    }
                   }
                 }
               } catch (gmailAttErr) {
@@ -3031,19 +3045,14 @@ export const appRouter = router({
               formattedDate = `=DATE(${yyyy},${mm},${dd})`;
             }
 
-            // L: raster = IMAGE+HYPERLINK; PDF = link only (Sheets IMAGE does not render PDF reliably)
+            // L: plain https URL (clickable in Sheets, opens full receipt in browser — no in-cell IMAGE preview).
             let imageColumnValue: string = imageUrl;
             if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
-              const isPdf =
-                receiptShareMime === "application/pdf" ||
-                receiptShareMime === "application/x-pdf";
-              imageColumnValue = isPdf
-                ? receiptPdfSheetsHyperlinkFormula(imageUrl)
-                : receiptImageSheetsFormula(imageUrl);
+              imageColumnValue = receiptSheetsReceiptUrlCell(imageUrl);
             }
 
             // If attachment fetch/upload failed, still provide the raw Gmail message URL.
-            // Sheets auto-links plain https text more reliably than HYPERLINK() labels.
+            // Sheets auto-links plain https text.
             if (!String(imageColumnValue ?? "").trim()) {
               const safeMsgId = String(
                 r.gmailReceiptFetch?.messageId ?? r.gmailMessageId ?? "",
@@ -3072,7 +3081,7 @@ export const appRouter = router({
               r.category,            // I - Category
               r.currency,            // J - Currency
               r.notes ?? "",         // K - Notes
-              imageColumnValue,      // L - Receipt image (IMAGE formula) or URL / empty
+              imageColumnValue,      // L - Receipt URL (clickable) / empty
               now,                   // M - Exported At
             ];
           })

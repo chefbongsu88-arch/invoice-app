@@ -1,5 +1,5 @@
 import { isMeatCategory } from "../shared/invoice-types";
-import { receiptImageSheetsFormula } from "../shared/sheets-defaults";
+import { receiptSheetsReceiptUrlCell } from "../shared/sheets-defaults";
 import {
   applyBoldTextFormatToGridRange,
   applyThinTextFormatToGridRange,
@@ -195,13 +195,13 @@ function parseAmount(value: any): number {
   return parseFloat(cleaned) || 0;
 }
 
-/** L column: keep Sheets formulas; wrap bare https URLs for =IMAGE */
+/** L column: plain https URLs stay clickable; preserve existing =… formulas if any */
 function receiptCellForAggregatedSheet(imageUrl: string | undefined): string {
   const s = String(imageUrl ?? "").trim();
   if (!s) return "";
   if (s.startsWith("=")) return s;
   if (/^https?:\/\//i.test(s)) {
-    return receiptImageSheetsFormula(s);
+    return receiptSheetsReceiptUrlCell(s);
   }
   return s;
 }
