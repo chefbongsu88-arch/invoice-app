@@ -83,7 +83,7 @@ async function startServer() {
         .status(404)
         .type("text/plain")
         .send(
-          "Receipt not found (link expired, app restarted, or another server instance). Export again from the app. For links that survive deploys, set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY on the server.",
+          "Receipt not found: this /api/receipt-share link is no longer on the server (redeploy, another instance, or expiry). Export the invoice again from the app to get a new link. For permanent links, fix Forge storage: set BUILT_IN_FORGE_API_URL + BUILT_IN_FORGE_API_KEY (or VITE_FRONTEND_FORGE_API_URL + VITE_FRONTEND_FORGE_API_KEY) to the exact values from Manus — the storage API base URL must not be guessed (wrong URL causes upload to fail and falls back here).",
         );
       return;
     }
