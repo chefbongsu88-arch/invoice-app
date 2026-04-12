@@ -79,7 +79,12 @@ async function startServer() {
   app.get("/api/receipt-share/:token", (req, res) => {
     const got = getReceiptShareImage(String(req.params.token ?? ""));
     if (!got) {
-      res.status(404).type("text/plain").send("Not found or expired");
+      res
+        .status(404)
+        .type("text/plain")
+        .send(
+          "Receipt not found (link expired, app restarted, or another server instance). Export again from the app. For links that survive deploys, set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY on the server.",
+        );
       return;
     }
     res.setHeader("Content-Type", got.mime);

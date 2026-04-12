@@ -13,4 +13,5 @@ package-lock.json
 .env.local
 .expo/
 dist/
+.data/
 .claude/settings.local.json

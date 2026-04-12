@@ -1,3 +1,6 @@
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   putReceiptShareImage,
@@ -56,5 +59,22 @@ describe("receipt-share pipeline (Sheets receipt URL)", () => {
     const base = resolvePublicBaseForReceiptImages("");
     const url = `${base}/api/receipt-share/${token}`;
     expect(url).toMatch(/^https:\/\/[^/]+\/api\/receipt-share\/[a-f0-9]{48}$/i);
+  });
+
+  it("writes blob and meta under RECEIPT_SHARE_DISK_DIR when set", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "receipt-share-test-"));
+    vi.stubEnv("RECEIPT_SHARE_DISK_DIR", tmp);
+    vi.stubEnv("RAILWAY_ENVIRONMENT", "");
+    try {
+      const buf = Buffer.from(MIN_JPEG_B64, "base64");
+      const token = putReceiptShareImage(buf, "image/jpeg")!;
+      expect(fs.existsSync(path.join(tmp, token))).toBe(true);
+      expect(fs.existsSync(path.join(tmp, `${token}.json`))).toBe(true);
+      const meta = JSON.parse(fs.readFileSync(path.join(tmp, `${token}.json`), "utf8"));
+      expect(meta.mime).toBe("image/jpeg");
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

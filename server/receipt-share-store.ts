@@ -1,9 +1,14 @@
 /**
- * Short-lived public receipt images for Google Sheets =IMAGE().
- * Forge/Manus storage is preferred; this is an in-memory fallback when those env vars are unset.
- * Optional RECEIPT_SHARE_DISK_DIR: persist blobs on disk so a single Railway instance survives restarts
- * (mount a volume on that path for durability). Multi-replica still needs Forge or shared storage.
- * Tokens are unguessable; anyone with the link can view until expiry (or server restart clears RAM).
+ * Short-lived public receipt images for Google Sheets (plain HTTPS links).
+ * Forge/Manus storage is preferred for links that survive deploys and multiple replicas.
+ *
+ * Disk fallback:
+ * - RECEIPT_SHARE_DISK_DIR: explicit directory (use a Railway volume mount for durability).
+ * - On Railway (RAILWAY_ENVIRONMENT set), defaults to cwd/.data/receipt-share so GET works after
+ *   process restarts on the same filesystem (still not shared across replicas without a volume).
+ * - RECEIPT_SHARE_DISK_OFF=1: never use implicit disk (memory only, except explicit RECEIPT_SHARE_DISK_DIR).
+ *
+ * Tokens are unguessable; anyone with the link can view until expiry.
  */
 
 import crypto from "node:crypto";
@@ -18,9 +23,23 @@ type Entry = { buffer: Buffer; mime: string; expiresAt: number };
 
 const store = new Map<string, Entry>();
 
+let implicitDiskDirLogged = false;
+
 function receiptShareDiskDir(): string | null {
-  const d = process.env.RECEIPT_SHARE_DISK_DIR?.trim();
-  return d ? d : null;
+  const explicit = process.env.RECEIPT_SHARE_DISK_DIR?.trim();
+  if (explicit) return explicit;
+  if (process.env.RECEIPT_SHARE_DISK_OFF === "1") return null;
+  if (process.env.RAILWAY_ENVIRONMENT?.trim()) {
+    const dir = path.join(process.cwd(), ".data", "receipt-share");
+    if (!implicitDiskDirLogged) {
+      implicitDiskDirLogged = true;
+      console.log(
+        `[receipt-share] Persisting under ${dir} (same instance / restarts). For deploy-safe links set BUILT_IN_FORGE_API_URL + BUILT_IN_FORGE_API_KEY.`,
+      );
+    }
+    return dir;
+  }
+  return null;
 }
 
 function diskMetaPath(token: string, dir: string): string {
