@@ -1414,6 +1414,15 @@ function clampStringForSheetsCell(value: unknown, fieldLabel?: string): string {
   return `${s.slice(0, GOOGLE_SHEETS_MAX_CELL_CHARS - 48)} ... (truncated for Google Sheets)`;
 }
 
+/** After Forge (or any step), still need a short https URL: empty, data:, file:, or non-http. */
+function needsPublicReceiptHttpsUrl(url: string | undefined | null): boolean {
+  const s = String(url ?? "").trim();
+  if (!s) return true;
+  const lower = s.toLowerCase();
+  if (lower.startsWith("data:") || lower.startsWith("file:")) return true;
+  return !/^https?:\/\//i.test(s);
+}
+
 function googleSheetsErrorLooksLikeCellCharLimit(msg: string): boolean {
   const m = msg.toLowerCase();
   return (
@@ -2990,10 +2999,14 @@ export const appRouter = router({
                     if (forgeUrl) {
                       imageUrl = forgeUrl;
                       console.log(`[Export] Receipt for Sheets (Forge, persistent): ${r.vendor}`);
+                    } else {
+                      console.warn(
+                        `[Export] Forge upload failed or empty; trying /api/receipt-share for ${r.vendor}`,
+                      );
                     }
                   }
 
-                  if (!String(imageUrl ?? "").trim()) {
+                  if (needsPublicReceiptHttpsUrl(imageUrl)) {
                     const token = putReceiptShareImage(buf, mime);
                     if (token && base) {
                       imageUrl = `${base}/api/receipt-share/${token}`;
@@ -3059,10 +3072,14 @@ export const appRouter = router({
                     if (forgeUrl) {
                       imageUrl = forgeUrl;
                       console.log(`[Export] Gmail attachment → Forge (persistent): ${r.vendor} (${mime})`);
+                    } else {
+                      console.warn(
+                        `[Export] Gmail Forge upload failed; trying /api/receipt-share for ${r.vendor}`,
+                      );
                     }
                   }
 
-                  if (!String(imageUrl ?? "").trim()) {
+                  if (needsPublicReceiptHttpsUrl(imageUrl)) {
                     const token = putReceiptShareImage(buf, mime);
                     if (token && base) {
                       imageUrl = `${base}/api/receipt-share/${token}`;
