@@ -240,6 +240,13 @@ export async function ensureSheetExists(
   headers: string[]
 ): Promise<boolean> {
   try {
+    const summarizeSheetsError = (raw: string): string => {
+      if (/RATE_LIMIT_EXCEEDED|RESOURCE_EXHAUSTED|quota/i.test(raw)) {
+        return "Google Sheets write quota reached. Wait a minute and try again.";
+      }
+      return raw.length > 220 ? `${raw.slice(0, 220)}...` : raw;
+    };
+
     const topLeft = "A1:Z1";
     const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, topLeft)}`;
     const checkRes = await fetch(checkUrl, {
@@ -272,7 +279,7 @@ export async function ensureSheetExists(
       if (!createRes.ok) {
         const createText = await createRes.text();
         if (!/already exists|duplicate/i.test(createText)) {
-          console.error("Failed to create sheet:", sheetName, createText);
+          console.error("Failed to create sheet:", sheetName, summarizeSheetsError(createText));
           return false;
         }
       }
@@ -295,7 +302,11 @@ export async function ensureSheetExists(
         body: JSON.stringify({ values: [headers] }),
       });
       if (!putRes.ok) {
-        console.error("Failed to write headers to", sheetName, await putRes.text());
+        console.error(
+          "Failed to write headers to",
+          sheetName,
+          summarizeSheetsError(await putRes.text()),
+        );
         return false;
       }
     }

@@ -239,8 +239,14 @@ async function createMonthlySheets(
     }
   }
 
-  // Create/update each month sheet
-  for (const month of months) {
+  const activeMonths = months.filter((month) => invoicesByMonth[month].length > 0);
+  if (activeMonths.length === 0) {
+    console.log("ℹ️  No monthly invoice groups to update");
+    return;
+  }
+
+  // Create/update only months that actually contain invoices.
+  for (const month of activeMonths) {
     const monthInvoices = invoicesByMonth[month];
     const aggregated = aggregateByVendor(monthInvoices);
 
@@ -356,8 +362,14 @@ async function createQuarterlySheets(
     }
   }
 
-  // Create/update each quarter sheet
-  for (const quarter of quarters) {
+  const activeQuarters = quarters.filter((quarter) => invoicesByQuarter[quarter].length > 0);
+  if (activeQuarters.length === 0) {
+    console.log("ℹ️  No quarterly invoice groups to update");
+    return;
+  }
+
+  // Create/update only quarters that actually contain invoices.
+  for (const quarter of activeQuarters) {
     const quarterInvoices = invoicesByQuarter[quarter];
     const aggregated = aggregateByVendor(quarterInvoices);
 

@@ -267,6 +267,50 @@ async function applyZeroAmountHighlightToGridRows(
   }
 }
 
+async function applyDateDisplayFormatToGridRange(
+  spreadsheetId: string,
+  accessToken: string,
+  sheetId: number,
+  range: {
+    startRowIndex: number;
+    endRowIndex: number;
+    startColumnIndex: number;
+    endColumnIndex: number;
+  },
+): Promise<void> {
+  const batchRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        requests: [
+          {
+            repeatCell: {
+              range: { sheetId, ...range },
+              cell: {
+                userEnteredFormat: {
+                  numberFormat: {
+                    type: "DATE",
+                    pattern: "dd/mm/yyyy",
+                  },
+                },
+              },
+              fields: "userEnteredFormat.numberFormat",
+            },
+          },
+        ],
+      }),
+    },
+  );
+  if (!batchRes.ok) {
+    console.warn("[Sheets] date display format failed:", await batchRes.text());
+  }
+}
+
 async function runTrackerSheetsAutomation(
   spreadsheetId: string,
   sheetName: string,
@@ -328,6 +372,10 @@ async function runTrackerSheetsAutomation(
         const parseDate = (val: any): string => {
           if (!val) return "";
           const s = String(val).replace(/^'+|'+$/g, "").trim();
+          const formula = s.match(/^=DATE\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\)$/i);
+          if (formula) {
+            return `${formula[1]}-${formula[2].padStart(2, "0")}-${formula[3].padStart(2, "0")}`;
+          }
           const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
           if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
           return s;
@@ -2972,15 +3020,15 @@ export const appRouter = router({
               }
             }
             
-            // Format date as DD/MM/YYYY (with leading apostrophe to prevent Google Sheets auto-formatting)
+            // Store a real Sheets date so sorting works, then format the display as DD/MM/YYYY.
             const rawDate = String(r.date ?? "").trim();
             let formattedDate = "";
             if (rawDate) {
               const parsedDate = parseInvoiceDateDDMMYYYY(rawDate);
-              const dd = String(parsedDate.getDate()).padStart(2, "0");
-              const mm = String(parsedDate.getMonth() + 1).padStart(2, "0");
               const yyyy = parsedDate.getFullYear();
-              formattedDate = `'${dd}/${mm}/${yyyy}`;
+              const mm = parsedDate.getMonth() + 1;
+              const dd = parsedDate.getDate();
+              formattedDate = `=DATE(${yyyy},${mm},${dd})`;
             }
 
             // L: raster = IMAGE+HYPERLINK; PDF = link only (Sheets IMAGE does not render PDF reliably)
@@ -3081,6 +3129,17 @@ export const appRouter = router({
               accessToken,
               sheetIdForFormat,
               grid,
+            );
+            await applyDateDisplayFormatToGridRange(
+              spreadsheetId,
+              accessToken,
+              sheetIdForFormat,
+              {
+                startRowIndex: grid.startRowIndex,
+                endRowIndex: grid.endRowIndex,
+                startColumnIndex: 3,
+                endColumnIndex: 4,
+              },
             );
             if (skipDuplicateCheck && duplicateRows.length > 0) {
               const duplicateHighlightRanges = duplicateRows
