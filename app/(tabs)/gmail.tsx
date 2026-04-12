@@ -174,14 +174,12 @@ function LoginCard({
           pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
         ]}
       >
-        <View style={styles.connectBtnTopRow}>
-          <View style={styles.connectBtnIconBox}>
-            <IconSymbol name="envelope.fill" size={20} color="#fff" />
-          </View>
-          <View style={styles.connectBtnTextBlock}>
-            <Text style={styles.connectBtnText}>Sign in with Google</Text>
-            <Text style={styles.connectBtnSubtext}>Connect your Gmail inbox</Text>
-          </View>
+        <View style={styles.connectBtnIconBox}>
+          <IconSymbol name="envelope.fill" size={20} color="#fff" />
+        </View>
+        <View style={styles.connectBtnTextBlock}>
+          <Text style={styles.connectBtnText}>Sign in with Google</Text>
+          <Text style={styles.connectBtnSubtext}>Connect your Gmail inbox</Text>
         </View>
         <Text style={styles.connectBtnFooter}>Tap to continue</Text>
       </Pressable>
@@ -1182,22 +1180,18 @@ const styles = StyleSheet.create({
   connectBtn: {
     width: "100%",
     maxWidth: 320,
-    minHeight: 96,
+    minHeight: 118,
     paddingVertical: 16,
     paddingHorizontal: 18,
     borderRadius: 20,
     marginTop: 6,
+    alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",
     shadowOpacity: 0.16,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 3,
-  },
-  connectBtnTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
   },
   connectBtnIconBox: {
     width: 40,
@@ -1208,12 +1202,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   connectBtnTextBlock: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
+    width: "100%",
+    gap: 4,
+    marginTop: 10,
+    alignItems: "center",
   },
-  connectBtnText: { color: "#fff", fontSize: 17, fontWeight: "800", textAlign: "left" },
-  connectBtnSubtext: { color: "#E5EDF9", fontSize: 12, lineHeight: 16, fontWeight: "500" },
+  connectBtnText: { color: "#fff", fontSize: 18, fontWeight: "800", textAlign: "center" },
+  connectBtnSubtext: { color: "#E5EDF9", fontSize: 12, lineHeight: 16, fontWeight: "500", textAlign: "center" },
   connectBtnFooter: { color: "#F5F9FF", fontSize: 12, fontWeight: "700", marginTop: 12, textAlign: "center" },
   header: { padding: 20, paddingBottom: 6 },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, gap: 12 },

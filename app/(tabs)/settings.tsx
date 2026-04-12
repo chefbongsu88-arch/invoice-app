@@ -2,7 +2,6 @@ import { useEffect, useState, type ComponentProps } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Alert,
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -62,37 +61,6 @@ function SectionHeader({ title }: { title: string }) {
   const colors = useColors();
   return (
     <Text style={[styles.sectionHeader, { color: colors.muted }]}>{title.toUpperCase()}</Text>
-  );
-}
-
-/** Full-bleed primary CTA at the bottom of a settings card (e.g. View Sheets). */
-function PrimaryCardButton({
-  icon,
-  label,
-  onPress,
-}: {
-  icon: ComponentProps<typeof IconSymbol>["name"];
-  label: string;
-  onPress: () => void;
-}) {
-  const colors = useColors();
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => [
-        styles.primaryCardButton,
-        {
-          backgroundColor: colors.primary,
-          borderTopColor: colors.border,
-        },
-        pressed && { opacity: 0.92 },
-      ]}
-    >
-      <IconSymbol name={icon} size={22} color="#fff" />
-      <Text style={styles.primaryCardButtonText}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -241,17 +209,6 @@ export default function SettingsScreen() {
             value={settings.sheetName}
             placeholder="2026 Invoice tracker"
             onSave={(v) => saveSettings({ ...settings, sheetName: v || DEFAULT_MAIN_TRACKER_SHEET_NAME })}
-          />
-          <PrimaryCardButton
-            icon="paperplane.fill"
-            label="View Sheets"
-            onPress={() => {
-              if (settings.spreadsheetId) {
-                Linking.openURL(`https://docs.google.com/spreadsheets/d/${settings.spreadsheetId}/edit`);
-              } else {
-                Linking.openURL("https://docs.google.com/spreadsheets/d/1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E/edit");
-              }
-            }}
           />
         </View>
 
@@ -445,9 +402,9 @@ const styles = StyleSheet.create({
     minHeight: 52,
     borderBottomWidth: 1,
   },
-  settingLabel: { fontSize: 15, fontWeight: "600", flex: 1, paddingRight: 10 },
+  settingLabel: { fontSize: 14, fontWeight: "600", flex: 1, paddingRight: 10 },
   settingRight: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1, justifyContent: "flex-end" },
-  settingValue: { fontSize: 13, maxWidth: 170 },
+  settingValue: { fontSize: 12, maxWidth: 160 },
   editRow: { padding: 14, gap: 8, borderBottomWidth: 1 },
   editLabel: { fontSize: 11, fontWeight: "600", letterSpacing: 0.3 },
   editInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
@@ -502,23 +459,6 @@ const styles = StyleSheet.create({
   stepContent: { flex: 1, gap: 4 },
   stepTitle: { fontSize: 14, fontWeight: "800", letterSpacing: -0.2 },
   stepDesc: { fontSize: 13, lineHeight: 19, fontWeight: "500" },
-  primaryCardButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-    width: "100%",
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    minHeight: 54,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  primaryCardButtonText: {
-    color: "#fff",
-    fontSize: 17,
-    fontWeight: "800",
-    letterSpacing: -0.35,
-  },
   maintenanceButtonsWrap: {
     padding: 14,
     gap: 12,
