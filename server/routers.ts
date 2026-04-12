@@ -215,6 +215,170 @@ async function applyDuplicateHighlightToGridRows(
   }
 }
 
+async function applyZeroAmountHighlightToGridRows(
+  spreadsheetId: string,
+  accessToken: string,
+  sheetId: number,
+  rowRanges: Array<{
+    startRowIndex: number;
+    endRowIndex: number;
+    startColumnIndex: number;
+    endColumnIndex: number;
+  }>,
+): Promise<void> {
+  if (rowRanges.length === 0) return;
+  const batchRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        requests: rowRanges.map((range) => ({
+          repeatCell: {
+            range: { sheetId, ...range },
+            cell: {
+              userEnteredFormat: {
+                backgroundColor: {
+                  red: 1,
+                  green: 0.86,
+                  blue: 0.86,
+                },
+                textFormat: {
+                  foregroundColor: {
+                    red: 0.72,
+                    green: 0.08,
+                    blue: 0.08,
+                  },
+                  bold: true,
+                },
+              },
+            },
+            fields: "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat.foregroundColor,userEnteredFormat.textFormat.bold",
+          },
+        })),
+      }),
+    },
+  );
+  if (!batchRes.ok) {
+    console.warn("[Sheets] zero-amount highlight failed:", await batchRes.text());
+  }
+}
+
+async function runTrackerSheetsAutomation(
+  spreadsheetId: string,
+  sheetName: string,
+  accessToken: string,
+  recentRowsWithItems: Array<{
+    invoiceNumber: string;
+    vendor: string;
+    date: string;
+    items?: Array<{
+      partName: string;
+      quantity: number;
+      unit: string;
+      pricePerUnit: number;
+      total: number;
+    }>;
+  }> = [],
+): Promise<void> {
+  const { automateGoogleSheets } = await import("./sheets-automation-vendor-aggregated");
+
+  // Fetch the full tracker so monthly and quarterly tabs are rebuilt from the latest main-sheet state.
+  const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A2:M")}?valueRenderOption=FORMULA`;
+  const trackerRes = await fetch(trackerSheetUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  let allInvoiceData: Array<{
+    source: string;
+    invoiceNumber: string;
+    vendor: string;
+    date: string;
+    totalAmount: number;
+    ivaAmount: number;
+    baseAmount: number;
+    tip: number;
+    category: string;
+    currency: string;
+    notes: string;
+    imageUrl: string;
+    items?: Array<{
+      partName: string;
+      quantity: number;
+      unit: string;
+      pricePerUnit: number;
+      total: number;
+    }>;
+  }> = [];
+
+  if (trackerRes.ok) {
+    const trackerData = (await trackerRes.json()) as { values?: any[][] };
+    if (trackerData.values) {
+      allInvoiceData = trackerData.values.map((row: any[]) => {
+        const parseCurrency = (val: any) => {
+          if (!val) return 0;
+          const numStr = String(val).replace(/[€,\s]/g, "").trim();
+          const num = parseFloat(numStr);
+          return isNaN(num) ? 0 : num;
+        };
+
+        const parseDate = (val: any): string => {
+          if (!val) return "";
+          const s = String(val).replace(/^'+|'+$/g, "").trim();
+          const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+          return s;
+        };
+
+        return {
+          source: row[0]?.toLowerCase() === "camera" ? "Camera" : "Email",
+          invoiceNumber: row[1] || "",
+          vendor: row[2] || "",
+          date: parseDate(row[3]),
+          totalAmount: parseCurrency(row[4]),
+          ivaAmount: parseCurrency(row[5]),
+          baseAmount: parseCurrency(row[6]),
+          tip: parseCurrency(row[7]),
+          category: row[8] || "",
+          currency: row[9] || "EUR",
+          notes: row[10] || "",
+          imageUrl: row[11] || "",
+        };
+      });
+    }
+  }
+
+  const itemLookup = new Map(
+    recentRowsWithItems.map((row) => [
+      `${String(row.invoiceNumber ?? "").trim()}|||${String(row.vendor ?? "").trim()}|||${String(row.date ?? "").trim()}`,
+      Array.isArray(row.items) ? row.items : undefined,
+    ]),
+  );
+
+  console.log(`📊 Automation: Processing ${allInvoiceData.length} invoices from main sheet`);
+  if (allInvoiceData.length === 0) {
+    console.warn("⚠️  No invoice data found in main sheet");
+  }
+
+  await automateGoogleSheets(
+    {
+      spreadsheetId,
+      accessToken,
+      invoiceData: allInvoiceData.map((invoice) => {
+        const key = `${String(invoice.invoiceNumber ?? "").trim()}|||${String(invoice.vendor ?? "").trim()}|||${String(invoice.date ?? "").trim()}`;
+        const items = itemLookup.get(key);
+        return items && items.length > 0 ? { ...invoice, items } : invoice;
+      }),
+    },
+    ["La Portenia", "Es Cuco"],
+  );
+
+  console.log("✅ Automation completed successfully");
+}
+
 const GMAIL_FETCH_CACHE_MS = 12_000;
 const gmailFetchCache = new Map<string, { expiresAt: number; result: GmailFetchResult }>();
 const gmailFetchInflight = new Map<string, Promise<GmailFetchResult>>();
@@ -2643,6 +2807,13 @@ export const appRouter = router({
             reason: describeDuplicateReason(row.reason),
           })),
         };
+        const zeroAmountRows = rows
+          .map((row, index) => {
+            const numericTotal = Number(row.totalAmount ?? 0);
+            if (!Number.isFinite(numericTotal) || numericTotal !== 0) return null;
+            return { index };
+          })
+          .filter((item): item is { index: number } => item !== null);
 
         // Check for duplicates before appending (skip if skipDuplicateCheck is true)
         const newRows = rows.filter((_, index) => {
@@ -2942,6 +3113,37 @@ export const appRouter = router({
                 duplicateHighlightRanges,
               );
             }
+            if (zeroAmountRows.length > 0) {
+              const zeroAmountHighlightRanges = zeroAmountRows
+                .map((row) => {
+                  const appendedRowOffset = row.index;
+                  const startRowIndex = grid.startRowIndex + appendedRowOffset;
+                  const endRowIndex = startRowIndex + 1;
+                  if (startRowIndex >= grid.endRowIndex) return null;
+                  return {
+                    startRowIndex,
+                    endRowIndex,
+                    startColumnIndex: grid.startColumnIndex,
+                    endColumnIndex: grid.endColumnIndex,
+                  };
+                })
+                .filter(
+                  (
+                    item,
+                  ): item is {
+                    startRowIndex: number;
+                    endRowIndex: number;
+                    startColumnIndex: number;
+                    endColumnIndex: number;
+                  } => item !== null,
+                );
+              await applyZeroAmountHighlightToGridRows(
+                spreadsheetId,
+                accessToken,
+                sheetIdForFormat,
+                zeroAmountHighlightRanges,
+              );
+            }
           }
         }
 
@@ -2986,81 +3188,7 @@ export const appRouter = router({
         // Always run automation to keep monthly/quarterly sheets in sync
         if (input.automateSheets) {
           try {
-            const { automateGoogleSheets } = await import("./sheets-automation-vendor-aggregated");
-            
-            // Fetch ALL data from 2026 Invoice tracker sheet for complete monthly/quarterly aggregation
-            // FORMULA so L column returns =IMAGE("https://...") for automation (display values are often empty)
-            const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A2:M")}?valueRenderOption=FORMULA`;
-            const trackerRes = await fetch(trackerSheetUrl, {
-              headers: { Authorization: `Bearer ${accessToken}` },
-            });
-            
-            let allInvoiceData: any[] = [];
-            if (trackerRes.ok) {
-              const trackerData = await trackerRes.json() as { values?: any[][] };
-              if (trackerData.values) {
-                allInvoiceData = trackerData.values.map((row: any[]) => {
-                  // Parse currency strings (e.g., "€133.18" -> 133.18)
-                  const parseCurrency = (val: any) => {
-                    if (!val) return 0;
-                    const numStr = String(val).replace(/[€,\s]/g, '').trim();
-                    const num = parseFloat(numStr);
-                    return isNaN(num) ? 0 : num;
-                  };
-
-                  // Strip apostrophes and convert DD/MM/YYYY → YYYY-MM-DD
-                  const parseDate = (val: any): string => {
-                    if (!val) return "";
-                    const s = String(val).replace(/^'+|'+$/g, "").trim();
-                    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-                    if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-                    return s;
-                  };
-
-                  return {
-                    source: row[0]?.toLowerCase() === "camera" ? "Camera" : "Email",
-                    invoiceNumber: row[1] || "",
-                    vendor: row[2] || "",
-                    date: parseDate(row[3]),
-                    totalAmount: parseCurrency(row[4]),
-                    ivaAmount: parseCurrency(row[5]),
-                    baseAmount: parseCurrency(row[6]),
-                    tip: parseCurrency(row[7]),
-                    category: row[8] || "",
-                    currency: row[9] || "EUR",
-                    notes: row[10] || "",
-                    imageUrl: row[11] || "",
-                  };
-                });
-              }
-            }
-            
-            // Preserve line items from the just-uploaded invoices; the main tracker sheet does not store `items[]`.
-            const itemLookup = new Map(
-              newRows.map((row) => [
-                `${String(row.invoiceNumber ?? "").trim()}|||${String(row.vendor ?? "").trim()}|||${String(row.date ?? "").trim()}`,
-                Array.isArray(row.items) ? row.items : undefined,
-              ]),
-            );
-
-            // Use all data for automation (includes all rows from main sheet)
-            console.log(`📊 Automation: Processing ${allInvoiceData.length} invoices from main sheet`);
-            
-            if (allInvoiceData.length === 0) {
-              console.warn("⚠️  No invoice data found in main sheet");
-            }
-            
-            await automateGoogleSheets({
-              spreadsheetId,
-              accessToken,
-              invoiceData: allInvoiceData.map((invoice) => {
-                const key = `${String(invoice.invoiceNumber ?? "").trim()}|||${String(invoice.vendor ?? "").trim()}|||${String(invoice.date ?? "").trim()}`;
-                const items = itemLookup.get(key);
-                return items && items.length > 0 ? { ...invoice, items } : invoice;
-              }),
-            }, ["La Portenia", "Es Cuco"]);
-
-            console.log("✅ Automation completed successfully");
+            await runTrackerSheetsAutomation(spreadsheetId, sheetName, accessToken, newRows);
           } catch (error) {
             console.error("❌ Automation failed:", error);
             // Continue anyway - local storage is still updated
@@ -3076,6 +3204,48 @@ export const appRouter = router({
           /** True if the client sent image data but storage upload failed so the sheet row has no image URL */
           receiptImageMissing,
           duplicateSummary,
+        };
+      }),
+
+    runSheetsAutomation: publicProcedure
+      .input(
+        z.object({
+          spreadsheetId: z.string(),
+          sheetName: z.string().default(DEFAULT_MAIN_TRACKER_SHEET_NAME),
+          recentRows: z
+            .array(
+              z.object({
+                invoiceNumber: z.string(),
+                vendor: z.string(),
+                date: z.string(),
+                items: z
+                  .array(
+                    z.object({
+                      partName: z.string(),
+                      quantity: z.number(),
+                      unit: z.string(),
+                      pricePerUnit: z.number(),
+                      total: z.number(),
+                    }),
+                  )
+                  .optional(),
+              }),
+            )
+            .optional()
+            .default([]),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const accessToken = await getGoogleAccessToken();
+        await runTrackerSheetsAutomation(
+          input.spreadsheetId,
+          input.sheetName,
+          accessToken,
+          input.recentRows,
+        );
+        return {
+          success: true,
+          message: "Sheets automation completed successfully",
         };
       }),
 

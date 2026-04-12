@@ -4,19 +4,58 @@ import type { DashboardStats, Invoice } from "@/shared/invoice-types";
 
 const STORAGE_KEY = "invoices_v1";
 
+function invoiceDedupKey(invoice: Invoice): string {
+  if (invoice.source === "email" && String(invoice.emailId ?? "").trim()) {
+    return `email:${String(invoice.emailId).trim()}`;
+  }
+  return `id:${String(invoice.id ?? "").trim()}`;
+}
+
+function mergeInvoiceRecords(primary: Invoice, incoming: Invoice): Invoice {
+  return {
+    ...incoming,
+    ...primary,
+    exportedToSheets: primary.exportedToSheets || incoming.exportedToSheets,
+    exportedAt: primary.exportedAt ?? incoming.exportedAt,
+    imageUri: primary.imageUri ?? incoming.imageUri,
+    items: primary.items && primary.items.length > 0 ? primary.items : incoming.items,
+    notes: primary.notes ?? incoming.notes,
+  };
+}
+
+function normalizeInvoiceList(list: Invoice[]): Invoice[] {
+  const deduped: Invoice[] = [];
+  const indexByKey = new Map<string, number>();
+
+  for (const invoice of list) {
+    const key = invoiceDedupKey(invoice);
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex == null) {
+      indexByKey.set(key, deduped.length);
+      deduped.push(invoice);
+      continue;
+    }
+    deduped[existingIndex] = mergeInvoiceRecords(deduped[existingIndex], invoice);
+  }
+
+  return deduped;
+}
+
 async function readStoredInvoices(): Promise<Invoice[]> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.map((inv) => {
-      const row = inv as Invoice;
-      return {
-        ...row,
-        exportedToSheets: Boolean(row.exportedToSheets),
-      };
-    });
+    return normalizeInvoiceList(
+      parsed.map((inv) => {
+        const row = inv as Invoice;
+        return {
+          ...row,
+          exportedToSheets: Boolean(row.exportedToSheets),
+        };
+      }),
+    );
   } catch {
     return [];
   }
@@ -56,15 +95,18 @@ export function useInvoices() {
    */
   const addInvoice = useCallback(async (invoice: Invoice) => {
     const existing = await readStoredInvoices();
-    const updated = [invoice, ...existing];
+    const next = [invoice, ...existing.filter((inv) => invoiceDedupKey(inv) !== invoiceDedupKey(invoice))];
+    const updated = normalizeInvoiceList(next);
     await writeStoredInvoices(updated);
     setInvoices(updated);
   }, []);
 
   const updateInvoice = useCallback(async (id: string, patch: Partial<Invoice>) => {
     const existing = await readStoredInvoices();
-    const updated = existing.map((inv) =>
-      inv.id === id ? { ...inv, ...patch } : inv,
+    const updated = normalizeInvoiceList(
+      existing.map((inv) =>
+        inv.id === id ? { ...inv, ...patch } : inv,
+      ),
     );
     await writeStoredInvoices(updated);
     setInvoices(updated);
@@ -72,7 +114,9 @@ export function useInvoices() {
 
   const deleteInvoice = useCallback(async (id: string) => {
     const existing = await readStoredInvoices();
-    const updated = existing.filter((inv) => inv.id !== id);
+    const target = existing.find((inv) => inv.id === id);
+    const targetKey = target ? invoiceDedupKey(target) : `id:${id}`;
+    const updated = existing.filter((inv) => invoiceDedupKey(inv) !== targetKey);
     await writeStoredInvoices(updated);
     setInvoices(updated);
   }, []);

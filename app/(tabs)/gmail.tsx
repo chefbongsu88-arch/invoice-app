@@ -106,6 +106,18 @@ interface EmailMessage {
   };
 }
 
+type PendingAutomationRow = {
+  invoiceNumber: string;
+  vendor: string;
+  date: string;
+  items?: MeatItem[];
+};
+
+type PendingAutomationTarget = {
+  spreadsheetId: string;
+  sheetName: string;
+};
+
 function normalizeApiHost(url: string): string {
   return url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
 }
@@ -299,12 +311,17 @@ export default function GmailScreen() {
   const [gmailPreparingLabel, setGmailPreparingLabel] = useState("");
   const [gmailCompleteLabel, setGmailCompleteLabel] = useState("");
   const autoSaveStartedRef = useRef<Set<string>>(new Set());
+  const saveInFlightRef = useRef<Set<string>>(new Set());
   const fetchInFlightRef = useRef(false);
   const lastAutoFetchKeyRef = useRef("");
+  const pendingAutomationRowsRef = useRef<PendingAutomationRow[]>([]);
+  const pendingAutomationTargetRef = useRef<PendingAutomationTarget | null>(null);
+  const pendingAutomationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchMutation = trpc.invoices.fetchGmailInvoices.useMutation();
   const parseMutation = trpc.invoices.parseEmailInvoice.useMutation();
   const exportMutation = trpc.invoices.exportToSheets.useMutation();
+  const runSheetsAutomationMutation = trpc.invoices.runSheetsAutomation.useMutation();
   const relabelMutation = trpc.invoices.gmailRelabelMessage.useMutation();
 
   const refreshAutomationSettings = useCallback(() => {
@@ -524,8 +541,54 @@ export default function GmailScreen() {
     }
   }, []);
 
+  const runPendingSheetsAutomation = useCallback(async () => {
+    if (pendingAutomationTimerRef.current) {
+      clearTimeout(pendingAutomationTimerRef.current);
+      pendingAutomationTimerRef.current = null;
+    }
+    const target = pendingAutomationTargetRef.current;
+    const recentRows = pendingAutomationRowsRef.current;
+    if (!target || recentRows.length === 0) return true;
+
+    try {
+      await runSheetsAutomationMutation.mutateAsync({
+        spreadsheetId: target.spreadsheetId,
+        sheetName: target.sheetName,
+        recentRows,
+      });
+      pendingAutomationRowsRef.current = [];
+      pendingAutomationTargetRef.current = null;
+      return true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Alert.alert(
+        "Sheets sync not finished",
+        `Your email invoices were saved to the main sheet, but the monthly / quarterly tabs could not update yet.\n\n${msg.slice(0, 180)}`,
+      );
+      return false;
+    }
+  }, [runSheetsAutomationMutation]);
+
+  const schedulePendingSheetsAutomation = useCallback((delayMs = 2500) => {
+    if (pendingAutomationTimerRef.current) {
+      clearTimeout(pendingAutomationTimerRef.current);
+    }
+    pendingAutomationTimerRef.current = setTimeout(() => {
+      pendingAutomationTimerRef.current = null;
+      void runPendingSheetsAutomation();
+    }, delayMs);
+  }, [runPendingSheetsAutomation]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingAutomationTimerRef.current) {
+        clearTimeout(pendingAutomationTimerRef.current);
+      }
+    };
+  }, []);
+
   const fetchEmails = useCallback(
-    async (token?: string) => {
+    async (token?: string, options?: { runPendingAutomation?: boolean }) => {
       const tokenToUse = token?.trim();
       if (!tokenToUse) return;
       if (fetchInFlightRef.current) return;
@@ -533,6 +596,10 @@ export default function GmailScreen() {
       fetchInFlightRef.current = true;
       setFetching(true);
       try {
+        if (options?.runPendingAutomation) {
+          const synced = await runPendingSheetsAutomation();
+          if (!synced) return;
+        }
         const prep = gmailPreparingLabel.trim();
         const done = gmailCompleteLabel.trim();
         const result = await fetchMutation.mutateAsync({
@@ -572,7 +639,7 @@ export default function GmailScreen() {
         setFetching(false);
       }
     },
-    [fetchMutation, gmailCompleteLabel, gmailPreparingLabel],
+    [fetchMutation, gmailCompleteLabel, gmailPreparingLabel, runPendingSheetsAutomation],
   );
 
   useEffect(() => {
@@ -594,10 +661,19 @@ export default function GmailScreen() {
           accessToken,
           messageId: email.id,
         });
+        const normalizedParsedData: EmailMessage["parsedData"] = {
+          invoiceNumber: String(parsed.invoiceNumber ?? ""),
+          vendor: String(parsed.vendor ?? ""),
+          date: String(parsed.date ?? ""),
+          totalAmount: Number(parsed.totalAmount ?? 0),
+          ivaAmount: Number(parsed.ivaAmount ?? 0),
+          category: String(parsed.category ?? "Other"),
+          items: Array.isArray(parsed.items) ? (parsed.items as MeatItem[]) : undefined,
+        };
         setEmails((prev) =>
           prev.map((e) =>
             e.id === email.id
-              ? { ...e, parsed: true, parsedData: parsed }
+              ? { ...e, parsed: true, parsedData: normalizedParsedData }
               : e
           )
         );
@@ -614,157 +690,190 @@ export default function GmailScreen() {
   const handleSave = useCallback(
     async (email: EmailMessage, opts?: { quiet?: boolean }) => {
       if (!email.parsedData) return;
-      const pd = email.parsedData;
-      const invoice: Invoice = {
-        id: `email_${email.id}`,
-        source: "email",
-        invoiceNumber: pd.invoiceNumber ?? "",
-        vendor: pd.vendor ?? email.from ?? "Unknown",
-        date: coerceInvoiceDateIsoForStorage(pd.date),
-        totalAmount: pd.totalAmount ?? 0,
-        ivaAmount: pd.ivaAmount ?? 0,
-        baseAmount: (pd.totalAmount ?? 0) - (pd.ivaAmount ?? 0),
-        currency: "EUR",
-        category: (pd.category as InvoiceCategory) ?? "Other",
-        emailId: email.id,
-        emailSubject: email.subject,
-        items: Array.isArray(pd.items) && pd.items.length > 0 ? pd.items : undefined,
-        exportedToSheets: false,
-        createdAt: new Date().toISOString(),
-      };
-      await addInvoice(invoice);
+      if (saveInFlightRef.current.has(email.id)) return;
+      saveInFlightRef.current.add(email.id);
+      try {
+        const pd = email.parsedData;
+        const invoice: Invoice = {
+          id: `email_${email.id}`,
+          source: "email",
+          invoiceNumber: pd.invoiceNumber ?? "",
+          vendor: pd.vendor ?? email.from ?? "Unknown",
+          date: coerceInvoiceDateIsoForStorage(pd.date),
+          totalAmount: pd.totalAmount ?? 0,
+          ivaAmount: pd.ivaAmount ?? 0,
+          baseAmount: (pd.totalAmount ?? 0) - (pd.ivaAmount ?? 0),
+          currency: "EUR",
+          category: (pd.category as InvoiceCategory) ?? "Other",
+          emailId: email.id,
+          emailSubject: email.subject,
+          items: Array.isArray(pd.items) && pd.items.length > 0 ? pd.items : undefined,
+          exportedToSheets: false,
+          createdAt: new Date().toISOString(),
+        };
+        await addInvoice(invoice);
 
-      let exportOutcome: "none" | "ok" | "duplicate" | "failed" = "none";
-      let exportReceiptMissing = false;
-      let relabelAttempted = false;
-      let relabelFailed = false;
-      if (autoExportEnabled) {
-        try {
-          const gmailTokForExport =
-            accessToken.trim() ||
-            (await AsyncStorage.getItem(GMAIL_TOKEN_KEY))?.trim() ||
-            "";
-          const { spreadsheetId, sheetName } = await getSheetsExportTarget();
-          const result = await exportMutation.mutateAsync({
-            spreadsheetId,
-            sheetName,
-            publicApiBaseUrl: getApiBaseUrl(),
-            rows: [
-              {
-                source: "Email",
+        let exportOutcome: "none" | "ok" | "duplicate" | "failed" = "none";
+        let exportReceiptMissing = false;
+        let relabelAttempted = false;
+        let relabelFailed = false;
+        if (autoExportEnabled) {
+          try {
+            const gmailTokForExport =
+              accessToken.trim() ||
+              (await AsyncStorage.getItem(GMAIL_TOKEN_KEY))?.trim() ||
+              "";
+            const exportTarget = await getSheetsExportTarget();
+            const result = await exportMutation.mutateAsync({
+              spreadsheetId: exportTarget.spreadsheetId,
+              sheetName: exportTarget.sheetName,
+              publicApiBaseUrl: getApiBaseUrl(),
+              rows: [
+                {
+                  source: "Email",
+                  invoiceNumber: invoice.invoiceNumber,
+                  vendor: invoice.vendor,
+                  date: invoice.date,
+                  totalAmount: invoice.totalAmount,
+                  ivaAmount: invoice.ivaAmount,
+                  baseAmount: invoice.baseAmount,
+                  category: invoice.category,
+                  currency: invoice.currency,
+                  tip: invoice.tip,
+                  notes: invoice.notes ?? "",
+                  items: invoice.items,
+                  imageUrl: "",
+                  gmailMessageId: email.id,
+                  ...(gmailTokForExport
+                    ? {
+                        gmailReceiptFetch: {
+                          userAccessToken: gmailTokForExport,
+                          messageId: email.id,
+                        },
+                      }
+                    : {}),
+                },
+              ],
+              // Avoid hitting Sheets write quota on each single-email export.
+              automateSheets: false,
+            });
+            if (result.rowsAdded > 0) {
+              const existingTarget = pendingAutomationTargetRef.current;
+              if (
+                !existingTarget ||
+                existingTarget.spreadsheetId !== exportTarget.spreadsheetId ||
+                existingTarget.sheetName !== exportTarget.sheetName
+              ) {
+                pendingAutomationTargetRef.current = exportTarget;
+                pendingAutomationRowsRef.current = [];
+              }
+              pendingAutomationRowsRef.current.push({
                 invoiceNumber: invoice.invoiceNumber,
                 vendor: invoice.vendor,
                 date: invoice.date,
-                totalAmount: invoice.totalAmount,
-                ivaAmount: invoice.ivaAmount,
-                baseAmount: invoice.baseAmount,
-                category: invoice.category,
-                currency: invoice.currency,
-                tip: invoice.tip,
-                notes: invoice.notes ?? "",
                 items: invoice.items,
-                imageUrl: "",
-                gmailMessageId: email.id,
-                ...(gmailTokForExport
-                  ? {
-                      gmailReceiptFetch: {
-                        userAccessToken: gmailTokForExport,
-                        messageId: email.id,
-                      },
-                    }
-                  : {}),
-              },
-            ],
-            // Avoid hitting Sheets write quota on each single-email export.
-            automateSheets: false,
-          });
-          await updateInvoice(invoice.id, {
-            exportedToSheets: true,
-            exportedAt: new Date().toISOString(),
-          });
-          exportOutcome = result.rowsAdded === 0 ? "duplicate" : "ok";
-          exportReceiptMissing =
-            exportOutcome === "ok" && Boolean(result.receiptImageMissing);
-        } catch (err) {
-          console.error("[Gmail] exportToSheets failed:", err);
-          exportOutcome = "failed";
-        }
-      }
-
-      // Move Gmail labels after save. If auto-export is on, wait for Sheets success/duplicate first.
-      const shouldRelabelAfterSave =
-        accessToken &&
-        (autoExportEnabled ? exportOutcome === "ok" || exportOutcome === "duplicate" : true);
-      if (shouldRelabelAfterSave) {
-        try {
-          const rawSettings = await AsyncStorage.getItem(SETTINGS_KEY);
-          const parsed = rawSettings ? JSON.parse(rawSettings) : {};
-          const prep = String(parsed.gmailPreparingLabel ?? "").trim();
-          const done = String(parsed.gmailCompleteLabel ?? "").trim();
-          // Complete label alone is enough (many users only set "2026 Invoice Complete").
-          if (done || prep) {
-            relabelAttempted = true;
-            await relabelMutation.mutateAsync({
-              accessToken,
-              messageId: email.id,
-              threadId: email.threadId,
-              removeLabelName: prep || undefined,
-              addLabelName: done || undefined,
+              });
+              schedulePendingSheetsAutomation(emails.length <= 1 ? 250 : 2500);
+            }
+            await updateInvoice(invoice.id, {
+              exportedToSheets: true,
+              exportedAt: new Date().toISOString(),
             });
+            exportOutcome = result.rowsAdded === 0 ? "duplicate" : "ok";
+            exportReceiptMissing =
+              exportOutcome === "ok" && Boolean(result.receiptImageMissing);
+          } catch (err) {
+            console.error("[Gmail] exportToSheets failed:", err);
+            exportOutcome = "failed";
           }
-        } catch (relErr) {
-          relabelFailed = true;
-          console.error("[Gmail] Relabel after export failed:", relErr);
         }
-      }
 
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setEmails((prev) => prev.filter((e) => e.id !== email.id));
+        // Move Gmail labels after save. If auto-export is on, wait for Sheets success/duplicate first.
+        const shouldRelabelAfterSave =
+          accessToken &&
+          (autoExportEnabled ? exportOutcome === "ok" || exportOutcome === "duplicate" : true);
+        if (shouldRelabelAfterSave) {
+          try {
+            const rawSettings = await AsyncStorage.getItem(SETTINGS_KEY);
+            const parsed = rawSettings ? JSON.parse(rawSettings) : {};
+            const prep = String(parsed.gmailPreparingLabel ?? "").trim();
+            const done = String(parsed.gmailCompleteLabel ?? "").trim();
+            // Complete label alone is enough (many users only set "2026 Invoice Complete").
+            if (done || prep) {
+              relabelAttempted = true;
+              await relabelMutation.mutateAsync({
+                accessToken,
+                messageId: email.id,
+                threadId: email.threadId,
+                removeLabelName: prep || undefined,
+                addLabelName: done || undefined,
+              });
+            }
+          } catch (relErr) {
+            relabelFailed = true;
+            console.error("[Gmail] Relabel after export failed:", relErr);
+          }
+        }
 
-      if (opts?.quiet) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setEmails((prev) => prev.filter((e) => e.id !== email.id));
+
+        if (opts?.quiet) {
+          if (exportOutcome === "failed") {
+            Alert.alert(
+              "Sheets export failed",
+              `${invoice.vendor} was saved to Receipts. Open it and tap Export.`,
+            );
+          } else if (relabelAttempted && relabelFailed) {
+            Alert.alert(
+              "Saved, but label move failed",
+              `${invoice.vendor} was saved, but Gmail could not move the label. Check the Preparing / Complete label names.`,
+            );
+          }
+          return;
+        }
+
         if (exportOutcome === "failed") {
           Alert.alert(
-            "Sheets export failed",
-            `${invoice.vendor} was saved to Receipts. Open it and tap Export.`,
+            "Saved",
+            `${invoice.vendor}: saved to Receipts, but Google Sheets export failed. Open the receipt and tap Export.`,
+          );
+        } else if (exportOutcome === "ok") {
+          if (exportReceiptMissing) {
+            Alert.alert(
+              "Saved & exported",
+              `${invoice.vendor} is in your spreadsheet, but the Receipt column has no PDF/image (Gmail could not attach a file). Open the receipt and tap Export again, or remove the duplicate row in Sheets and re-save from Gmail.`,
+            );
+          } else {
+            Alert.alert("Saved & exported", `${invoice.vendor} is in Receipts and your spreadsheet.`);
+          }
+        } else if (exportOutcome === "duplicate") {
+          Alert.alert(
+            "Saved",
+            `${invoice.vendor}: saved to Receipts. A matching row was already in Sheets — marked as exported.`,
           );
         } else if (relabelAttempted && relabelFailed) {
           Alert.alert(
             "Saved, but label move failed",
             `${invoice.vendor} was saved, but Gmail could not move the label. Check the Preparing / Complete label names.`,
           );
-        }
-        return;
-      }
-
-      if (exportOutcome === "failed") {
-        Alert.alert(
-          "Saved",
-          `${invoice.vendor}: saved to Receipts, but Google Sheets export failed. Open the receipt and tap Export.`,
-        );
-      } else if (exportOutcome === "ok") {
-        if (exportReceiptMissing) {
-          Alert.alert(
-            "Saved & exported",
-            `${invoice.vendor} is in your spreadsheet, but the Receipt column has no PDF/image (Gmail could not attach a file). Open the receipt and tap Export again, or remove the duplicate row in Sheets and re-save from Gmail.`,
-          );
         } else {
-          Alert.alert("Saved & exported", `${invoice.vendor} is in Receipts and your spreadsheet.`);
+          Alert.alert("Saved!", `Invoice from ${invoice.vendor} has been saved to your receipts.`);
         }
-      } else if (exportOutcome === "duplicate") {
-        Alert.alert(
-          "Saved",
-          `${invoice.vendor}: saved to Receipts. A matching row was already in Sheets — marked as exported.`,
-        );
-      } else if (relabelAttempted && relabelFailed) {
-        Alert.alert(
-          "Saved, but label move failed",
-          `${invoice.vendor} was saved, but Gmail could not move the label. Check the Preparing / Complete label names.`,
-        );
-      } else {
-        Alert.alert("Saved!", `Invoice from ${invoice.vendor} has been saved to your receipts.`);
+      } finally {
+        saveInFlightRef.current.delete(email.id);
       }
     },
-    [accessToken, addInvoice, autoExportEnabled, exportMutation, relabelMutation, updateInvoice],
+    [
+      accessToken,
+      addInvoice,
+      autoExportEnabled,
+      emails.length,
+      exportMutation,
+      relabelMutation,
+      schedulePendingSheetsAutomation,
+      updateInvoice,
+    ],
   );
 
   // Auto-save parsed emails if enabled
@@ -862,7 +971,7 @@ export default function GmailScreen() {
               </View>
               <View style={styles.headerActions}>
                 <Pressable
-                  onPress={() => fetchEmails(accessToken)}
+                  onPress={() => fetchEmails(accessToken, { runPendingAutomation: true })}
                   disabled={fetching}
                   style={({ pressed }) => [
                     styles.refreshBtn,
@@ -1023,7 +1132,7 @@ export default function GmailScreen() {
                 We searched for emails with &quot;factura&quot;, &quot;invoice&quot;, &quot;recibo&quot; in the subject line
               </Text>
               <Pressable
-                onPress={() => fetchEmails(accessToken)}
+                onPress={() => fetchEmails(accessToken, { runPendingAutomation: true })}
                 style={[styles.refreshLargeBtn, { backgroundColor: colors.primary }]}
               >
                 <IconSymbol name="arrow.clockwise" size={16} color="#fff" />
