@@ -1402,7 +1402,29 @@ async function getGoogleAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-/** Maps Sheets v4 JSON errors to a message the mobile app can show (not only server logs). */
+/** Google Sheets allows at most 50,000 characters per cell (leave margin for encoding). */
+const GOOGLE_SHEETS_MAX_CELL_CHARS = 49_900;
+
+function clampStringForSheetsCell(value: unknown, fieldLabel?: string): string {
+  if (value == null) return "";
+  const s = typeof value === "string" ? value : String(value);
+  if (s.length <= GOOGLE_SHEETS_MAX_CELL_CHARS) return s;
+  const hint = fieldLabel ? ` [${fieldLabel}]` : "";
+  console.warn(`[Export] Truncated sheet cell${hint}: ${s.length} chars`);
+  return `${s.slice(0, GOOGLE_SHEETS_MAX_CELL_CHARS - 48)} ... (truncated for Google Sheets)`;
+}
+
+function googleSheetsErrorLooksLikeCellCharLimit(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    /50000|50\s*,?\s*000|fifty\s*thousand/.test(m) ||
+    /maximum\s+number\s+of\s+characters.*cell|cell.*50\s*,?\s*000|characters.*cell/.test(m) ||
+    /[\uAC00-\uD7A3].*50000|50000.*[\uAC00-\uD7A3]/.test(msg) ||
+    /최대\s*문자|문자수.*50000|50000.*문자|하나의\s*셀|단일\s*셀/.test(msg)
+  );
+}
+
+/** Maps Sheets v4 JSON errors to English-only messages for the mobile app. */
 function userFacingMessageFromSheetsApiBody(errText: string): string {
   try {
     const j = JSON.parse(errText) as {
@@ -1415,6 +1437,7 @@ function userFacingMessageFromSheetsApiBody(errText: string): string {
     };
     const msg = String(j.error?.message ?? "");
     const status = String(j.error?.status ?? "");
+    const code = Number(j.error?.code ?? 0);
     const reasons = (j.error?.details ?? []).map((d) => d.reason).filter(Boolean);
     if (
       status === "PERMISSION_DENIED" &&
@@ -1425,6 +1448,30 @@ function userFacingMessageFromSheetsApiBody(errText: string): string {
         "Google Sheets API is disabled for your Google Cloud project. In Google Cloud Console: APIs & Services → Library → search “Google Sheets API” → Enable (same project as your OAuth client ID). Wait 2–5 minutes, then export again."
       );
     }
+
+    if (
+      (status === "INVALID_ARGUMENT" || code === 400) &&
+      googleSheetsErrorLooksLikeCellCharLimit(msg)
+    ) {
+      return (
+        "Google Sheets: A cell cannot hold more than 50,000 characters. The receipt column must be a short HTTPS link, not raw image data. Export again so the server can upload the receipt, or set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY on the server for reliable hosting."
+      );
+    }
+
+    // Google often returns localized (e.g. Korean) messages; keep the app English-only.
+    if (/[\uAC00-\uD7A3]/.test(msg)) {
+      if (status === "INVALID_ARGUMENT" || code === 400) {
+        return "Google Sheets rejected the request (invalid argument). Check server logs, or try exporting again after a short wait.";
+      }
+      if (status === "PERMISSION_DENIED") {
+        return "Google Sheets permission denied. Check spreadsheet sharing and OAuth scopes, or see server logs.";
+      }
+      if (status === "NOT_FOUND") {
+        return "Google Sheets spreadsheet or tab was not found. Check the spreadsheet ID and sheet name in Settings.";
+      }
+      return `Google Sheets returned ${status || "an error"}. Please try again or check server logs.`;
+    }
+
     if (msg.length > 0 && msg.length < 450) {
       return `Google Sheets: ${msg}`;
     }
@@ -2972,6 +3019,13 @@ export const appRouter = router({
                 console.error(`[Export] Failed to upload image for ${r.vendor}:`, error);
                 imageUrl = "";
               }
+              // Leftover data: URLs skip Gmail fallback and exceed Sheets' 50k cell limit — clear so we can fetch attachment.
+              if (String(imageUrl ?? "").trim().toLowerCase().startsWith("data:")) {
+                console.warn(
+                  `[Export] Stripping data URL after upload did not produce HTTPS (${r.vendor}).`,
+                );
+                imageUrl = "";
+              }
             }
 
             if (
@@ -3045,10 +3099,15 @@ export const appRouter = router({
               formattedDate = `=DATE(${yyyy},${mm},${dd})`;
             }
 
-            // L: plain https URL (clickable in Sheets, opens full receipt in browser — no in-cell IMAGE preview).
-            let imageColumnValue: string = imageUrl;
-            if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
-              imageColumnValue = receiptSheetsReceiptUrlCell(imageUrl);
+            // L: plain https URL only — never write data:/file: blobs (exceeds Sheets 50k cell limit).
+            const rawImg = String(imageUrl ?? "").trim();
+            let imageColumnValue = "";
+            if (/^https?:\/\//i.test(rawImg)) {
+              imageColumnValue = receiptSheetsReceiptUrlCell(rawImg);
+            } else if (rawImg.toLowerCase().startsWith("data:") || rawImg.toLowerCase().startsWith("file:")) {
+              console.warn(
+                `[Export] Skipping non-HTTPS receipt value for sheet cell (${r.vendor}); length=${rawImg.length}`,
+              );
             }
 
             // If attachment fetch/upload failed, still provide the raw Gmail message URL.
@@ -3071,18 +3130,18 @@ export const appRouter = router({
 
             return [
               r.source?.toLowerCase() === "camera" ? "Camera" : "Email", // A - Source
-              r.invoiceNumber,       // B - Invoice #
-              r.vendor,              // C - Vendor
-              formattedDate,         // D - Date (DD/MM/YYYY)
+              clampStringForSheetsCell(r.invoiceNumber, "Invoice #"),
+              clampStringForSheetsCell(r.vendor, "Vendor"),
+              clampStringForSheetsCell(formattedDate, "Date"),
               r.totalAmount,                                                           // E - Total (€)
               r.ivaAmount ?? 0,                                                        // F - VAT (€)
               r.baseAmount != null ? r.baseAmount : r.totalAmount - (r.ivaAmount ?? 0), // G - Base (€) fallback for old invoices
               r.tip ?? 0,            // H - Tip (€)
-              r.category,            // I - Category
-              r.currency,            // J - Currency
-              r.notes ?? "",         // K - Notes
-              imageColumnValue,      // L - Receipt URL (clickable) / empty
-              now,                   // M - Exported At
+              clampStringForSheetsCell(r.category, "Category"),
+              clampStringForSheetsCell(r.currency, "Currency"),
+              clampStringForSheetsCell(r.notes ?? "", "Notes"),
+              clampStringForSheetsCell(imageColumnValue, "Receipt"),
+              clampStringForSheetsCell(now, "Exported At"),
             ];
           })
         );
