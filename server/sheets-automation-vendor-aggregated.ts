@@ -239,6 +239,19 @@ async function createMonthlySheets(
     }
   }
 
+  const header = [
+    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)",
+    "Category", "Currency", "Notes", "Receipt", "Exported At"
+  ];
+
+  // Even when a month has no rows, keep the header visible so the tab is not blank.
+  for (const month of months) {
+    const ok = await ensureSheetExists(spreadsheetId, month, accessToken, header);
+    if (!ok) {
+      console.warn(`⚠️ Could not ensure sheet "${month}" — skipping`);
+    }
+  }
+
   const activeMonths = months.filter((month) => invoicesByMonth[month].length > 0);
   if (activeMonths.length === 0) {
     console.log("ℹ️  No monthly invoice groups to update");
@@ -249,12 +262,6 @@ async function createMonthlySheets(
   for (const month of activeMonths) {
     const monthInvoices = invoicesByMonth[month];
     const aggregated = aggregateByVendor(monthInvoices);
-
-    // Build sheet rows
-    const header = [
-      "Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)",
-      "Category", "Currency", "Notes", "Receipt", "Exported At"
-    ];
 
     const ok = await ensureSheetExists(spreadsheetId, month, accessToken, header);
     if (!ok) {
@@ -362,6 +369,19 @@ async function createQuarterlySheets(
     }
   }
 
+  const header = [
+    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)",
+    "Category", "Currency", "Notes", "Receipt", "Exported At"
+  ];
+
+  // Even when a quarter has no rows, keep the header visible so the tab is not blank.
+  for (const quarter of quarters) {
+    const ok = await ensureSheetExists(spreadsheetId, quarter, accessToken, header);
+    if (!ok) {
+      console.warn(`⚠️ Could not ensure sheet "${quarter}" — skipping`);
+    }
+  }
+
   const activeQuarters = quarters.filter((quarter) => invoicesByQuarter[quarter].length > 0);
   if (activeQuarters.length === 0) {
     console.log("ℹ️  No quarterly invoice groups to update");
@@ -372,11 +392,6 @@ async function createQuarterlySheets(
   for (const quarter of activeQuarters) {
     const quarterInvoices = invoicesByQuarter[quarter];
     const aggregated = aggregateByVendor(quarterInvoices);
-
-    const header = [
-      "Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)",
-      "Category", "Currency", "Notes", "Receipt", "Exported At"
-    ];
 
     const ok = await ensureSheetExists(spreadsheetId, quarter, accessToken, header);
     if (!ok) {
@@ -674,12 +689,6 @@ export async function updateMeatSheets(
   spreadsheetId: string,
   invoices: any[]
 ): Promise<void> {
-  const meatItems = buildMeatLineItems(invoices);
-  if (meatItems.length === 0) {
-    console.log("ℹ️  No meat line items found — meat sheets not updated");
-    return;
-  }
-
   const lineItemHeader = [
     "Month",
     "Date",
@@ -691,6 +700,21 @@ export async function updateMeatSheets(
     "Total (€)",
     "Source",
   ];
+  const ordersHeader = ["Month", "Vendor", "Order Count", "Total Meat Kg", "Total Meat Spend (€)"];
+  const cutSummaryHeader = ["Month", "Cut Name", "Total Kg", "Total Spend (€)", "Avg Price / Kg (€)"];
+  const monthlySummaryHeader = ["Month", "Total Meat Kg", "Total Meat Spend (€)", "Invoice Count", "Vendor Count"];
+
+  // Keep meat tabs visible with headers even when there are no meat rows yet.
+  await ensureSheetExists(spreadsheetId, "Meat_Line_Items", accessToken, lineItemHeader);
+  await ensureSheetExists(spreadsheetId, "Meat_Orders", accessToken, ordersHeader);
+  await ensureSheetExists(spreadsheetId, "Meat_Cut_Summary", accessToken, cutSummaryHeader);
+  await ensureSheetExists(spreadsheetId, "Meat_Monthly_Summary", accessToken, monthlySummaryHeader);
+
+  const meatItems = buildMeatLineItems(invoices);
+  if (meatItems.length === 0) {
+    console.log("ℹ️  No meat line items found — meat sheets not updated");
+    return;
+  }
   const lineItemRows = meatItems.map((item) => [
     item.month,
     item.date,
@@ -703,16 +727,10 @@ export async function updateMeatSheets(
     item.source,
   ]);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Line_Items", lineItemHeader, lineItemRows);
-
-  const ordersHeader = ["Month", "Vendor", "Order Count", "Total Meat Kg", "Total Meat Spend (€)"];
   const ordersRows = buildMeatOrdersRows(meatItems);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Orders", ordersHeader, ordersRows);
-
-  const cutSummaryHeader = ["Month", "Cut Name", "Total Kg", "Total Spend (€)", "Avg Price / Kg (€)"];
   const cutSummaryRows = buildMeatCutSummaryRows(meatItems);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Cut_Summary", cutSummaryHeader, cutSummaryRows);
-
-  const monthlySummaryHeader = ["Month", "Total Meat Kg", "Total Meat Spend (€)", "Invoice Count", "Vendor Count"];
   const monthlySummaryRows = buildMeatMonthlySummaryRows(meatItems);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Monthly_Summary", monthlySummaryHeader, monthlySummaryRows);
 
