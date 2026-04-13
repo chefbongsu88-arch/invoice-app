@@ -60,7 +60,10 @@ export async function uploadReceiptBinaryToForgeIfConfigured(
     return url?.trim() ?? "";
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.warn(`[Image Upload] Forge upload for Sheets receipt failed (${slug}):`, msg);
+    // Forge is optional; export falls back to /api/receipt-share — avoid alarm-level logs for expected misconfig.
+    console.log(
+      `[Export] Forge storage upload skipped for ${slug} (${msg.length > 120 ? `${msg.slice(0, 120)}…` : msg}); using receipt-share fallback if configured.`,
+    );
     return "";
   }
 }

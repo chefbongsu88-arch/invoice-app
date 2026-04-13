@@ -174,7 +174,7 @@ export async function applyThinTextFormatToGridRange(
       /RATE_LIMIT_EXCEEDED|RESOURCE_EXHAUSTED|write requests per minute per user/i.test(errText)
     ) {
       sheetsCosmeticBatchBackoffUntilMs = Date.now() + 5 * 60 * 1000;
-      console.warn(
+      console.log(
         "[Sheets] cosmetic format (thin) skipped for 5m due to Sheets write quota (429).",
       );
       return;
@@ -237,7 +237,7 @@ export async function applyBoldTextFormatToGridRange(
       /RATE_LIMIT_EXCEEDED|RESOURCE_EXHAUSTED|write requests per minute per user/i.test(errText)
     ) {
       sheetsCosmeticBatchBackoffUntilMs = Date.now() + 5 * 60 * 1000;
-      console.warn(
+      console.log(
         "[Sheets] cosmetic format (bold) skipped for 5m due to Sheets write quota (429).",
       );
       return;
@@ -300,7 +300,7 @@ export async function applyDateDisplayFormatDdMmYyyy(
       /RATE_LIMIT_EXCEEDED|RESOURCE_EXHAUSTED|write requests per minute per user/i.test(errText)
     ) {
       sheetsCosmeticBatchBackoffUntilMs = Date.now() + 5 * 60 * 1000;
-      console.warn(
+      console.log(
         "[Sheets] cosmetic format (date display) skipped for 5m due to Sheets write quota (429).",
       );
       return;

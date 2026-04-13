@@ -218,6 +218,28 @@ export default function ReceiptDetailScreen() {
     }
   }, [invoice, exportMutation, updateInvoice, id]);
 
+  const handleMarkExportedManually = useCallback(() => {
+    if (!invoice) return;
+    Alert.alert(
+      "Mark as exported?",
+      "Use this only if a row for this invoice already exists in Google Sheets (for example you fixed the date in the sheet, the export timed out but the row appeared, or you added the row by hand). This does not change Google Sheets — it only clears “Pending” in this app.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Mark exported",
+          onPress: async () => {
+            await updateInvoice(id, {
+              exportedToSheets: true,
+              exportedAt: new Date().toISOString(),
+            });
+            await reload();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          },
+        },
+      ],
+    );
+  }, [invoice, id, updateInvoice, reload]);
+
   if (!invoice) {
     return (
       <ScreenContainer containerClassName="bg-background">
@@ -417,6 +439,29 @@ export default function ReceiptDetailScreen() {
               )}
             </View>
           </Pressable>
+          {!invoice.exportedToSheets && (
+            <Pressable
+              onPress={handleMarkExportedManually}
+              disabled={exporting}
+              accessibilityRole="button"
+              accessibilityLabel="Mark invoice as already exported to Google Sheets"
+              style={({ pressed }) => [
+                styles.markExportedBtn,
+                {
+                  borderColor: colors.border,
+                  backgroundColor: colors.background,
+                  opacity: exporting ? 0.5 : pressed ? 0.92 : 1,
+                },
+              ]}
+            >
+              <Text style={[styles.markExportedTitle, { color: colors.foreground }]}>
+                Row already in Sheets — mark exported
+              </Text>
+              <Text style={[styles.markExportedSub, { color: colors.muted }]}>
+                Fixes “Pending” when the spreadsheet is correct but this app did not get the success flag (manual edits, timeout, or Settings sync only).
+              </Text>
+            </Pressable>
+          )}
         </View>
 
 
@@ -527,6 +572,16 @@ const styles = StyleSheet.create({
   exportBtnLabelCol: { flex: 1, gap: 3, minWidth: 0 },
   exportBtnText: { color: "#fff", fontSize: 17, fontWeight: "700", letterSpacing: -0.2 },
   exportBtnSubtext: { color: "rgba(255,255,255,0.88)", fontSize: 12, fontWeight: "600" },
+  markExportedBtn: {
+    marginTop: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 6,
+  },
+  markExportedTitle: { fontSize: 14, fontWeight: "700" },
+  markExportedSub: { fontSize: 12, fontWeight: "500", lineHeight: 17 },
   connectHint: { fontSize: 13, textAlign: "center", lineHeight: 18 },
   notFound: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
   notFoundText: { fontSize: 16 },

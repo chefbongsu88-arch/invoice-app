@@ -3341,9 +3341,7 @@ export const appRouter = router({
                       imageUrl = forgeUrl;
                       console.log(`[Export] Receipt for Sheets (Forge, persistent): ${r.vendor}`);
                     } else {
-                      console.warn(
-                        `[Export] Forge upload failed or empty; trying /api/receipt-share for ${r.vendor}`,
-                      );
+                      console.log(`[Export] Using /api/receipt-share for ${r.vendor} (Forge did not return a URL).`);
                     }
                   }
 
@@ -3414,8 +3412,8 @@ export const appRouter = router({
                       imageUrl = forgeUrl;
                       console.log(`[Export] Gmail attachment → Forge (persistent): ${r.vendor} (${mime})`);
                     } else {
-                      console.warn(
-                        `[Export] Gmail Forge upload failed; trying /api/receipt-share for ${r.vendor}`,
+                      console.log(
+                        `[Export] Gmail → /api/receipt-share for ${r.vendor} (Forge did not return a URL).`,
                       );
                     }
                   }
