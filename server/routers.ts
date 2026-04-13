@@ -45,6 +45,8 @@ import {
   hasMeatLineItems,
   isMeatCategory,
   isMeatLotOrigenTraceabilityLine,
+  shouldIncludeInvoiceInMeatLineSheets,
+  shouldTriggerMeatTrackerAutomationMerge,
 } from "../shared/invoice-types";
 import { canonicalVendorDisplayName } from "../shared/vendor-canonical";
 import {
@@ -336,12 +338,14 @@ function buildAutomationItemMergeKey(
 }
 
 function serializeMeatLineItemsForSheetsCell(
-  _category: string,
+  category: string,
+  vendor: string,
   items:
     | Array<{ partName: string; quantity: number; unit: string; pricePerUnit: number; total: number }>
     | undefined,
 ): string {
-  if (!hasMeatLineItems(items)) return "";
+  if (!shouldIncludeInvoiceInMeatLineSheets({ items, category, vendor })) return "";
+  if (!Array.isArray(items) || items.length === 0) return "";
   try {
     return JSON.stringify(
       items.map((it) => ({
@@ -3232,9 +3236,12 @@ export const appRouter = router({
           if (
             input.automateSheets &&
             rows.length > 0 &&
-            rows.some(
-              (r) =>
-                hasMeatLineItems(r.items) || isMeatCategory(String(r.category ?? "").trim()),
+            rows.some((r) =>
+              shouldTriggerMeatTrackerAutomationMerge({
+                items: r.items,
+                category: r.category,
+                vendor: r.vendor,
+              }),
             )
           ) {
             try {
@@ -3479,7 +3486,11 @@ export const appRouter = router({
               receiptImageMissing = true;
             }
 
-            const meatJson = serializeMeatLineItemsForSheetsCell(r.category, r.items);
+            const meatJson = serializeMeatLineItemsForSheetsCell(
+              String(r.category ?? ""),
+              String(r.vendor ?? ""),
+              r.items,
+            );
             const meatCell =
               meatJson.length > 50_000 ? "" : clampStringForSheetsCell(meatJson, "Meat line items (JSON)");
 
@@ -4279,20 +4290,20 @@ export const appRouter = router({
       .input(
         z.object({
           spreadsheetId: z.string(),
-          /** When `RESET_ALL_DATA_PASSWORD` is set on the server, must match exactly. */
+          /** Must match server `RESET_ALL_DATA_PASSWORD` or default `2026`. */
           resetPassword: z.string().optional().default(""),
         })
       )
       .mutation(async ({ input }) => {
-        const required = process.env.RESET_ALL_DATA_PASSWORD?.trim() ?? "";
-        if (required) {
-          const got = input.resetPassword?.trim() ?? "";
-          if (got !== required) {
-            throw new TRPCError({
-              code: "FORBIDDEN",
-              message: "Reset is protected: wrong or missing password.",
-            });
-          }
+        /** When unset, default is 2026 so reset is never allowed with an empty password. */
+        const required =
+          process.env.RESET_ALL_DATA_PASSWORD?.trim() || "2026";
+        const got = input.resetPassword?.trim() ?? "";
+        if (got !== required) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Reset is protected: wrong or missing password.",
+          });
         }
         try {
         const { spreadsheetId } = input;

@@ -64,7 +64,8 @@ export function encodeValuesRange(sheetName: string, a1: string): string {
 
 /** Columns A–N for tracker-style sheets (13 core + Meat line items JSON in N). */
 export const TRACKER_COLUMN_COUNT = 14;
-let thinFormatBackoffUntilMs = 0;
+/** Shared backoff for cosmetic repeatCell batchUpdate calls (bold/thin/date) — same Sheets write quota bucket. */
+let sheetsCosmeticBatchBackoffUntilMs = 0;
 
 /** 0-based column index from A1 letters (A=0, …, Z=25, AA=26, …). */
 export function a1ColumnLettersToIndex(letters: string): number {
@@ -133,7 +134,7 @@ export async function applyThinTextFormatToGridRange(
   },
 ): Promise<void> {
   const now = Date.now();
-  if (thinFormatBackoffUntilMs > now) {
+  if (sheetsCosmeticBatchBackoffUntilMs > now) {
     return;
   }
   const batchRes = await fetch(
@@ -172,9 +173,9 @@ export async function applyThinTextFormatToGridRange(
       batchRes.status === 429 ||
       /RATE_LIMIT_EXCEEDED|RESOURCE_EXHAUSTED|write requests per minute per user/i.test(errText)
     ) {
-      thinFormatBackoffUntilMs = Date.now() + 5 * 60 * 1000;
+      sheetsCosmeticBatchBackoffUntilMs = Date.now() + 5 * 60 * 1000;
       console.warn(
-        "[Sheets] thin-text format skipped for 5m due to write quota limit (429).",
+        "[Sheets] cosmetic format (thin) skipped for 5m due to Sheets write quota (429).",
       );
       return;
     }
@@ -196,6 +197,10 @@ export async function applyBoldTextFormatToGridRange(
     endColumnIndex: number;
   },
 ): Promise<void> {
+  const now = Date.now();
+  if (sheetsCosmeticBatchBackoffUntilMs > now) {
+    return;
+  }
   const batchRes = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
     {
@@ -226,7 +231,21 @@ export async function applyBoldTextFormatToGridRange(
     },
   );
   if (!batchRes.ok) {
-    console.warn("[Sheets] applyBoldTextFormatToGridRange failed:", await batchRes.text());
+    const errText = await batchRes.text();
+    if (
+      batchRes.status === 429 ||
+      /RATE_LIMIT_EXCEEDED|RESOURCE_EXHAUSTED|write requests per minute per user/i.test(errText)
+    ) {
+      sheetsCosmeticBatchBackoffUntilMs = Date.now() + 5 * 60 * 1000;
+      console.warn(
+        "[Sheets] cosmetic format (bold) skipped for 5m due to Sheets write quota (429).",
+      );
+      return;
+    }
+    console.warn(
+      "[Sheets] applyBoldTextFormatToGridRange failed:",
+      errText.length > 220 ? `${errText.slice(0, 220)}...` : errText,
+    );
   }
 }
 
@@ -242,6 +261,10 @@ export async function applyDateDisplayFormatDdMmYyyy(
     endColumnIndex: number;
   },
 ): Promise<void> {
+  const now = Date.now();
+  if (sheetsCosmeticBatchBackoffUntilMs > now) {
+    return;
+  }
   const batchRes = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
     {
@@ -271,7 +294,21 @@ export async function applyDateDisplayFormatDdMmYyyy(
     },
   );
   if (!batchRes.ok) {
-    console.warn("[Sheets] applyDateDisplayFormatDdMmYyyy failed:", await batchRes.text());
+    const errText = await batchRes.text();
+    if (
+      batchRes.status === 429 ||
+      /RATE_LIMIT_EXCEEDED|RESOURCE_EXHAUSTED|write requests per minute per user/i.test(errText)
+    ) {
+      sheetsCosmeticBatchBackoffUntilMs = Date.now() + 5 * 60 * 1000;
+      console.warn(
+        "[Sheets] cosmetic format (date display) skipped for 5m due to Sheets write quota (429).",
+      );
+      return;
+    }
+    console.warn(
+      "[Sheets] applyDateDisplayFormatDdMmYyyy failed:",
+      errText.length > 220 ? `${errText.slice(0, 220)}...` : errText,
+    );
   }
 }
 

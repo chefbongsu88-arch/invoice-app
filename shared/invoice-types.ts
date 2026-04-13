@@ -1,3 +1,5 @@
+import { canonicalVendorDisplayName } from "./vendor-canonical";
+
 export type InvoiceSource = "camera" | "email";
 
 /** UI / prompts: treat row as meat when the user (or model) set category to Meat. */
@@ -8,11 +10,48 @@ export function isMeatCategory(
 }
 
 /**
- * Meat line-item sheets (N column JSON, Meat_Line_Items, etc.) use this instead of category alone,
- * so La Portenia / Es Cuco rows still aggregate when the model mislabels category (e.g. Restaurant).
+ * True when vendor matches the butcher suppliers we track in meat tabs (La Portenia, Es Cuco),
+ * including common OCR / receipt spelling variants (see vendor-canonical).
+ */
+export function isTrackedMeatSupplierVendor(vendor: string | undefined | null): boolean {
+  const c = canonicalVendorDisplayName(String(vendor ?? "").trim());
+  return c === "La Portenia" || c === "Es Cuco";
+}
+
+/**
+ * Structural check: row has a non-empty `items` array (shape used for column N JSON).
+ * Does not mean the invoice is meat-related — use {@link shouldIncludeInvoiceInMeatLineSheets} for that.
  */
 export function hasMeatLineItems(items: unknown): boolean {
   return Array.isArray(items) && items.length > 0;
+}
+
+/**
+ * Meat_* sheets and column N should only include line-item JSON when the invoice is meat-related:
+ * category Meat, or a known meat supplier (so La Portenia / Es Cuco still work if category is wrong).
+ * Stops supermarket / sports-store email line items from filling Meat_Line_Items.
+ */
+export function shouldIncludeInvoiceInMeatLineSheets(invoice: {
+  items?: unknown;
+  category?: string | null;
+  vendor?: string | null;
+}): boolean {
+  if (!hasMeatLineItems(invoice.items)) return false;
+  return isMeatCategory(invoice.category) || isTrackedMeatSupplierVendor(invoice.vendor);
+}
+
+/**
+ * When to run tracker automation merges for meat tabs (duplicate-only export, Gmail scheduling, etc.):
+ * category Meat (even if items are empty in this payload — column N may exist on Sheets), or
+ * meat line items that qualify for meat sheets.
+ */
+export function shouldTriggerMeatTrackerAutomationMerge(row: {
+  items?: unknown;
+  category?: string | null;
+  vendor?: string | null;
+}): boolean {
+  if (isMeatCategory(row.category)) return true;
+  return shouldIncludeInvoiceInMeatLineSheets(row);
 }
 
 /**

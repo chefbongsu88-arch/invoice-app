@@ -25,7 +25,9 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
 import type { Invoice, InvoiceCategory, MeatItem } from "@/shared/invoice-types";
-import { hasMeatLineItems, isMeatCategory } from "@/shared/invoice-types";
+import {
+  shouldTriggerMeatTrackerAutomationMerge,
+} from "@/shared/invoice-types";
 import { trpc } from "@/lib/trpc";
 import { getApiBaseUrl } from "@/constants/oauth";
 import { PRODUCTION_API_ORIGIN } from "@/constants/receipt-api-origin";
@@ -768,7 +770,11 @@ export default function GmailScreen() {
             /** Main row skipped as duplicate — meat tabs still need recentRows merge (column N may be empty on Sheets). */
             const scheduleMeatMergeAfterDuplicate =
               hadDuplicateOnly &&
-              (hasMeatLineItems(invoice.items) || isMeatCategory(invoice.category));
+              shouldTriggerMeatTrackerAutomationMerge({
+                items: invoice.items,
+                category: invoice.category,
+                vendor: invoice.vendor,
+              });
             if (result.rowsAdded > 0 || scheduleMeatMergeAfterDuplicate) {
               const existingTarget = pendingAutomationTargetRef.current;
               if (
@@ -868,7 +874,11 @@ export default function GmailScreen() {
         } else if (exportOutcome === "duplicate") {
           Alert.alert(
             "Saved",
-            hasMeatLineItems(invoice.items) || isMeatCategory(invoice.category)
+            shouldTriggerMeatTrackerAutomationMerge({
+              items: invoice.items,
+              category: invoice.category,
+              vendor: invoice.vendor,
+            })
               ? `${invoice.vendor}: saved to Receipts. The main tracker already had this invoice # — no new row added. Meat / monthly tabs will refresh shortly with line items from this save.`
               : `${invoice.vendor}: saved to Receipts. A matching row was already in Sheets — marked as exported.`,
           );

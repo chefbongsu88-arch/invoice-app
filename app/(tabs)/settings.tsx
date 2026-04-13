@@ -208,6 +208,10 @@ export default function SettingsScreen() {
   };
 
   const runResetAllData = async () => {
+    if (!resetPasswordInput.trim()) {
+      Alert.alert("Password required", "Enter the reset password (2026 unless your server uses RESET_ALL_DATA_PASSWORD).");
+      return;
+    }
     const spreadsheetId = settings.spreadsheetId || "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
     try {
       await resetAllDataMutation.mutateAsync({
@@ -270,7 +274,7 @@ export default function SettingsScreen() {
             </Text>
             <Text style={[styles.resetModalLabel, { color: colors.foreground }]}>Reset password</Text>
             <Text style={[styles.resetModalHint, { color: colors.muted }]}>
-              If your administrator set a password on the server, enter it here. Otherwise leave blank.
+              Enter 2026 to confirm. If the server sets RESET_ALL_DATA_PASSWORD, use that value instead.
             </Text>
             <TextInput
               style={[
@@ -279,7 +283,7 @@ export default function SettingsScreen() {
               ]}
               value={resetPasswordInput}
               onChangeText={setResetPasswordInput}
-              placeholder="Optional unless required by server"
+              placeholder="2026"
               placeholderTextColor={colors.muted}
               secureTextEntry
               autoCapitalize="none"

@@ -1,4 +1,7 @@
-import { hasMeatLineItems, isMeatLotOrigenTraceabilityLine } from "../shared/invoice-types";
+import {
+  isMeatLotOrigenTraceabilityLine,
+  shouldIncludeInvoiceInMeatLineSheets,
+} from "../shared/invoice-types";
 import { receiptSheetsReceiptUrlCell } from "../shared/sheets-defaults";
 import {
   applyBoldTextFormatToGridRange,
@@ -609,7 +612,13 @@ type MeatItemRow = {
 export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
   const rows: MeatItemRow[] = [];
   for (const inv of invoices) {
-    if (!hasMeatLineItems(inv.items)) {
+    if (
+      !shouldIncludeInvoiceInMeatLineSheets({
+        items: inv.items,
+        category: inv.category,
+        vendor: inv.vendor,
+      })
+    ) {
       continue;
     }
     const vendor = normalizeMeatVendorName(inv.vendor);
