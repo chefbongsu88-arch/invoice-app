@@ -62,8 +62,8 @@ export function encodeValuesRange(sheetName: string, a1: string): string {
   return encodeURIComponent(`${quoted}!${a1}`);
 }
 
-/** Columns A–M for tracker-style sheets (13 columns). */
-export const TRACKER_COLUMN_COUNT = 13;
+/** Columns A–N for tracker-style sheets (13 core + Meat line items JSON in N). */
+export const TRACKER_COLUMN_COUNT = 14;
 let thinFormatBackoffUntilMs = 0;
 
 /** 0-based column index from A1 letters (A=0, …, Z=25, AA=26, …). */
@@ -230,6 +230,25 @@ export async function applyBoldTextFormatToGridRange(
   }
 }
 
+/** True when batchUpdate addSheet failed because a tab with that title already exists (any locale). */
+export function isSheetsDuplicateTabError(body: string): boolean {
+  return (
+    /already exists|duplicate.*sheet|duplicate sheet|DUPLICATE_SHEET_NAME/i.test(body) ||
+    /이미 있습니다|다른 이름을 입력/i.test(body)
+  );
+}
+
+async function valuesRangeHasHeaderRow(
+  res: Response,
+): Promise<{ ok: boolean; hasHeader: boolean }> {
+  if (!res.ok) return { ok: false, hasHeader: false };
+  const checkData = (await res.json()) as { values?: string[][] };
+  return {
+    ok: true,
+    hasHeader: !!(checkData.values && checkData.values.length > 0),
+  };
+}
+
 /**
  * Create or update a sheet with headers
  */
@@ -249,46 +268,60 @@ export async function ensureSheetExists(
 
     const topLeft = "A1:Z1";
     const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, topLeft)}`;
-    const checkRes = await fetch(checkUrl, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-
-    if (!checkRes.ok) {
-      const batchUpdateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`;
-      const createRes = await fetch(batchUpdateUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          requests: [
-            {
-              addSheet: {
-                properties: {
-                  title: sheetName,
-                },
-              },
-            },
-          ],
-        }),
-      });
-
-      if (!createRes.ok) {
-        const createText = await createRes.text();
-        if (!/already exists|duplicate/i.test(createText)) {
-          console.error("Failed to create sheet:", sheetName, summarizeSheetsError(createText));
-          return false;
-        }
-      }
-    }
+    const authHeaders = { Authorization: `Bearer ${accessToken}` };
+    const checkRes = await fetch(checkUrl, { headers: authHeaders });
 
     let hasHeaderRow = false;
+
     if (checkRes.ok) {
-      const checkData = (await checkRes.json()) as { values?: string[][] };
-      hasHeaderRow = !!(checkData.values && checkData.values.length > 0);
+      const parsed = await valuesRangeHasHeaderRow(checkRes);
+      hasHeaderRow = parsed.hasHeader;
+    } else {
+      // values.get can fail (e.g. 429) even when the tab exists — do not addSheet until we know.
+      const existingId = await getSheetIdByTitle(spreadsheetId, sheetName, accessToken);
+      if (existingId !== null) {
+        const retry = await fetch(checkUrl, { headers: authHeaders });
+        const parsed = await valuesRangeHasHeaderRow(retry);
+        hasHeaderRow = parsed.hasHeader;
+        if (!retry.ok) {
+          console.warn(
+            `[Sheets] ensureSheetExists: tab "${sheetName}" exists but values read failed; skipping header write this run.`,
+          );
+          return true;
+        }
+      } else {
+        const batchUpdateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`;
+        const createRes = await fetch(batchUpdateUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            requests: [
+              {
+                addSheet: {
+                  properties: {
+                    title: sheetName,
+                  },
+                },
+              },
+            ],
+          }),
+        });
+
+        if (!createRes.ok) {
+          const createText = await createRes.text();
+          if (!isSheetsDuplicateTabError(createText)) {
+            console.error("Failed to create sheet:", sheetName, summarizeSheetsError(createText));
+            return false;
+          }
+        }
+
+        const afterCreate = await fetch(checkUrl, { headers: authHeaders });
+        const parsed = await valuesRangeHasHeaderRow(afterCreate);
+        hasHeaderRow = parsed.hasHeader;
+      }
     }
 
     if (!hasHeaderRow) {

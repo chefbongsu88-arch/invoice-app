@@ -2,7 +2,7 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -25,7 +25,7 @@ import {
   type Invoice,
   type InvoiceCategory,
   type MeatItem,
-  isMeatCategory,
+  hasMeatLineItems,
 } from "@/shared/invoice-types";
 import { getOcrAlertForUser } from "@/lib/ocr-user-message";
 import { trpc } from "@/lib/trpc";
@@ -203,12 +203,6 @@ export default function ScanScreen() {
 
   const ocrMutation = trpc.invoices.parseReceipt.useMutation();
 
-  useEffect(() => {
-    if (!isMeatCategory(category)) {
-      setItems([]);
-    }
-  }, [category]);
-
   const pickFromCamera = useCallback(async () => {
     if (Platform.OS === "web") {
       Alert.alert("Camera not available", "Please use a physical device to scan receipts.");
@@ -304,13 +298,9 @@ export default function ScanScreen() {
 
       const nextCategory = (parsed.category as InvoiceCategory) ?? "Other";
       setCategory(nextCategory);
-      // Line items: only receipts categorized as Meat (exclude veg/other from Meat_Monthly UI)
-      if (
-        isMeatCategory(nextCategory) &&
-        parsed.items &&
-        Array.isArray(parsed.items)
-      ) {
-        setItems(parsed.items);
+      // Keep butcher-style line items whenever the model returned them (category is often wrong for carnicería).
+      if (hasMeatLineItems(parsed.items)) {
+        setItems(parsed.items as MeatItem[]);
       } else {
         setItems([]);
       }
@@ -371,7 +361,7 @@ export default function ScanScreen() {
         notes: notes.trim(),
         tip: tipAmount > 0 ? tipAmount : undefined,
         imageUri: imageUrl ?? undefined,
-        items: isMeatCategory(category) && items.length > 0 ? items : undefined,
+        items: hasMeatLineItems(items) ? items : undefined,
         exportedToSheets: false,
         createdAt: new Date().toISOString(),
       };
@@ -702,9 +692,9 @@ export default function ScanScreen() {
             </View>
           )}
 
-          {isMeatCategory(category) && items.length > 0 && (
+          {items.length > 0 && (
             <View style={[styles.formCard, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 16 }]}>
-              <Text style={[styles.fieldLabel, { color: colors.foreground, marginBottom: 12 }]}>Meat Items</Text>
+              <Text style={[styles.fieldLabel, { color: colors.foreground, marginBottom: 12 }]}>Meat / butcher line items</Text>
               {items.map((item, idx) => (
                 <View key={idx} style={[styles.meatItemCard, { borderColor: colors.border, backgroundColor: colors.background }]}>
                   <Text style={[styles.meatItemText, { color: colors.foreground }]}>

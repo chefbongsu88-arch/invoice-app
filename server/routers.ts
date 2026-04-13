@@ -34,7 +34,15 @@ import {
   encodeValuesRange,
   getSheetIdByTitle,
   parseAppendUpdatedRangeToGridRange,
+  TRACKER_COLUMN_COUNT,
 } from "./sheets-automation";
+import {
+  parseMainTrackerDateCellToIso,
+  parseTrackerMeatItemsJsonCell,
+} from "./sheets-automation-vendor-aggregated";
+import { isInvoiceNumberBlockedFromSheetsExport } from "../shared/blocked-invoice-export";
+import { hasMeatLineItems } from "../shared/invoice-types";
+import { canonicalVendorDisplayName } from "../shared/vendor-canonical";
 import {
   detectMimeFromBuffer,
   putReceiptShareImage,
@@ -311,6 +319,169 @@ async function applyDateDisplayFormatToGridRange(
   }
 }
 
+function buildAutomationItemMergeKey(
+  invoiceNumber: unknown,
+  vendor: unknown,
+  dateRaw: unknown,
+): string {
+  const inv = String(invoiceNumber ?? "").trim();
+  const ven = String(vendor ?? "").trim();
+  const iso = parseMainTrackerDateCellToIso(dateRaw ?? "");
+  const d = iso || String(dateRaw ?? "").trim();
+  return `${inv}|||${ven}|||${d}`;
+}
+
+function serializeMeatLineItemsForSheetsCell(
+  _category: string,
+  items:
+    | Array<{ partName: string; quantity: number; unit: string; pricePerUnit: number; total: number }>
+    | undefined,
+): string {
+  if (!hasMeatLineItems(items)) return "";
+  try {
+    return JSON.stringify(
+      items.map((it) => ({
+        partName: String(it.partName ?? "").trim(),
+        quantity: Number(it.quantity),
+        unit: String(it.unit ?? "kg"),
+        pricePerUnit: Number(it.pricePerUnit),
+        total: Number(it.total),
+      })),
+    );
+  } catch {
+    return "";
+  }
+}
+
+type AutomationInvoiceRow = {
+  source: string;
+  invoiceNumber: string;
+  vendor: string;
+  date: string;
+  totalAmount: number;
+  ivaAmount: number;
+  baseAmount: number;
+  tip: number;
+  category: string;
+  currency: string;
+  notes: string;
+  imageUrl: string;
+  items?: Array<{
+    partName: string;
+    quantity: number;
+    unit: string;
+    pricePerUnit: number;
+    total: number;
+  }>;
+};
+
+/**
+ * Reads the main tracker (A2:N), applies export blocklist, merges meat line items from column N
+ * and optional `recentRowsWithItems` (same keys as export automation).
+ */
+async function buildAutomationInvoiceDataFromMainTracker(
+  spreadsheetId: string,
+  sheetName: string,
+  accessToken: string,
+  recentRowsWithItems: Array<{
+    invoiceNumber: string;
+    vendor: string;
+    date: string;
+    items?: Array<{
+      partName: string;
+      quantity: number;
+      unit: string;
+      pricePerUnit: number;
+      total: number;
+    }>;
+  }> = [],
+): Promise<AutomationInvoiceRow[]> {
+  const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A2:N")}?valueRenderOption=FORMULA`;
+  const trackerRes = await fetch(trackerSheetUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  let allInvoiceData: AutomationInvoiceRow[] = [];
+  let trackerRowsForAutomation: Array<{ invoice: AutomationInvoiceRow; raw: any[] }> = [];
+
+  if (trackerRes.ok) {
+    const trackerData = (await trackerRes.json()) as { values?: any[][] };
+    const trackerRawRows = trackerData.values;
+    if (trackerRawRows) {
+      const mapped = trackerRawRows.map((row: any[]) => {
+        const parseCurrency = (val: any) => {
+          if (!val) return 0;
+          const numStr = String(val).replace(/[€,\s]/g, "").trim();
+          const num = parseFloat(numStr);
+          return isNaN(num) ? 0 : num;
+        };
+
+        const parseDate = (val: any): string => parseMainTrackerDateCellToIso(val);
+
+        const invoice: AutomationInvoiceRow = {
+          source: row[0]?.toLowerCase() === "camera" ? "Camera" : "Email",
+          invoiceNumber: row[1] || "",
+          vendor: row[2] || "",
+          date: parseDate(row[3]),
+          totalAmount: parseCurrency(row[4]),
+          ivaAmount: parseCurrency(row[5]),
+          baseAmount: parseCurrency(row[6]),
+          tip: parseCurrency(row[7]),
+          category: row[8] || "",
+          currency: row[9] || "EUR",
+          notes: row[10] || "",
+          imageUrl: row[11] || "",
+        };
+        return { invoice, raw: row };
+      });
+      const beforeBlock = mapped.length;
+      trackerRowsForAutomation = mapped.filter(
+        ({ invoice }) => !isInvoiceNumberBlockedFromSheetsExport(String(invoice.invoiceNumber ?? "")),
+      );
+      allInvoiceData = trackerRowsForAutomation.map((x) => x.invoice);
+      if (trackerRowsForAutomation.length < beforeBlock) {
+        console.warn(
+          `[Sheets] Automation: omitted ${beforeBlock - trackerRowsForAutomation.length} row(s) with blocklisted invoice # (not pushed to monthly/meat rebuild).`,
+        );
+      }
+    }
+  }
+
+  const itemLookup = new Map(
+    recentRowsWithItems.map((row) => [
+      buildAutomationItemMergeKey(row.invoiceNumber, row.vendor, row.date),
+      Array.isArray(row.items) ? row.items : undefined,
+    ]),
+  );
+
+  console.log(`📊 Automation: Processing ${allInvoiceData.length} invoices from main sheet`);
+  if (allInvoiceData.length === 0) {
+    console.warn("⚠️  No invoice data found in main sheet");
+  }
+
+  if (trackerRowsForAutomation.length > 0) {
+    return trackerRowsForAutomation.map(({ invoice, raw }) => {
+      const fromSheet = parseTrackerMeatItemsJsonCell(raw[13]);
+      const fromRecent = itemLookup.get(
+        buildAutomationItemMergeKey(invoice.invoiceNumber, invoice.vendor, invoice.date),
+      );
+      const items =
+        fromSheet && fromSheet.length > 0
+          ? fromSheet
+          : fromRecent && fromRecent.length > 0
+            ? fromRecent
+            : undefined;
+      return items && items.length > 0 ? { ...invoice, items } : invoice;
+    });
+  }
+  return allInvoiceData.map((invoice) => {
+    const fromRecent = itemLookup.get(
+      buildAutomationItemMergeKey(invoice.invoiceNumber, invoice.vendor, invoice.date),
+    );
+    return fromRecent && fromRecent.length > 0 ? { ...invoice, items: fromRecent } : invoice;
+  });
+}
+
 async function runTrackerSheetsAutomation(
   spreadsheetId: string,
   sheetName: string,
@@ -330,99 +501,18 @@ async function runTrackerSheetsAutomation(
 ): Promise<void> {
   const { automateGoogleSheets } = await import("./sheets-automation-vendor-aggregated");
 
-  // Fetch the full tracker so monthly and quarterly tabs are rebuilt from the latest main-sheet state.
-  const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A2:M")}?valueRenderOption=FORMULA`;
-  const trackerRes = await fetch(trackerSheetUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+  const invoiceData = await buildAutomationInvoiceDataFromMainTracker(
+    spreadsheetId,
+    sheetName,
+    accessToken,
+    recentRowsWithItems,
+  );
+
+  await automateGoogleSheets({
+    spreadsheetId,
+    accessToken,
+    invoiceData,
   });
-
-  let allInvoiceData: Array<{
-    source: string;
-    invoiceNumber: string;
-    vendor: string;
-    date: string;
-    totalAmount: number;
-    ivaAmount: number;
-    baseAmount: number;
-    tip: number;
-    category: string;
-    currency: string;
-    notes: string;
-    imageUrl: string;
-    items?: Array<{
-      partName: string;
-      quantity: number;
-      unit: string;
-      pricePerUnit: number;
-      total: number;
-    }>;
-  }> = [];
-
-  if (trackerRes.ok) {
-    const trackerData = (await trackerRes.json()) as { values?: any[][] };
-    if (trackerData.values) {
-      allInvoiceData = trackerData.values.map((row: any[]) => {
-        const parseCurrency = (val: any) => {
-          if (!val) return 0;
-          const numStr = String(val).replace(/[€,\s]/g, "").trim();
-          const num = parseFloat(numStr);
-          return isNaN(num) ? 0 : num;
-        };
-
-        const parseDate = (val: any): string => {
-          if (!val) return "";
-          const s = String(val).replace(/^'+|'+$/g, "").trim();
-          const formula = s.match(/^=DATE\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\)$/i);
-          if (formula) {
-            return `${formula[1]}-${formula[2].padStart(2, "0")}-${formula[3].padStart(2, "0")}`;
-          }
-          const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-          if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-          return s;
-        };
-
-        return {
-          source: row[0]?.toLowerCase() === "camera" ? "Camera" : "Email",
-          invoiceNumber: row[1] || "",
-          vendor: row[2] || "",
-          date: parseDate(row[3]),
-          totalAmount: parseCurrency(row[4]),
-          ivaAmount: parseCurrency(row[5]),
-          baseAmount: parseCurrency(row[6]),
-          tip: parseCurrency(row[7]),
-          category: row[8] || "",
-          currency: row[9] || "EUR",
-          notes: row[10] || "",
-          imageUrl: row[11] || "",
-        };
-      });
-    }
-  }
-
-  const itemLookup = new Map(
-    recentRowsWithItems.map((row) => [
-      `${String(row.invoiceNumber ?? "").trim()}|||${String(row.vendor ?? "").trim()}|||${String(row.date ?? "").trim()}`,
-      Array.isArray(row.items) ? row.items : undefined,
-    ]),
-  );
-
-  console.log(`📊 Automation: Processing ${allInvoiceData.length} invoices from main sheet`);
-  if (allInvoiceData.length === 0) {
-    console.warn("⚠️  No invoice data found in main sheet");
-  }
-
-  await automateGoogleSheets(
-    {
-      spreadsheetId,
-      accessToken,
-      invoiceData: allInvoiceData.map((invoice) => {
-        const key = `${String(invoice.invoiceNumber ?? "").trim()}|||${String(invoice.vendor ?? "").trim()}|||${String(invoice.date ?? "").trim()}`;
-        const items = itemLookup.get(key);
-        return items && items.length > 0 ? { ...invoice, items } : invoice;
-      }),
-    },
-    ["La Portenia", "Es Cuco"],
-  );
 
   console.log("✅ Automation completed successfully");
 }
@@ -999,7 +1089,7 @@ function receiptLikeCandidateFromRawParsed(
   const parsed = normalizeReceiptParsedFields(rawParsed);
   return {
     invoiceNumber: cleanParsedInvoiceNumber(parsed.invoiceNumber),
-    vendor: pickBestParsedVendor(parsed.vendor, opts.headerFrom),
+    vendor: canonicalVendorDisplayName(pickBestParsedVendor(parsed.vendor, opts.headerFrom)),
     date: resolveReceiptDateIso(parsed) || dateIsoFromEmailDateHeader(opts.headerDate),
     totalAmount: parseMoneyNumber(parsed.totalAmount),
     ivaAmount: parseMoneyNumber(parsed.ivaAmount),
@@ -1344,6 +1434,9 @@ function normalizeReceiptParsedFields(raw: Record<string, unknown>): Record<stri
     if (v !== undefined) merged.ivaAmount = v;
   }
 
+  const vend = str(merged.vendor);
+  if (vend) merged.vendor = canonicalVendorDisplayName(vend);
+
   return merged;
 }
 
@@ -1503,6 +1596,53 @@ async function sleepMs(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isRetryableReceiptOcrError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (
+    /529|503|502|500|408|429|overloaded|rate\s*limit|quota|RESOURCE_EXHAUSTED|free_tier|ECONNRESET|ETIMEDOUT|fetch failed/i.test(
+      msg,
+    )
+  ) {
+    return true;
+  }
+  return /overloaded_error/i.test(msg);
+}
+
+/** Anthropic/Gemini often return transient overload or rate limits; brief backoff helps staff retries. */
+async function withRetryReceiptOcr<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  const backoffMs = [700, 2200, 6000];
+  let last: unknown;
+  for (let attempt = 0; attempt <= backoffMs.length; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      if (!isRetryableReceiptOcrError(e) || attempt === backoffMs.length) {
+        throw e;
+      }
+      const wait = backoffMs[attempt] ?? 6000;
+      console.warn(
+        `[OCR] ${label}: transient error (attempt ${attempt + 1}/${backoffMs.length + 1}), waiting ${wait}ms — ${e instanceof Error ? e.message.slice(0, 120) : String(e).slice(0, 120)}`,
+      );
+      await sleepMs(wait);
+    }
+  }
+  throw last;
+}
+
+function receiptOcrFailureUserMessage(raw: string): string {
+  const m = raw.slice(0, 900);
+  if (/429|quota|free_tier|generativelanguage|RESOURCE_EXHAUSTED/i.test(m)) {
+    return "Receipt scanning hit Google Gemini limits (quota or free tier). Wait a few minutes and try again, or ask your admin to add billing / a paid tier for the Gemini API key on Google AI Studio.";
+  }
+  if (/529|overloaded|Overloaded/i.test(m)) {
+    return "Receipt scanning is temporarily busy (AI provider overloaded). Please wait 1–2 minutes and try again.";
+  }
+  if (/401|403|invalid.?api|API key|not set/i.test(m)) {
+    return "Receipt AI is misconfigured on the server (API key). Ask your admin to check Railway environment variables.";
+  }
+  return `Receipt recognition failed. ${m.length > 280 ? m.slice(0, 280) + "…" : m}`;
+}
 
 const RECEIPT_PARSE_SYSTEM = `You read printed receipt and ticket photos from Spain, Europe, and elsewhere. Text may be Spanish or English. Copy every readable business name, date, and money amount into JSON. Photos may be blurry, angled, or on pink/thermal paper — still try hard.
 
@@ -1518,6 +1658,9 @@ CRITICAL — amounts (European style):
 
 Vendor:
 - Copy the shop / issuer name from the header (Factura, NIF block, or letterhead). Partial names are OK. Use "" only if truly unreadable.
+- If the brand is clearly Mercadona (any casing), set vendor exactly to: Mercadona S.A.
+- If the brand is clearly Es Cuco / Super Es Cuco / Es Cuco Carns (carnicería chain), set vendor exactly to: Es Cuco
+- If the brand is clearly La Portenia / La Porteña (carnes), set vendor exactly to: La Portenia
 
 Date (critical — read ONLY what is printed on the paper):
 - Do NOT use today's date, do NOT use the phone/camera/gallery file date, do NOT guess a year. Copy the date from the receipt text only.
@@ -1581,6 +1724,42 @@ async function runGoogleGeminiReceiptOcr(
       systemPrompt,
       userPrompt,
     );
+  }
+}
+
+/** When both Claude and Gemini are configured: order follows ENV.ocrGeminiFirstWhenBoth (default Claude first). */
+async function runDualProviderImageReceiptOcr(
+  normalized: string,
+  mimeType: string,
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<string> {
+  const geminiFirst = ENV.ocrGeminiFirstWhenBoth;
+  const runGemini = () =>
+    runGoogleGeminiReceiptOcr(normalized, mimeType, systemPrompt, userPrompt);
+  const runClaude = () =>
+    parseReceiptWithClaude(normalized, mimeType, systemPrompt, userPrompt);
+
+  if (geminiFirst) {
+    try {
+      return await runGemini();
+    } catch (geminiErr) {
+      console.warn(
+        "[OCR] Gemini failed; trying Anthropic Claude:",
+        geminiErr instanceof Error ? geminiErr.message : geminiErr,
+      );
+      return await runClaude();
+    }
+  }
+
+  try {
+    return await runClaude();
+  } catch (claudeErr) {
+    console.warn(
+      "[OCR] Claude failed; trying Google Gemini:",
+      claudeErr instanceof Error ? claudeErr.message : claudeErr,
+    );
+    return await runGemini();
   }
 }
 
@@ -1920,7 +2099,8 @@ export const appRouter = router({
 
         try {
           const useClaude = Boolean(ENV.anthropicApiKey?.trim());
-          const useGeminiGoogle = Boolean(ENV.googleGeminiApiKey?.trim());
+          const useGeminiGoogle =
+            Boolean(ENV.googleGeminiApiKey?.trim()) && !ENV.ocrSkipGemini;
           const useForge = Boolean(ENV.forgeApiKey?.trim());
           if (!useClaude && !useGeminiGoogle && !useForge) {
             throw new TRPCError({
@@ -1936,40 +2116,32 @@ export const appRouter = router({
 
           let text: string;
           if (useGeminiGoogle && useClaude) {
-            try {
-              text = await runGoogleGeminiReceiptOcr(
+            text = await withRetryReceiptOcr("dual-provider", () =>
+              runDualProviderImageReceiptOcr(
                 normalized,
                 mimeType,
                 RECEIPT_PARSE_SYSTEM,
                 RECEIPT_PARSE_USER,
-              );
-              console.log("[OCR] Primary: Google Gemini (both API keys set — avoids Claude 'Could not process image' on picky photos)");
-            } catch (geminiErr) {
-              console.warn(
-                "[OCR] Gemini failed; trying Anthropic Claude:",
-                geminiErr instanceof Error ? geminiErr.message : geminiErr,
-              );
-              text = await parseReceiptWithClaude(
-                normalized,
-                mimeType,
-                RECEIPT_PARSE_SYSTEM,
-                RECEIPT_PARSE_USER,
-              );
-            }
+              ),
+            );
           } else if (useGeminiGoogle) {
-            text = await runGoogleGeminiReceiptOcr(
-              normalized,
-              mimeType,
-              RECEIPT_PARSE_SYSTEM,
-              RECEIPT_PARSE_USER,
+            text = await withRetryReceiptOcr("gemini-only", () =>
+              runGoogleGeminiReceiptOcr(
+                normalized,
+                mimeType,
+                RECEIPT_PARSE_SYSTEM,
+                RECEIPT_PARSE_USER,
+              ),
             );
             console.log("[OCR] Using Google Gemini API only (no Anthropic key)");
           } else if (useClaude) {
-            text = await parseReceiptWithClaude(
-              normalized,
-              mimeType,
-              RECEIPT_PARSE_SYSTEM,
-              RECEIPT_PARSE_USER,
+            text = await withRetryReceiptOcr("claude-only", () =>
+              parseReceiptWithClaude(
+                normalized,
+                mimeType,
+                RECEIPT_PARSE_SYSTEM,
+                RECEIPT_PARSE_USER,
+              ),
             );
           } else {
             // Forge often rejects huge inline base64 in JSON. Prefer a short HTTPS URL after temp upload.
@@ -2078,9 +2250,12 @@ export const appRouter = router({
           if (err instanceof TRPCError) throw err;
           console.error("[OCR] Parse error:", err);
           const msg = err instanceof Error ? err.message : String(err);
+          const userMsg = receiptOcrFailureUserMessage(msg);
+          const code =
+            /429|quota|free_tier|RESOURCE_EXHAUSTED/i.test(msg) ? "TOO_MANY_REQUESTS" : "INTERNAL_SERVER_ERROR";
           throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: `Receipt recognition failed: ${msg}`,
+            code: code as "INTERNAL_SERVER_ERROR" | "TOO_MANY_REQUESTS",
+            message: userMsg,
             cause: err,
           });
         }
@@ -2276,8 +2451,16 @@ export const appRouter = router({
                     const mimeType = info.mimeType || detectMimeFromImageBase64(b64);
                     let ocrText = "";
                     const useClaude = Boolean(ENV.anthropicApiKey?.trim());
-                    const useGeminiGoogle = Boolean(ENV.googleGeminiApiKey?.trim());
-                    if (useGeminiGoogle) {
+                    const useGeminiGoogle =
+                      Boolean(ENV.googleGeminiApiKey?.trim()) && !ENV.ocrSkipGemini;
+                    if (useGeminiGoogle && useClaude) {
+                      ocrText = await runDualProviderImageReceiptOcr(
+                        b64,
+                        mimeType,
+                        RECEIPT_PARSE_SYSTEM,
+                        RECEIPT_PARSE_USER,
+                      );
+                    } else if (useGeminiGoogle) {
                       try {
                         ocrText = await runGoogleGeminiReceiptOcr(
                           b64,
@@ -2287,18 +2470,10 @@ export const appRouter = router({
                         );
                       } catch (geminiImageErr) {
                         console.warn(
-                          "[Email Parse] Gemini image OCR failed, trying Claude / skipping image:",
+                          "[Email Parse] Gemini image OCR failed (no Anthropic key):",
                           info.filename,
                           geminiImageErr instanceof Error ? geminiImageErr.message : geminiImageErr,
                         );
-                        if (useClaude) {
-                          ocrText = await parseReceiptWithClaude(
-                            b64,
-                            mimeType,
-                            RECEIPT_PARSE_SYSTEM,
-                            RECEIPT_PARSE_USER,
-                          );
-                        }
                       }
                     } else if (useClaude) {
                       ocrText = await parseReceiptWithClaude(
@@ -2360,7 +2535,8 @@ export const appRouter = router({
                 }
                 const minPdfTextChars = 72;
                 const maxPdfBytesForGemini = 20 * 1024 * 1024;
-                let allowGeminiPdf = Boolean(ENV.googleGeminiApiKey?.trim());
+                let allowGeminiPdf =
+                  Boolean(ENV.googleGeminiApiKey?.trim()) && !ENV.ocrSkipGemini;
 
                 for (const info of pdfAttachments.slice(0, maxPdfExtract)) {
                   let pdfBuf: Buffer | null = null;
@@ -2492,9 +2668,17 @@ export const appRouter = router({
                       } else if (fallbackAtt.mime.startsWith("image/")) {
                         const b64 = fallbackAtt.buffer.toString("base64");
                         const useClaude = Boolean(ENV.anthropicApiKey?.trim());
-                        const useGeminiGoogle = Boolean(ENV.googleGeminiApiKey?.trim());
+                        const useGeminiGoogle =
+                          Boolean(ENV.googleGeminiApiKey?.trim()) && !ENV.ocrSkipGemini;
                         let ocrText = "";
-                        if (useGeminiGoogle) {
+                        if (useGeminiGoogle && useClaude) {
+                          ocrText = await runDualProviderImageReceiptOcr(
+                            b64,
+                            fallbackAtt.mime,
+                            RECEIPT_PARSE_SYSTEM,
+                            RECEIPT_PARSE_USER,
+                          );
+                        } else if (useGeminiGoogle) {
                           try {
                             ocrText = await runGoogleGeminiReceiptOcr(
                               b64,
@@ -2504,14 +2688,6 @@ export const appRouter = router({
                             );
                           } catch (fallbackImgErr) {
                             console.warn("[Email Parse] Fallback image OCR failed:", fallbackImgErr);
-                            if (useClaude) {
-                              ocrText = await parseReceiptWithClaude(
-                                b64,
-                                fallbackAtt.mime,
-                                RECEIPT_PARSE_SYSTEM,
-                                RECEIPT_PARSE_USER,
-                              );
-                            }
                           }
                         } else if (useClaude) {
                           ocrText = await parseReceiptWithClaude(
@@ -2776,6 +2952,17 @@ export const appRouter = router({
       )
       .mutation(async ({ input }) => {
         const { spreadsheetId, sheetName, rows, skipDuplicateCheck, publicApiBaseUrl } = input;
+
+        for (const r of rows) {
+          if (isInvoiceNumberBlockedFromSheetsExport(String(r.invoiceNumber ?? ""))) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "This invoice number cannot be sent to Google Sheets (blocked: company-internal number B56819451 or configured blocklist). Correct the invoice # and export again.",
+            });
+          }
+        }
+
         const receiptPublicBase = resolvePublicBaseForReceiptImages(publicApiBaseUrl);
         // If Deploy logs never show this line, the server is still running an old bundle (Forge export).
         console.log("[Export] image_pipeline=receipt-plain-url-v1");
@@ -2789,11 +2976,26 @@ export const appRouter = router({
         // First, ensure header row exists
         // ✅ Column order (English labels for Sheets): Source, Invoice#, Vendor, Date, Total, VAT, Base, Tip, ...
         const headerValues = [
-          ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Receipt", "Exported At"],
+          [
+            "Source",
+            "Invoice #",
+            "Vendor",
+            "Date",
+            "Total (€)",
+            "VAT (€)",
+            "Base (€)",
+            "Tip (€)",
+            "Category",
+            "Currency",
+            "Notes",
+            "Receipt",
+            "Exported At",
+            "Meat line items (JSON)",
+          ],
         ];
 
         // Check if sheet exists and has headers
-        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:M1")}`;
+        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:N1")}`;
         const checkRes = await fetch(checkUrl, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -2805,7 +3007,20 @@ export const appRouter = router({
           if (!checkData.values || checkData.values.length === 0) {
             // Add headers
             await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:M1")}?valueInputOption=RAW`,
+              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:N1")}?valueInputOption=RAW`,
+              {
+                method: "PUT",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${accessToken}`,
+                },
+                body: JSON.stringify({ values: headerValues }),
+              }
+            );
+          } else if ((checkData.values[0]?.length ?? 0) < 14) {
+            // Migrate 13-column tracker → add "Meat line items (JSON)" so new rows align.
+            await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:N1")}?valueInputOption=RAW`,
               {
                 method: "PUT",
                 headers: {
@@ -3145,6 +3360,10 @@ export const appRouter = router({
               receiptImageMissing = true;
             }
 
+            const meatJson = serializeMeatLineItemsForSheetsCell(r.category, r.items);
+            const meatCell =
+              meatJson.length > 50_000 ? "" : clampStringForSheetsCell(meatJson, "Meat line items (JSON)");
+
             return [
               r.source?.toLowerCase() === "camera" ? "Camera" : "Email", // A - Source
               clampStringForSheetsCell(r.invoiceNumber, "Invoice #"),
@@ -3159,11 +3378,12 @@ export const appRouter = router({
               clampStringForSheetsCell(r.notes ?? "", "Notes"),
               clampStringForSheetsCell(imageColumnValue, "Receipt"),
               clampStringForSheetsCell(now, "Exported At"),
+              meatCell,
             ];
           })
         );
 
-        const range = `${sheetName}!A:M`;
+        const range = `${sheetName}!A:N`;
         const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
         let appendRes: Response | null = null;
         let appendErrText = "";
@@ -3309,7 +3529,7 @@ export const appRouter = router({
                         sheetId: trackerSheetId,
                         startRowIndex: 1,
                         startColumnIndex: 0,
-                        endColumnIndex: 13,
+                        endColumnIndex: TRACKER_COLUMN_COUNT,
                       },
                       sortSpecs: [
                         {
@@ -3341,10 +3561,16 @@ export const appRouter = router({
           }
         }
 
+        const skippedDupes = duplicateSummary.skippedCount ?? 0;
+        const message =
+          skippedDupes > 0 && newRows.length > 0
+            ? `Added ${newRows.length} row(s); ${skippedDupes} duplicate(s) skipped (already in Sheets).`
+            : "Invoice exported successfully";
+
         return {
           success: true,
           rowsAdded: newRows.length,
-          message: "Invoice exported successfully",
+          message,
           /** True if the client sent image data but storage upload failed so the sheet row has no image URL */
           receiptImageMissing,
           duplicateSummary,
@@ -3390,6 +3616,39 @@ export const appRouter = router({
         return {
           success: true,
           message: "Sheets automation completed successfully",
+        };
+      }),
+
+    /**
+     * Rebuild only Meat_Line_Items / Meat_Orders / Meat_Cut_Summary / Meat_Monthly_Summary from the
+     * current main tracker. Uses column N JSON and the same merge rules as full automation (no OCR).
+     */
+    rebuildMeatSheetsFromMainTracker: publicProcedure
+      .input(
+        z.object({
+          spreadsheetId: z.string(),
+          sheetName: z.string().default(DEFAULT_MAIN_TRACKER_SHEET_NAME),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const accessToken = await getGoogleAccessToken();
+        const invoiceData = await buildAutomationInvoiceDataFromMainTracker(
+          input.spreadsheetId,
+          input.sheetName,
+          accessToken,
+          [],
+        );
+        const { updateMeatSheets, buildMeatLineItems } = await import("./sheets-automation-vendor-aggregated");
+        await updateMeatSheets(accessToken, input.spreadsheetId, invoiceData);
+        const meatLines = buildMeatLineItems(invoiceData);
+        return {
+          success: true,
+          trackerInvoiceCount: invoiceData.length,
+          meatLineItemCount: meatLines.length,
+          message:
+            meatLines.length === 0
+              ? "No meat line items found. Add valid JSON to column N (Meat line items) for butcher rows, or re-export from the app with line items."
+              : `Meat sheets updated: ${meatLines.length} line item row(s) from ${invoiceData.length} tracker row(s).`,
         };
       }),
 
@@ -3765,7 +4024,7 @@ export const appRouter = router({
         const TRACKER = "2026 Invoice tracker";
 
         // Read all rows to find the matching row
-        const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(TRACKER + "!A:M")}`;
+        const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(TRACKER + "!A:N")}`;
         const readRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
         if (!readRes.ok) throw new Error(`Read failed: ${await readRes.text()}`);
         const readData = await readRes.json() as { values?: string[][] };
@@ -3835,7 +4094,7 @@ export const appRouter = router({
         const TRACKER = "2026 Invoice tracker";
 
         // Read all rows to find the matching row
-        const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(TRACKER + "!A:M")}`;
+        const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(TRACKER + "!A:N")}`;
         const readRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
         if (!readRes.ok) throw new Error(`Read failed: ${await readRes.text()}`);
         const readData = await readRes.json() as { values?: string[][] };
@@ -3843,14 +4102,21 @@ export const appRouter = router({
 
         let foundRowIndex = -1;
         let existingImageUrl = "";
+        let existingMeatJson = "";
         for (let i = 1; i < rows.length; i++) {
           const rowInvNum = rows[i][1]?.trim() ?? "";
           const rowVendor  = rows[i][2]?.trim() ?? "";
           if (originalInvoiceNumber?.trim() && rowInvNum && rowInvNum === originalInvoiceNumber.trim()) {
-            foundRowIndex = i + 1; existingImageUrl = rows[i][11] ?? ""; break;
+            foundRowIndex = i + 1;
+            existingImageUrl = rows[i][11] ?? "";
+            existingMeatJson = rows[i][13] != null && rows[i][13] !== "" ? String(rows[i][13]) : "";
+            break;
           }
           if (!originalInvoiceNumber?.trim() && rowVendor.toLowerCase() === originalVendor.toLowerCase()) {
-            foundRowIndex = i + 1; existingImageUrl = rows[i][11] ?? ""; break;
+            foundRowIndex = i + 1;
+            existingImageUrl = rows[i][11] ?? "";
+            existingMeatJson = rows[i][13] != null && rows[i][13] !== "" ? String(rows[i][13]) : "";
+            break;
           }
         }
         if (foundRowIndex === -1) return { success: false, message: "Row not found" };
@@ -3875,9 +4141,10 @@ export const appRouter = router({
           data.notes ?? "",
           existingImageUrl,
           new Date().toISOString(),
+          existingMeatJson,
         ];
 
-        const range = `${TRACKER}!A${foundRowIndex}:M${foundRowIndex}`;
+        const range = `${TRACKER}!A${foundRowIndex}:N${foundRowIndex}`;
         const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
         const updateRes = await fetch(updateUrl, {
           method: "PUT",
@@ -3917,7 +4184,7 @@ export const appRouter = router({
         if (sheetNames.includes(mainSheetName)) {
           await sheets.spreadsheets.values.clear({
             spreadsheetId,
-            range: `'${mainSheetName}'!A2:M`,
+            range: `'${mainSheetName}'!A2:N`,
             auth,
           });
           console.log(`Cleared main sheet: ${mainSheetName}`);

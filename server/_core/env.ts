@@ -59,6 +59,11 @@ function resolveForgeApiKey(): string {
   );
 }
 
+function parseEnvBool(v: string | undefined): boolean {
+  const s = (v ?? "").trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes";
+}
+
 /** True when Forge storage env vars are set (may still fail at runtime if invalid). */
 export function isForgeStorageConfigured(): boolean {
   return Boolean(resolveForgeApiUrl()) && Boolean(resolveForgeApiKey());
@@ -82,4 +87,15 @@ export const ENV = {
   googleGeminiApiKey: process.env.GOOGLE_GEMINI_API_KEY ?? process.env.GEMINI_API_KEY ?? "",
   /** e.g. gemini-2.0-flash (1.5 names often 404 on current v1beta) */
   googleGeminiModel: process.env.GOOGLE_GEMINI_MODEL ?? "gemini-2.0-flash",
+  /**
+   * When true, skip Google Gemini for receipt/image OCR and scanned-PDF Gemini path even if the key is set.
+   * Set `OCR_SKIP_GEMINI=1` to test Claude-only or reduce Gemini 429 noise without deleting the key.
+   */
+  ocrSkipGemini: parseEnvBool(process.env.OCR_SKIP_GEMINI),
+  /**
+   * When both Anthropic and Gemini keys are set: try Gemini before Claude (legacy).
+   * Default false → Claude first (fewer Gemini free-tier 429s; Anthropic 529 still falls back to Gemini).
+   * Set OCR_GEMINI_FIRST=1 to restore Gemini-first for picky photos.
+   */
+  ocrGeminiFirstWhenBoth: parseEnvBool(process.env.OCR_GEMINI_FIRST),
 };

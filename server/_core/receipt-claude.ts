@@ -182,6 +182,24 @@ async function shrinkImageForClaudeIfNeeded(
   return { data: last.toString("base64"), mediaType: "image/jpeg" };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Anthropic 529 overloaded, rate limits, and short gateway blips — safe to retry. */
+function isClaudeTransientApiError(e: unknown): boolean {
+  const status =
+    typeof e === "object" &&
+    e !== null &&
+    "status" in e &&
+    typeof (e as { status: unknown }).status === "number"
+      ? (e as { status: number }).status
+      : undefined;
+  if (status === 529 || status === 503 || status === 502 || status === 429) return true;
+  const msg = e instanceof Error ? e.message : String(e);
+  return /overloaded|529|rate[_\s-]?limit|temporar|unavailable|503|502/i.test(msg);
+}
+
 /**
  * Read receipt image with Claude vision. Returns raw assistant text (should be JSON).
  */
@@ -200,40 +218,59 @@ export async function parseReceiptWithClaude(
   const model = ENV.anthropicReceiptModel?.trim() || "claude-sonnet-4-20250514";
   const { data: imageData, mediaType } = await shrinkImageForClaudeIfNeeded(normalizedBase64, mimeType);
 
-  const msg = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    system: systemPrompt,
-    messages: [
-      {
-        role: "user",
-        content: [
+  const backoffMs = [800, 2000, 4500];
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= backoffMs.length; attempt++) {
+    try {
+      const msg = await client.messages.create({
+        model,
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: [
           {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: mediaType,
-              data: imageData,
-            },
-          },
-          {
-            type: "text",
-            text: userPrompt,
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: mediaType,
+                  data: imageData,
+                },
+              },
+              {
+                type: "text",
+                text: userPrompt,
+              },
+            ],
           },
         ],
-      },
-    ],
-  });
+      });
 
-  const parts: string[] = [];
-  for (const block of msg.content) {
-    if (block.type === "text") {
-      parts.push(block.text);
+      const parts: string[] = [];
+      for (const block of msg.content) {
+        if (block.type === "text") {
+          parts.push(block.text);
+        }
+      }
+      const text = parts.join("").trim();
+      if (!text) {
+        throw new Error("Claude returned an empty response for this image.");
+      }
+      return text;
+    } catch (e) {
+      lastErr = e;
+      const wait = backoffMs[attempt];
+      if (wait !== undefined && isClaudeTransientApiError(e)) {
+        console.warn(
+          `[OCR] Claude transient error, retry ${attempt + 1}/${backoffMs.length + 1} after ${wait}ms:`,
+          e instanceof Error ? e.message : e,
+        );
+        await sleep(wait);
+        continue;
+      }
+      throw e;
     }
   }
-  const text = parts.join("").trim();
-  if (!text) {
-    throw new Error("Claude returned an empty response for this image.");
-  }
-  return text;
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }

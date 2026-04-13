@@ -638,12 +638,14 @@ export default function GmailScreen() {
 
   useEffect(() => {
     if (isLoggedIn && accessToken) {
-      const key = `${accessToken.trim()}|${gmailPreparingLabel.trim().toLowerCase()}`;
+      // Include Complete label in the key so a refetch runs after settings hydrate or when
+      // the user saves label names — otherwise the first fetch could omit `-label:"Complete"`.
+      const key = `${accessToken.trim()}|${gmailPreparingLabel.trim().toLowerCase()}|${gmailCompleteLabel.trim().toLowerCase()}`;
       if (lastAutoFetchKeyRef.current === key) return;
       lastAutoFetchKeyRef.current = key;
       void fetchEmails(accessToken);
     }
-  }, [isLoggedIn, accessToken, gmailPreparingLabel, fetchEmails]);
+  }, [isLoggedIn, accessToken, gmailPreparingLabel, gmailCompleteLabel, fetchEmails]);
 
   const handleParse = useCallback(
     async (email: EmailMessage) => {
@@ -809,7 +811,13 @@ export default function GmailScreen() {
           }
         }
 
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        if (exportOutcome === "failed") {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        } else if (exportOutcome === "duplicate" && autoExportEnabled) {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        } else {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
         setEmails((prev) => prev.filter((e) => e.id !== email.id));
 
         if (opts?.quiet) {

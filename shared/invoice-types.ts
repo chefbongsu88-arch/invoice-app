@@ -1,10 +1,18 @@
 export type InvoiceSource = "camera" | "email";
 
-/** Line-item rows (e.g. Meat_Monthly) are only used when the category is meat. */
+/** UI / prompts: treat row as meat when the user (or model) set category to Meat. */
 export function isMeatCategory(
   category: InvoiceCategory | string | undefined | null,
 ): boolean {
   return String(category ?? "").trim().toLowerCase() === "meat";
+}
+
+/**
+ * Meat line-item sheets (N column JSON, Meat_Line_Items, etc.) use this instead of category alone,
+ * so La Portenia / Es Cuco rows still aggregate when the model mislabels category (e.g. Restaurant).
+ */
+export function hasMeatLineItems(items: unknown): boolean {
+  return Array.isArray(items) && items.length > 0;
 }
 
 export type InvoiceCategory =

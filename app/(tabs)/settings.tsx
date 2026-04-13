@@ -1,6 +1,7 @@
 import { useEffect, useState, type ComponentProps } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
+  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -152,6 +153,7 @@ export default function SettingsScreen() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const { reload: reloadInvoices } = useInvoices();
   const resetAllDataMutation = trpc.invoices.resetAllData.useMutation();
+  const rebuildMeatSheetsMutation = trpc.invoices.rebuildMeatSheetsFromMainTracker.useMutation();
 
   useEffect(() => {
     AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
@@ -164,6 +166,38 @@ export default function SettingsScreen() {
     setSettings(updated);
     applyApiUrlFromAppSettings(updated);
     requestTrpcClientRecreate();
+  };
+
+  const handleRebuildMeatSheets = () => {
+    const spreadsheetId = settings.spreadsheetId?.trim();
+    if (!spreadsheetId) {
+      Alert.alert("Spreadsheet ID missing", "Set your Spreadsheet ID under Google Sheets Configuration first.");
+      return;
+    }
+    Alert.alert(
+      "Rebuild meat sheets?",
+      "Reads the main tracker tab and refreshes Meat_Line_Items, Meat_Orders, Meat_Cut_Summary, and Meat_Monthly_Summary. Line items come from column N (JSON) when present. Monthly and quarterly tabs are not changed.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Rebuild",
+          onPress: async () => {
+            try {
+              const r = await rebuildMeatSheetsMutation.mutateAsync({
+                spreadsheetId,
+                sheetName: settings.sheetName?.trim() || DEFAULT_MAIN_TRACKER_SHEET_NAME,
+              });
+              Alert.alert(
+                r.meatLineItemCount > 0 ? "Meat sheets updated" : "No line items",
+                `${r.message}\n\nTracker rows read: ${r.trackerInvoiceCount}.`,
+              );
+            } catch (err) {
+              Alert.alert("Error", err instanceof Error ? err.message : String(err));
+            }
+          },
+        },
+      ],
+    );
   };
 
   const handleClearCache = async () => {
@@ -327,6 +361,36 @@ export default function SettingsScreen() {
                 </Text>
                 <Text style={[styles.maintenanceSecondarySubtext, { color: colors.muted }]}>
                   Remove this device&apos;s invoice cache only
+                </Text>
+              </View>
+            </Pressable>
+
+            <Pressable
+              onPress={handleRebuildMeatSheets}
+              disabled={rebuildMeatSheetsMutation.isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Rebuild meat sheets from main tracker"
+              style={({ pressed }) => [
+                styles.maintenanceSecondaryBtn,
+                {
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
+                  opacity: rebuildMeatSheetsMutation.isPending ? 0.55 : 1,
+                },
+                pressed && !rebuildMeatSheetsMutation.isPending && { opacity: 0.92, transform: [{ scale: 0.985 }] },
+              ]}
+            >
+              {rebuildMeatSheetsMutation.isPending ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <IconSymbol name="arrow.triangle.2.circlepath" size={15} color={colors.primary} />
+              )}
+              <View style={styles.maintenanceButtonTextWrap}>
+                <Text style={[styles.maintenanceSecondaryBtnText, { color: colors.foreground }]}>
+                  Rebuild meat sheets from tracker
+                </Text>
+                <Text style={[styles.maintenanceSecondarySubtext, { color: colors.muted }]}>
+                  Uses column N JSON on the main tab; does not run OCR on receipt links
                 </Text>
               </View>
             </Pressable>

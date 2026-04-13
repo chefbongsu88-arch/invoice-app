@@ -1,4 +1,4 @@
-import { isMeatCategory } from "../shared/invoice-types";
+import { hasMeatLineItems } from "../shared/invoice-types";
 import { receiptSheetsReceiptUrlCell } from "../shared/sheets-defaults";
 import {
   applyBoldTextFormatToGridRange,
@@ -20,29 +20,76 @@ export interface SheetAutomationConfig {
   invoiceData?: any[];
 }
 
+const MONTH_LONG = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+] as const;
+
 /**
- * Get month name from date string (supports DD/MM/YYYY, YYYY-MM-DD formats)
+ * Google Sheets date serial → ISO YYYY-MM-DD (UTC calendar day).
+ * Same origin as Sheets: 1899-12-30 + whole days.
+ */
+export function googleSheetsSerialToIsoYmd(serial: number): string | null {
+  if (!Number.isFinite(serial)) return null;
+  const whole = Math.floor(Math.abs(serial));
+  if (whole < 20000 || whole > 120000) return null;
+  const MS_PER_DAY = 86400000;
+  const epoch = Date.UTC(1899, 11, 30);
+  const d = new Date(epoch + whole * MS_PER_DAY);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getUTCFullYear();
+  if (y < 1990 || y > 2050) return null;
+  return `${y}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Normalize main-tracker column D when automation reads `valueRenderOption=FORMULA`:
+ * `=DATE(…)`, DD/MM/YYYY text, ISO, or numeric serial (Sheets often returns serial for date cells).
+ */
+export function parseMainTrackerDateCellToIso(val: unknown): string {
+  if (val === null || val === undefined || val === "") return "";
+  if (typeof val === "number" && Number.isFinite(val)) {
+    return googleSheetsSerialToIsoYmd(val) ?? "";
+  }
+  const s = String(val).replace(/^'+|'+$/g, "").trim();
+  if (!s) return "";
+  const formula = s.match(/^=DATE\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\)$/i);
+  if (formula) {
+    return `${formula[1]}-${formula[2].padStart(2, "0")}-${formula[3].padStart(2, "0")}`;
+  }
+  const numericOnly = /^-?\d+\.?\d*$/.test(s);
+  if (numericOnly) {
+    const iso = googleSheetsSerialToIsoYmd(Number(s));
+    if (iso) return iso;
+  }
+  const mEu = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mEu) return `${mEu[3]}-${mEu[2].padStart(2, "0")}-${mEu[1].padStart(2, "0")}`;
+  const isoHead = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoHead) return `${isoHead[1]}-${isoHead[2]}-${isoHead[3]}`;
+  return s;
+}
+
+/**
+ * Get month name from date string (supports DD/MM/YYYY, YYYY-MM-DD, =DATE(), Sheets serial)
  */
 function getMonthFromDate(dateStr: string): string | null {
-  if (!dateStr) return null;
-  const s = String(dateStr).trim().replace(/^'+/, "");
-  const months = ["January","February","March","April","May","June",
-                  "July","August","September","October","November","December"];
-
-  // DD/MM/YYYY — group 1=day, group 2=month, group 3=year
-  const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m1) {
-    const monthIndex = parseInt(m1[2], 10) - 1;
-    return months[monthIndex] || null;
-  }
-
-  // YYYY-MM-DD
-  const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m2) return months[parseInt(m2[2], 10) - 1] || null;
-
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return months[d.getMonth()] || null;
-  return null;
+  const iso = parseMainTrackerDateCellToIso(String(dateStr ?? ""));
+  if (!iso) return null;
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const monthIndex = parseInt(m[2], 10) - 1;
+  if (monthIndex < 0 || monthIndex > 11) return null;
+  return MONTH_LONG[monthIndex];
 }
 
 /**
@@ -50,28 +97,18 @@ function getMonthFromDate(dateStr: string): string | null {
  */
 function getQuarterFromDate(dateStr: string): string {
   try {
-    let date: Date;
-    const cleanStr = String(dateStr).trim().replace(/^'+/, "");
-    
-    // Try DD/MM/YYYY format first
-    const ddmmyyyyMatch = cleanStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (ddmmyyyyMatch) {
-      const day = parseInt(ddmmyyyyMatch[1], 10);
-      const month = parseInt(ddmmyyyyMatch[2], 10) - 1; // 0-indexed
-      const year = parseInt(ddmmyyyyMatch[3], 10);
-      date = new Date(year, month, day);
-    }
-    // YYYY-MM-DD — use local y/m/d (avoid new Date(iso) UTC vs local month shift)
-    else if (/^(\d{4})-(\d{2})-(\d{2})$/.test(cleanStr)) {
-      const m = cleanStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const iso = parseMainTrackerDateCellToIso(String(dateStr ?? "").trim());
+    if (iso) {
+      const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
       if (m) {
-        date = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
-      } else {
-        return "";
+        const month = parseInt(m[2], 10);
+        return `Q${Math.ceil(month / 3)}`;
       }
     }
+    let date: Date;
+    const cleanStr = String(dateStr).trim().replace(/^'+/, "");
     // Try "2026. 3. 25" format
-    else if (cleanStr.includes(".")) {
+    if (cleanStr.includes(".")) {
       const parts = cleanStr.replace(/\./g, "").split(/\s+/);
       if (parts.length >= 3) {
         date = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
@@ -81,8 +118,9 @@ function getQuarterFromDate(dateStr: string): string {
     } else {
       date = new Date(cleanStr);
     }
-    
+
     const month = date.getMonth() + 1;
+    if (Number.isNaN(date.getTime())) return "";
     const quarter = Math.ceil(month / 3);
     return `Q${quarter}`;
   } catch {
@@ -252,14 +290,9 @@ async function createMonthlySheets(
     }
   }
 
-  const activeMonths = months.filter((month) => invoicesByMonth[month].length > 0);
-  if (activeMonths.length === 0) {
-    console.log("ℹ️  No monthly invoice groups to update");
-    return;
-  }
-
-  // Create/update only months that actually contain invoices.
-  for (const month of activeMonths) {
+  // Always refresh every month tab (header + TOTAL row). Previously only `activeMonths` were
+  // updated, so November/December often kept an old layout or missed the TOTAL row when empty.
+  for (const month of months) {
     const monthInvoices = invoicesByMonth[month];
     const aggregated = aggregateByVendor(monthInvoices);
 
@@ -382,14 +415,8 @@ async function createQuarterlySheets(
     }
   }
 
-  const activeQuarters = quarters.filter((quarter) => invoicesByQuarter[quarter].length > 0);
-  if (activeQuarters.length === 0) {
-    console.log("ℹ️  No quarterly invoice groups to update");
-    return;
-  }
-
-  // Create/update only quarters that actually contain invoices.
-  for (const quarter of activeQuarters) {
+  // Always refresh all quarter tabs so Q4 (Oct–Dec) gets the same header + TOTAL template even when empty.
+  for (const quarter of quarters) {
     const quarterInvoices = invoicesByQuarter[quarter];
     const aggregated = aggregateByVendor(quarterInvoices);
 
@@ -480,16 +507,51 @@ async function createQuarterlySheets(
 
 const MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
+/** Column N on main tracker: JSON array of { partName, quantity, unit, pricePerUnit, total }. */
+export function parseTrackerMeatItemsJsonCell(val: unknown):
+  | Array<{ partName: string; quantity: number; unit: string; pricePerUnit: number; total: number }>
+  | undefined {
+  if (val === null || val === undefined) return undefined;
+  const s = String(val).trim();
+  if (!s || s === "FALSE" || s === "TRUE") return undefined;
+  if (!s.startsWith("[")) return undefined;
+  try {
+    const arr = JSON.parse(s) as unknown[];
+    if (!Array.isArray(arr) || arr.length === 0) return undefined;
+    const out: Array<{ partName: string; quantity: number; unit: string; pricePerUnit: number; total: number }> = [];
+    for (const el of arr) {
+      if (!el || typeof el !== "object") continue;
+      const o = el as Record<string, unknown>;
+      const partName = String(o.partName ?? "").trim();
+      const quantity = Number(o.quantity);
+      const unit = String(o.unit ?? "kg").trim() || "kg";
+      const pricePerUnit = Number(o.pricePerUnit);
+      const total = Number(o.total);
+      if (!partName || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(total) || total <= 0) {
+        continue;
+      }
+      const pp = Number.isFinite(pricePerUnit) && pricePerUnit > 0 ? pricePerUnit : total / quantity;
+      out.push({
+        partName,
+        quantity: Math.round(quantity * 1000) / 1000,
+        unit,
+        pricePerUnit: Math.round(pp * 100) / 100,
+        total: Math.round(total * 100) / 100,
+      });
+    }
+    return out.length > 0 ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function getMonthIndexFromDate(dateStr: string): number {
-  if (!dateStr) return -1;
-  const s = String(dateStr).trim().replace(/^'+|'+$/g, "");
-  const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m1) return parseInt(m1[2], 10) - 1;
-  const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m2) return parseInt(m2[2], 10) - 1;
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return d.getMonth();
-  return -1;
+  const iso = parseMainTrackerDateCellToIso(String(dateStr ?? ""));
+  if (!iso) return -1;
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return -1;
+  const idx = parseInt(m[2], 10) - 1;
+  return idx >= 0 && idx <= 11 ? idx : -1;
 }
 
 function normalizeMeatVendorName(vendor: string): string {
@@ -513,10 +575,10 @@ type MeatItemRow = {
   source: string;
 };
 
-function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
+export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
   const rows: MeatItemRow[] = [];
   for (const inv of invoices) {
-    if (!isMeatCategory(inv.category) || !Array.isArray(inv.items) || inv.items.length === 0) {
+    if (!hasMeatLineItems(inv.items)) {
       continue;
     }
     const vendor = normalizeMeatVendorName(inv.vendor);
@@ -571,7 +633,10 @@ function buildMeatOrdersRows(items: MeatItemRow[]): any[][] {
     if (item.invoiceNumber) entry.invoiceNumbers.add(item.invoiceNumber);
   }
   return Array.from(byMonthVendor.values())
-    .sort((a, b) => a.month.localeCompare(b.month) || a.vendor.localeCompare(b.vendor))
+    .sort(
+      (a, b) =>
+        MONTH_ABBR.indexOf(a.month) - MONTH_ABBR.indexOf(b.month) || a.vendor.localeCompare(b.vendor),
+    )
     .map((entry) => [
       entry.month,
       entry.vendor,
@@ -598,7 +663,10 @@ function buildMeatCutSummaryRows(items: MeatItemRow[]): any[][] {
     entry.totalEur += item.totalEur;
   }
   return Array.from(byMonthCut.values())
-    .sort((a, b) => a.month.localeCompare(b.month) || a.cutName.localeCompare(b.cutName))
+    .sort(
+      (a, b) =>
+        MONTH_ABBR.indexOf(a.month) - MONTH_ABBR.indexOf(b.month) || a.cutName.localeCompare(b.cutName),
+    )
     .map((entry) => [
       entry.month,
       entry.cutName,
@@ -740,10 +808,7 @@ export async function updateMeatSheets(
 /**
  * Main automation function
  */
-export async function automateGoogleSheets(
-  config: SheetAutomationConfig,
-  ignoredVendors?: string[]
-): Promise<void> {
+export async function automateGoogleSheets(config: SheetAutomationConfig): Promise<void> {
   if (!config.invoiceData || config.invoiceData.length === 0) {
     console.log("⚠️  No invoice data provided for automation");
     return;

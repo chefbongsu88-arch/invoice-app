@@ -50,7 +50,11 @@ export async function parseReceiptWithGoogleGemini(
 
   const raw = await res.text();
   if (!res.ok) {
-    console.error("[OCR] Google Gemini API error:", res.status, raw.slice(0, 500));
+    if (res.status === 429) {
+      console.warn("[OCR] Google Gemini: 429 quota/rate limit (Claude fallback or billing).");
+    } else {
+      console.error("[OCR] Google Gemini API error:", res.status, raw.slice(0, 400));
+    }
     throw new Error(`Google Gemini API failed (${res.status}): ${raw.slice(0, 200)}`);
   }
 
@@ -121,7 +125,11 @@ export async function parseInvoicePdfWithGoogleGemini(
 
   const raw = await res.text();
   if (!res.ok) {
-    console.error("[Email Parse] Gemini PDF error:", res.status, raw.slice(0, 500));
+    if (res.status === 429) {
+      console.warn("[Email Parse] Google Gemini PDF: 429 quota/rate limit.");
+    } else {
+      console.error("[Email Parse] Gemini PDF error:", res.status, raw.slice(0, 400));
+    }
     throw new Error(`Google Gemini PDF failed (${res.status}): ${raw.slice(0, 200)}`);
   }
 

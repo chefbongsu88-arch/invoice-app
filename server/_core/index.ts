@@ -147,11 +147,16 @@ async function startServer() {
   server.listen(port, listenHost, () => {
     console.log(`[api] server listening on ${listenHost}:${port}`);
     console.log(
-      `[boot] Receipt OCR keys: ANTHROPIC_API_KEY=${ENV.anthropicApiKey?.trim() ? "set" : "MISSING"} | GOOGLE_GEMINI_API_KEY=${ENV.googleGeminiApiKey?.trim() ? "set" : "MISSING"} | BUILT_IN_FORGE_API_KEY=${ENV.forgeApiKey?.trim() ? "set" : "MISSING"}`,
+      `[boot] Receipt OCR keys: ANTHROPIC_API_KEY=${ENV.anthropicApiKey?.trim() ? "set" : "MISSING"} | GOOGLE_GEMINI_API_KEY=${ENV.googleGeminiApiKey?.trim() ? "set" : "MISSING"} | BUILT_IN_FORGE_API_KEY=${ENV.forgeApiKey?.trim() ? "set" : "MISSING"} | OCR_SKIP_GEMINI=${ENV.ocrSkipGemini ? "on" : "off"} | OCR_GEMINI_FIRST=${ENV.ocrGeminiFirstWhenBoth ? "on" : "off"}`,
     );
-    console.log(
-      "[boot] Receipt OCR order: Gemini first when both keys → else Claude / Gemini-only / Forge.",
-    );
+    const ocrOrderHint = ENV.ocrSkipGemini
+      ? "[boot] Receipt OCR: OCR_SKIP_GEMINI=on — no Gemini for receipt/image/scanned-PDF (Claude / Forge only)."
+      : ENV.googleGeminiApiKey?.trim() && ENV.anthropicApiKey?.trim()
+        ? ENV.ocrGeminiFirstWhenBoth
+          ? "[boot] Receipt OCR: both keys — Gemini first (OCR_GEMINI_FIRST=1); Claude on failure."
+          : "[boot] Receipt OCR: both keys — Claude first (default, fewer Gemini 429s); Gemini on failure. Set OCR_GEMINI_FIRST=1 to prefer Gemini."
+        : "[boot] Receipt OCR: Claude-only, Gemini-only, or Forge — see keys above.";
+    console.log(ocrOrderHint);
     const pub = getPublicServerBaseUrl();
     console.log(
       `[boot] Receipt =IMAGE base URL: ${pub || "NOT SET — set PUBLIC_SERVER_URL=https://<your-app-host> (Railway: RAILWAY_PUBLIC_DOMAIN often works)"}`,
