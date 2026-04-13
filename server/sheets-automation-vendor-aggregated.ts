@@ -1,7 +1,8 @@
-import { hasMeatLineItems } from "../shared/invoice-types";
+import { hasMeatLineItems, isMeatLotOrigenTraceabilityLine } from "../shared/invoice-types";
 import { receiptSheetsReceiptUrlCell } from "../shared/sheets-defaults";
 import {
   applyBoldTextFormatToGridRange,
+  applyDateDisplayFormatDdMmYyyy,
   applyThinTextFormatToGridRange,
   encodeValuesRange,
   ensureSheetExists,
@@ -77,6 +78,22 @@ export function parseMainTrackerDateCellToIso(val: unknown): string {
   const isoHead = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (isoHead) return `${isoHead[1]}-${isoHead[2]}-${isoHead[3]}`;
   return s;
+}
+
+/**
+ * Same storage as main tracker column D (`=DATE(y,m,d)`), from any value parseMainTrackerDateCellToIso accepts.
+ * Keeps monthly / quarterly / meat Date columns aligned with the main sheet display and sorting.
+ */
+export function trackerDateToSheetsDateCell(raw: unknown): string {
+  const iso = parseMainTrackerDateCellToIso(raw);
+  if (!iso) return String(raw ?? "").trim();
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return iso;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (y < 1990 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return iso;
+  return `=DATE(${y},${mo},${d})`;
 }
 
 /**
@@ -217,6 +234,7 @@ function aggregateByVendor(invoices: any[]) {
     if (v._mergeCount > 1) {
       v.invoiceNumber = "";
     }
+    v.date = parseMainTrackerDateCellToIso(v.date) || String(v.date ?? "").trim();
     delete v._mergeCount;
   }
 
@@ -327,7 +345,7 @@ async function createMonthlySheets(
         vendor.source?.toLowerCase() === "camera" ? "Camera" : "Email", // A: Source
         vendor.invoiceNumber,    // B: Invoice #
         vendor.vendor,           // C: Vendor
-        vendor.date,             // D: Date
+        trackerDateToSheetsDateCell(vendor.date), // D: Date (=DATE like main tracker)
         vendor.totalAmount,      // E: Total (€) - as number, not string!
         vendor.ivaAmount,        // F: VAT (€) - as number, not string!
         vendor.baseAmount,       // G: Base (€) - as number, not string!
@@ -371,6 +389,12 @@ async function createMonthlySheets(
           endRowIndex: sheetRows.length,
           startColumnIndex: 0,
           endColumnIndex: TRACKER_COLUMN_COUNT,
+        });
+        await applyDateDisplayFormatDdMmYyyy(spreadsheetId, accessToken, monthSheetId, {
+          startRowIndex: 2,
+          endRowIndex: sheetRows.length,
+          startColumnIndex: 3,
+          endColumnIndex: 4,
         });
       }
     }
@@ -451,7 +475,7 @@ async function createQuarterlySheets(
         vendor.source?.toLowerCase() === "camera" ? "Camera" : "Email", // A: Source
         vendor.invoiceNumber,    // B: Invoice #
         vendor.vendor,           // C: Vendor
-        vendor.date,             // D: Date
+        trackerDateToSheetsDateCell(vendor.date), // D: Date (=DATE like main tracker)
         vendor.totalAmount,      // E: Total (€) - as number, not string!
         vendor.ivaAmount,        // F: VAT (€) - as number, not string!
         vendor.baseAmount,       // G: Base (€) - as number, not string!
@@ -496,6 +520,12 @@ async function createQuarterlySheets(
           startColumnIndex: 0,
           endColumnIndex: TRACKER_COLUMN_COUNT,
         });
+        await applyDateDisplayFormatDdMmYyyy(spreadsheetId, accessToken, quarterSheetId, {
+          startRowIndex: 2,
+          endRowIndex: sheetRows.length,
+          startColumnIndex: 3,
+          endColumnIndex: 4,
+        });
       }
     }
 
@@ -523,6 +553,7 @@ export function parseTrackerMeatItemsJsonCell(val: unknown):
       if (!el || typeof el !== "object") continue;
       const o = el as Record<string, unknown>;
       const partName = String(o.partName ?? "").trim();
+      if (isMeatLotOrigenTraceabilityLine(partName)) continue;
       const quantity = Number(o.quantity);
       const unit = String(o.unit ?? "kg").trim() || "kg";
       const pricePerUnit = Number(o.pricePerUnit);
@@ -587,6 +618,7 @@ export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
     const month = MONTH_ABBR[monthIndex];
     for (const item of inv.items) {
       const cutName = normalizeMeatCutName(item?.partName);
+      if (isMeatLotOrigenTraceabilityLine(cutName)) continue;
       const quantityKg = parseAmount(item?.quantity);
       const pricePerKg = parseAmount(item?.pricePerUnit);
       const totalEur = parseAmount(item?.total);
@@ -785,7 +817,7 @@ export async function updateMeatSheets(
   }
   const lineItemRows = meatItems.map((item) => [
     item.month,
-    item.date,
+    trackerDateToSheetsDateCell(item.date),
     item.vendor,
     item.invoiceNumber,
     item.cutName,
@@ -795,6 +827,15 @@ export async function updateMeatSheets(
     item.source,
   ]);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Line_Items", lineItemHeader, lineItemRows);
+  const meatLineItemsSheetId = await getSheetIdByTitle(spreadsheetId, "Meat_Line_Items", accessToken);
+  if (meatLineItemsSheetId != null && lineItemRows.length > 0) {
+    await applyDateDisplayFormatDdMmYyyy(spreadsheetId, accessToken, meatLineItemsSheetId, {
+      startRowIndex: 1,
+      endRowIndex: lineItemRows.length + 1,
+      startColumnIndex: 1,
+      endColumnIndex: 2,
+    });
+  }
   const ordersRows = buildMeatOrdersRows(meatItems);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Orders", ordersHeader, ordersRows);
   const cutSummaryRows = buildMeatCutSummaryRows(meatItems);

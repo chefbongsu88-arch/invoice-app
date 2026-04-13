@@ -41,7 +41,11 @@ import {
   parseTrackerMeatItemsJsonCell,
 } from "./sheets-automation-vendor-aggregated";
 import { isInvoiceNumberBlockedFromSheetsExport } from "../shared/blocked-invoice-export";
-import { hasMeatLineItems } from "../shared/invoice-types";
+import {
+  hasMeatLineItems,
+  isMeatCategory,
+  isMeatLotOrigenTraceabilityLine,
+} from "../shared/invoice-types";
 import { canonicalVendorDisplayName } from "../shared/vendor-canonical";
 import {
   detectMimeFromBuffer,
@@ -967,6 +971,7 @@ function normalizeParsedMeatItems(raw: unknown): {
         "",
     ).trim();
     if (!partName) continue;
+    if (isMeatLotOrigenTraceabilityLine(partName)) continue;
 
     const rawUnit = String(row.unit ?? row.uom ?? row.measure ?? "kg").trim().toLowerCase();
     let quantity = parseMoneyNumber(
@@ -1698,6 +1703,7 @@ Use "Meat" for butchers, carnicería, deli, embutidos, charcutería, names conta
 Use "Restaurant" for bars, cafés, menús.
 
 items: [{partName, quantity, unit:"kg", pricePerUnit, total}] ONLY when category is "Meat" AND the ticket shows weighted line items (carnicería / butcher style); for supermarkets with vegetables, fish, or mixed groceries use []. Otherwise [].
+- Never put traceability-only rows in items: lines whose text is mainly "LOTE: …", "Nº lote", "ORIGEN: …", "País de origen", or "TRAZABILIDAD" (often printed under the real cut with IMPORTE 0 or no weight) are not products — omit them entirely. Only real cuts (CHULETÓN, TAPA DE VACUNO, etc.) with real kg and line totals belong in items.
 
 Numbers in JSON must be JSON numbers for totalAmount, ivaAmount, tipAmount (not strings). Output ONLY the JSON object, no markdown.`;
 
@@ -1805,6 +1811,7 @@ For Meat invoices:
 - If the attachment or email clearly shows butcher / meat line items, return those items.
 - Include only actual meat cuts or weighted meat line items.
 - Do not include packaging, sauces, drinks, vegetables, fish, or other non-meat products.
+- Omit traceability-only lines (e.g. Spanish albarán "LOTE: … ORIGEN: ESPAÑA", "Nº lote", "País de origen", "TRAZABILIDAD") — they are not billable items even if OCR shows a quantity column.
 - If line items are not clear, return [].
 
 Return only the JSON, no markdown, no explanation.`;
@@ -3216,6 +3223,46 @@ export const appRouter = router({
         });
 
         if (newRows.length === 0) {
+          /**
+           * Receipt detail uses automateSheets: true. When the main row is skipped as duplicate,
+           * we still need tracker automation so meat tabs merge `items` from this request (column N
+           * on the existing row is often empty). Gmail defers automation client-side; export path
+           * must run it here when automateSheets is on.
+           */
+          if (
+            input.automateSheets &&
+            rows.length > 0 &&
+            rows.some(
+              (r) =>
+                hasMeatLineItems(r.items) || isMeatCategory(String(r.category ?? "").trim()),
+            )
+          ) {
+            try {
+              const recentRowsWithItems = rows.map((r) => ({
+                invoiceNumber: String(r.invoiceNumber ?? "").trim(),
+                vendor: String(r.vendor ?? "").trim(),
+                date: String(r.date ?? "").trim(),
+                items: Array.isArray(r.items)
+                  ? (r.items as Array<{
+                      partName: string;
+                      quantity: number;
+                      unit: string;
+                      pricePerUnit: number;
+                      total: number;
+                    }>)
+                  : undefined,
+              }));
+              await runTrackerSheetsAutomation(
+                spreadsheetId,
+                sheetName,
+                accessToken,
+                recentRowsWithItems,
+              );
+              console.log("[Export] Tracker automation after duplicate-only export (meat / monthly sync).");
+            } catch (error) {
+              console.error("[Export] Automation after duplicate-only export failed:", error);
+            }
+          }
           return {
             success: true,
             rowsAdded: 0,

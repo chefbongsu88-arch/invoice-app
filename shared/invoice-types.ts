@@ -15,6 +15,24 @@ export function hasMeatLineItems(items: unknown): boolean {
   return Array.isArray(items) && items.length > 0;
 }
 
+/**
+ * Spanish albaranes (e.g. Es Cuco) print traceability rows under cuts:
+ * "LOTE: 05 EAPV ORIGEN: ESPAÑA" — not a product line; models often duplicate or split amounts onto them.
+ */
+export function isMeatLotOrigenTraceabilityLine(description: string): boolean {
+  const s = String(description ?? "").trim().replace(/\s+/g, " ");
+  if (!s) return false;
+  const lower = s.toLowerCase();
+  if (/\bLOTE\s*:/i.test(s)) return true;
+  if (/\bN[ºo°]?\s*\.?\s*lote\b/i.test(s)) return true;
+  if (/\bnum(?:ero)?\.?\s*lote\b/i.test(lower)) return true;
+  if (/^\s*origen\s*:/i.test(s)) return true;
+  if (/\bpa[ií]s\s+de\s+origen\s*:/i.test(s)) return true;
+  if (/\btrazabilidad\b/i.test(lower)) return true;
+  if (/\blot\s*(?:no\.?|#)?\s*:/i.test(s)) return true;
+  return false;
+}
+
 export type InvoiceCategory =
   | "Meat"
   | "Seafood"

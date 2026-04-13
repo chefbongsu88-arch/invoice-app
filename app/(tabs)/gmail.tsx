@@ -25,6 +25,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
 import type { Invoice, InvoiceCategory, MeatItem } from "@/shared/invoice-types";
+import { hasMeatLineItems, isMeatCategory } from "@/shared/invoice-types";
 import { trpc } from "@/lib/trpc";
 import { getApiBaseUrl } from "@/constants/oauth";
 import { PRODUCTION_API_ORIGIN } from "@/constants/receipt-api-origin";
@@ -762,7 +763,13 @@ export default function GmailScreen() {
               // Avoid hitting Sheets write quota on each single-email export.
               automateSheets: false,
             });
-            if (result.rowsAdded > 0) {
+            const dupSkipped = (result.duplicateSummary?.skippedCount ?? 0) > 0;
+            const hadDuplicateOnly = result.rowsAdded === 0 && dupSkipped;
+            /** Main row skipped as duplicate — meat tabs still need recentRows merge (column N may be empty on Sheets). */
+            const scheduleMeatMergeAfterDuplicate =
+              hadDuplicateOnly &&
+              (hasMeatLineItems(invoice.items) || isMeatCategory(invoice.category));
+            if (result.rowsAdded > 0 || scheduleMeatMergeAfterDuplicate) {
               const existingTarget = pendingAutomationTargetRef.current;
               if (
                 !existingTarget ||
@@ -861,7 +868,9 @@ export default function GmailScreen() {
         } else if (exportOutcome === "duplicate") {
           Alert.alert(
             "Saved",
-            `${invoice.vendor}: saved to Receipts. A matching row was already in Sheets — marked as exported.`,
+            hasMeatLineItems(invoice.items) || isMeatCategory(invoice.category)
+              ? `${invoice.vendor}: saved to Receipts. The main tracker already had this invoice # — no new row added. Meat / monthly tabs will refresh shortly with line items from this save.`
+              : `${invoice.vendor}: saved to Receipts. A matching row was already in Sheets — marked as exported.`,
           );
         } else if (relabelAttempted && relabelFailed) {
           Alert.alert(

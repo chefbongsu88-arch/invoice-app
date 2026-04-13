@@ -230,6 +230,51 @@ export async function applyBoldTextFormatToGridRange(
   }
 }
 
+/** Same display as main tracker date column: dd/mm/yyyy (values are usually =DATE(…) formulas). */
+export async function applyDateDisplayFormatDdMmYyyy(
+  spreadsheetId: string,
+  accessToken: string,
+  sheetId: number,
+  range: {
+    startRowIndex: number;
+    endRowIndex: number;
+    startColumnIndex: number;
+    endColumnIndex: number;
+  },
+): Promise<void> {
+  const batchRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        requests: [
+          {
+            repeatCell: {
+              range: { sheetId, ...range },
+              cell: {
+                userEnteredFormat: {
+                  numberFormat: {
+                    type: "DATE",
+                    pattern: "dd/mm/yyyy",
+                  },
+                },
+              },
+              fields: "userEnteredFormat.numberFormat",
+            },
+          },
+        ],
+      }),
+    },
+  );
+  if (!batchRes.ok) {
+    console.warn("[Sheets] applyDateDisplayFormatDdMmYyyy failed:", await batchRes.text());
+  }
+}
+
 /** True when batchUpdate addSheet failed because a tab with that title already exists (any locale). */
 export function isSheetsDuplicateTabError(body: string): boolean {
   return (
