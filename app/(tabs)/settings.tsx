@@ -161,6 +161,7 @@ export default function SettingsScreen() {
   const { reload: reloadInvoices } = useInvoices();
   const resetAllDataMutation = trpc.invoices.resetAllData.useMutation();
   const rebuildMeatSheetsMutation = trpc.invoices.rebuildMeatSheetsFromMainTracker.useMutation();
+  const runSheetsAutomationMutation = trpc.invoices.runSheetsAutomation.useMutation();
 
   useEffect(() => {
     AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
@@ -200,6 +201,36 @@ export default function SettingsScreen() {
               );
             } catch (err) {
               Alert.alert("Error", err instanceof Error ? err.message : String(err));
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleSyncDerivedSheetsFromMain = () => {
+    const spreadsheetId = settings.spreadsheetId?.trim();
+    if (!spreadsheetId) {
+      Alert.alert("Spreadsheet ID missing", "Set your Spreadsheet ID under Google Sheets Configuration first.");
+      return;
+    }
+    Alert.alert(
+      "Sync derived sheets from main tracker?",
+      "Rebuilds monthly tabs, quarterly tabs, and meat summaries from whatever is on the main tracker tab now (including rows you edited by hand in Google Sheets). Uses many Sheets API writes; if Google returns a rate limit, wait a minute and try again.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Sync now",
+          onPress: async () => {
+            try {
+              await runSheetsAutomationMutation.mutateAsync({
+                spreadsheetId,
+                sheetName: settings.sheetName?.trim() || DEFAULT_MAIN_TRACKER_SHEET_NAME,
+                recentRows: [],
+              });
+              Alert.alert("Done", "Monthly, quarterly, and meat tabs were refreshed from the main sheet.");
+            } catch (err) {
+              Alert.alert("Sync failed", err instanceof Error ? err.message : String(err));
             }
           },
         },
@@ -446,8 +477,41 @@ export default function SettingsScreen() {
             </Pressable>
 
             <Pressable
+              onPress={handleSyncDerivedSheetsFromMain}
+              disabled={runSheetsAutomationMutation.isPending || rebuildMeatSheetsMutation.isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Sync monthly quarterly and meat sheets from main tracker"
+              style={({ pressed }) => [
+                styles.maintenanceSecondaryBtn,
+                {
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
+                  opacity:
+                    runSheetsAutomationMutation.isPending || rebuildMeatSheetsMutation.isPending ? 0.55 : 1,
+                },
+                pressed &&
+                  !runSheetsAutomationMutation.isPending &&
+                  !rebuildMeatSheetsMutation.isPending && { opacity: 0.92, transform: [{ scale: 0.985 }] },
+              ]}
+            >
+              {runSheetsAutomationMutation.isPending ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <IconSymbol name="tablecells" size={15} color={colors.primary} />
+              )}
+              <View style={styles.maintenanceButtonTextWrap}>
+                <Text style={[styles.maintenanceSecondaryBtnText, { color: colors.foreground }]}>
+                  Sync month, quarter & meat from tracker
+                </Text>
+                <Text style={[styles.maintenanceSecondarySubtext, { color: colors.muted }]}>
+                  Full rebuild from the main tab (same pipeline as after export). Use “Rebuild meat” below for meat only.
+                </Text>
+              </View>
+            </Pressable>
+
+            <Pressable
               onPress={handleRebuildMeatSheets}
-              disabled={rebuildMeatSheetsMutation.isPending}
+              disabled={rebuildMeatSheetsMutation.isPending || runSheetsAutomationMutation.isPending}
               accessibilityRole="button"
               accessibilityLabel="Rebuild meat sheets from main tracker"
               style={({ pressed }) => [
@@ -455,9 +519,12 @@ export default function SettingsScreen() {
                 {
                   backgroundColor: colors.background,
                   borderColor: colors.border,
-                  opacity: rebuildMeatSheetsMutation.isPending ? 0.55 : 1,
+                  opacity:
+                    rebuildMeatSheetsMutation.isPending || runSheetsAutomationMutation.isPending ? 0.55 : 1,
                 },
-                pressed && !rebuildMeatSheetsMutation.isPending && { opacity: 0.92, transform: [{ scale: 0.985 }] },
+                pressed &&
+                  !rebuildMeatSheetsMutation.isPending &&
+                  !runSheetsAutomationMutation.isPending && { opacity: 0.92, transform: [{ scale: 0.985 }] },
               ]}
             >
               {rebuildMeatSheetsMutation.isPending ? (

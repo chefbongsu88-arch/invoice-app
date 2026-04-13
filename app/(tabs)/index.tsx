@@ -386,7 +386,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexShrink: 0,
   },
-  recentBody: invoiceListBody,
   recentBody: {
     ...invoiceListBody,
     flexDirection: "row",
