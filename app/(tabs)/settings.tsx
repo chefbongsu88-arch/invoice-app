@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,6 +22,10 @@ import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
 
 const SETTINGS_KEY = "app_settings_v1";
+
+const HIDE_RESET_ALL_DATA =
+  process.env.EXPO_PUBLIC_HIDE_RESET_ALL_DATA === "1" ||
+  process.env.EXPO_PUBLIC_HIDE_RESET_ALL_DATA === "true";
 
 interface AppSettings {
   spreadsheetId: string;
@@ -151,6 +156,8 @@ function EditableField({
 export default function SettingsScreen() {
   const colors = useColors();
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetPasswordInput, setResetPasswordInput] = useState("");
   const { reload: reloadInvoices } = useInvoices();
   const resetAllDataMutation = trpc.invoices.resetAllData.useMutation();
   const rebuildMeatSheetsMutation = trpc.invoices.rebuildMeatSheetsFromMainTracker.useMutation();
@@ -200,6 +207,27 @@ export default function SettingsScreen() {
     );
   };
 
+  const runResetAllData = async () => {
+    const spreadsheetId = settings.spreadsheetId || "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
+    try {
+      await resetAllDataMutation.mutateAsync({
+        spreadsheetId,
+        resetPassword: resetPasswordInput.trim(),
+      });
+      await clearLocalInvoiceStorage();
+      await reloadInvoices();
+      setResetModalOpen(false);
+      setResetPasswordInput("");
+      Alert.alert(
+        "Done",
+        "Check Google Sheets (data rows gone, headers kept) and the Receipts tab (empty).",
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Alert.alert("Error", msg);
+    }
+  };
+
   const handleClearCache = async () => {
     Alert.alert(
       "Clear Local Cache",
@@ -225,6 +253,65 @@ export default function SettingsScreen() {
 
   return (
     <ScreenContainer containerClassName="bg-background">
+      <Modal
+        visible={resetModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => {
+          setResetModalOpen(false);
+          setResetPasswordInput("");
+        }}
+      >
+        <View style={styles.resetModalBackdrop}>
+          <View style={[styles.resetModalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.resetModalTitle, { color: colors.foreground }]}>Reset all data</Text>
+            <Text style={[styles.resetModalBody, { color: colors.muted }]}>
+              Clears Google Sheets (main, monthly, quarterly, meat tabs — headers stay) and removes every receipt from this device. This cannot be undone.
+            </Text>
+            <Text style={[styles.resetModalLabel, { color: colors.foreground }]}>Reset password</Text>
+            <Text style={[styles.resetModalHint, { color: colors.muted }]}>
+              If your administrator set a password on the server, enter it here. Otherwise leave blank.
+            </Text>
+            <TextInput
+              style={[
+                styles.resetModalInput,
+                { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background },
+              ]}
+              value={resetPasswordInput}
+              onChangeText={setResetPasswordInput}
+              placeholder="Optional unless required by server"
+              placeholderTextColor={colors.muted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!resetAllDataMutation.isPending}
+            />
+            <View style={styles.resetModalActions}>
+              <Pressable
+                onPress={() => {
+                  setResetModalOpen(false);
+                  setResetPasswordInput("");
+                }}
+                disabled={resetAllDataMutation.isPending}
+                style={[styles.resetModalBtn, { borderColor: colors.border }]}
+              >
+                <Text style={[styles.resetModalBtnText, { color: colors.muted }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void runResetAllData()}
+                disabled={resetAllDataMutation.isPending}
+                style={[styles.resetModalBtn, styles.resetModalBtnDanger]}
+              >
+                {resetAllDataMutation.isPending ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={[styles.resetModalBtnText, { color: "#fff" }]}>Erase everything</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={[styles.title, { color: colors.foreground }]}>Settings</Text>
 
@@ -296,30 +383,18 @@ export default function SettingsScreen() {
         <SectionHeader title="Testing & Maintenance" />
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.maintenanceButtonsWrap}>
+            {!HIDE_RESET_ALL_DATA && (
             <Pressable
               onPress={() => {
                 Alert.alert(
                   "Reset All Data",
-                  "This will:\n• Clear Google Sheets (main, monthly, quarterly, Meat tabs). Row 1 headers stay.\n• Remove every invoice from this device’s Receipts list.\n\nAre you sure?",
+                  "This will:\n• Clear Google Sheets (main, monthly, quarterly, Meat tabs). Row 1 headers stay.\n• Remove every invoice from this device’s Receipts list.\n\nYou will be asked for the reset password next (if your server requires one).",
                   [
                     { text: "Cancel", style: "cancel" },
                     {
-                      text: "Reset",
+                      text: "Continue",
                       style: "destructive",
-                      onPress: async () => {
-                        const spreadsheetId = settings.spreadsheetId || "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
-                        try {
-                          await resetAllDataMutation.mutateAsync({ spreadsheetId });
-                          await clearLocalInvoiceStorage();
-                          await reloadInvoices();
-                          Alert.alert(
-                            "Done",
-                            "Check Google Sheets (data rows gone, headers kept) and the Receipts tab (empty).",
-                          );
-                        } catch (err) {
-                          Alert.alert("Error", "Reset failed: " + String(err));
-                        }
-                      },
+                      onPress: () => setResetModalOpen(true),
                     },
                   ]
                 );
@@ -340,6 +415,7 @@ export default function SettingsScreen() {
                 </Text>
               </View>
             </Pressable>
+            )}
 
             <Pressable
               onPress={handleClearCache}
@@ -573,4 +649,42 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     fontWeight: "600",
   },
+  resetModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "center",
+    padding: 24,
+  },
+  resetModalCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 20,
+    gap: 10,
+    maxWidth: 400,
+    width: "100%",
+    alignSelf: "center",
+  },
+  resetModalTitle: { fontSize: 18, fontWeight: "800" },
+  resetModalBody: { fontSize: 13, lineHeight: 19, fontWeight: "500" },
+  resetModalLabel: { fontSize: 13, fontWeight: "700", marginTop: 4 },
+  resetModalHint: { fontSize: 11, lineHeight: 16, marginTop: -4 },
+  resetModalInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    fontSize: 15,
+  },
+  resetModalActions: { flexDirection: "row", gap: 10, marginTop: 8, justifyContent: "flex-end" },
+  resetModalBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 10,
+    borderWidth: 1,
+    minWidth: 108,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  resetModalBtnDanger: { backgroundColor: "#DC2626", borderColor: "#DC2626" },
+  resetModalBtnText: { fontSize: 14, fontWeight: "700" },
 });

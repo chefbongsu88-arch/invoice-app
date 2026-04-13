@@ -496,17 +496,8 @@ export default function ScanScreen() {
           <View style={styles.captureContainer}>
             <Text style={[styles.captureTitle, { color: colors.foreground }]}>Scan Receipt</Text>
             <Text style={[styles.captureSubtitle, { color: colors.muted }]}>
-              Take a clear photo of your receipt or invoice
+              Add a clear photo — paper receipts work best in good light
             </Text>
-
-            <View style={[styles.captureArea, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-              <View style={[styles.captureIcon, { backgroundColor: colors.camera + "15" }]}>
-                <IconSymbol name="camera.fill" size={48} color={colors.camera} />
-              </View>
-              <Text style={[styles.captureHint, { color: colors.muted }]}>
-                Position the receipt clearly in frame for best results
-              </Text>
-            </View>
 
             <View
               style={[
@@ -514,52 +505,57 @@ export default function ScanScreen() {
                 { backgroundColor: tile.bg, borderColor: tile.border },
               ]}
             >
+              <Text style={[styles.captureIntro, { color: colors.muted }]}>
+                Use the camera for a new shot, or Photos if you already saved the receipt.
+              </Text>
               <View style={styles.captureActions}>
                 <Pressable
                   onPress={pickFromCamera}
+                  accessibilityRole="button"
+                  accessibilityLabel="Take a new photo with the camera"
                   style={({ pressed }) => [
                     styles.captureActionBtn,
-                    styles.primaryBtn,
+                    styles.capturePrimaryAction,
                     { backgroundColor: colors.camera },
-                    pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
+                    pressed && { opacity: 0.88, transform: [{ scale: 0.985 }] },
                   ]}
                 >
-                  <View style={[styles.captureActionIcon, { backgroundColor: "#FFFFFF22" }]}>
-                    <IconSymbol name="camera.fill" size={22} color="#FFFFFF" />
+                  <View style={[styles.captureActionIcon, { backgroundColor: "#FFFFFF26" }]}>
+                    <IconSymbol name="camera.fill" size={24} color="#FFFFFF" />
                   </View>
                   <View style={styles.captureActionText}>
-                    <Text style={[styles.primaryBtnText, styles.primaryBtnLabel, { color: "#FFFFFF" }]}>
-                      Open Camera
+                    <Text style={[styles.capturePrimaryTitle, { color: "#FFFFFF" }]}>Take photo</Text>
+                    <Text style={[styles.capturePrimarySub, { color: "#FFFFFFCC" }]}>
+                      Opens your camera — hold the receipt flat and fill the frame
                     </Text>
-                    <Text style={styles.captureActionSubtleText}>Take photo</Text>
                   </View>
+                  <IconSymbol name="chevron.right" size={18} color="#FFFFFF99" />
                 </Pressable>
 
                 <Pressable
                   onPress={() => pickFromLibrary()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose an existing image from your photo library"
                   style={({ pressed }) => [
                     styles.captureActionBtn,
-                    styles.secondaryBtn,
+                    styles.captureSecondaryAction,
                     {
-                      borderColor: colors.border + "AA",
-                      backgroundColor: colors.surface + "E6",
+                      borderColor: colors.border,
+                      backgroundColor: colors.surface,
                     },
-                    pressed && { opacity: 0.75 },
+                    pressed && { opacity: 0.82 },
                   ]}
                 >
-                  <View style={[styles.captureActionIcon, { backgroundColor: colors.primary + "18" }]}>
-                    <IconSymbol name="photo.fill" size={22} color={colors.primary} />
+                  <View style={[styles.captureActionIcon, { backgroundColor: colors.primary + "20" }]}>
+                    <IconSymbol name="photo.on.rectangle.angled" size={22} color={colors.primary} />
                   </View>
                   <View style={styles.captureActionText}>
-                    <Text
-                      style={[styles.secondaryBtnText, styles.secondaryBtnLabel, { color: colors.foreground }]}
-                    >
-                      Choose from Library
-                    </Text>
-                    <Text style={[styles.captureActionSubtleText, { color: colors.muted }]}>
-                      Use saved image
+                    <Text style={[styles.captureSecondaryTitle, { color: colors.foreground }]}>Choose from Photos</Text>
+                    <Text style={[styles.captureSecondarySub, { color: colors.muted }]}>
+                      Pick a receipt image you already saved
                     </Text>
                   </View>
+                  <IconSymbol name="chevron.right" size={18} color={colors.muted} />
                 </Pressable>
               </View>
             </View>
@@ -769,32 +765,39 @@ const styles = StyleSheet.create({
   captureContainer: { gap: 16 },
   captureTitle: APP_SCAN_STEP_TITLE,
   captureSubtitle: { fontSize: 14, lineHeight: 20, marginTop: -10 },
-  captureArea: {
-    minHeight: 220,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderStyle: "dashed",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 14,
-    padding: 28,
+  captureIntro: {
+    fontSize: 13,
+    lineHeight: 18,
+    paddingHorizontal: 6,
+    paddingTop: 4,
+    paddingBottom: 12,
   },
-  captureIcon: { width: 96, height: 96, borderRadius: 24, alignItems: "center", justifyContent: "center" },
-  captureHint: { fontSize: 14, textAlign: "center", lineHeight: 20 },
   captureActionsShell: {
     borderRadius: 18,
     borderWidth: 1.5,
-    padding: 10,
+    padding: 12,
     marginTop: 0,
   },
-  captureActions: { gap: 12 },
+  captureActions: { gap: 10 },
   captureActionBtn: {
-    minHeight: 76,
-    justifyContent: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    minHeight: 72,
     borderRadius: 16,
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
+  capturePrimaryAction: {
+    minHeight: 84,
+  },
+  captureSecondaryAction: {
+    borderWidth: 1,
+  },
+  capturePrimaryTitle: { fontSize: 17, fontWeight: "700", letterSpacing: -0.2 },
+  capturePrimarySub: { fontSize: 12, lineHeight: 16, marginTop: 2, fontWeight: "500" },
+  captureSecondaryTitle: { fontSize: 16, fontWeight: "700", letterSpacing: -0.2 },
+  captureSecondarySub: { fontSize: 12, lineHeight: 16, marginTop: 2, fontWeight: "500" },
   captureActionIcon: {
     width: 40,
     height: 40,

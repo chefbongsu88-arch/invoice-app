@@ -1308,6 +1308,15 @@ function normalizeEmailInvoiceModelFields(
       flat.numFactura ??
       flat.num_factura ??
       flat.number ??
+      flat.numeroAlbaran ??
+      flat.numero_albaran ??
+      flat.numAlbaran ??
+      flat.num_albaran ??
+      flat.albaran ??
+      flat.albaranNumber ??
+      flat.albaran_number ??
+      flat.deliveryNoteNumber ??
+      flat.delivery_note_number ??
       "",
   ).trim();
 
@@ -1401,6 +1410,16 @@ function normalizeReceiptParsedFields(raw: Record<string, unknown>): Record<stri
       merged.invoice_number,
       merged.number,
       merged.factura,
+      merged.numeroAlbaran,
+      merged.numero_albaran,
+      merged.numAlbaran,
+      merged.num_albaran,
+      merged.albaran,
+      merged.albaranNumber,
+      merged.albaran_number,
+      merged.albarán,
+      merged.deliveryNoteNumber,
+      merged.delivery_note_number,
     );
     if (v !== undefined) merged.invoiceNumber = v;
   }
@@ -1656,6 +1675,10 @@ CRITICAL — amounts (European style):
 - totalAmount = final amount to pay: look for TOTAL, IMPORTE TOTAL, TOTAL A PAGAR, SUMA, IMPORTE, Factura totals, or the bottom-line payment. NEVER use 0 for totalAmount if any plausible final total appears on the ticket.
 - ivaAmount = VAT: IVA, CUOTA IVA, BASE IMPONIBLE, % IVA lines; use 0 only if no tax amount is visible.
 
+invoiceNumber (document reference):
+- Prefer the printed invoice / factura id when you see labels like Nº Factura, FACTURA, Invoice No., etc.
+- On Spanish delivery notes and supplier tickets, the word ALBARÁN or ALBARAN (delivery note) is common: the document number is often on the same line after ":" or "-" or printed on the line directly below that heading. Use that full reference as invoiceNumber when no separate "Factura" number exists.
+
 Vendor:
 - Copy the shop / issuer name from the header (Factura, NIF block, or letterhead). Partial names are OK. Use "" only if truly unreadable.
 - If the brand is clearly Mercadona (any casing), set vendor exactly to: Mercadona S.A.
@@ -1678,7 +1701,7 @@ items: [{partName, quantity, unit:"kg", pricePerUnit, total}] ONLY when category
 
 Numbers in JSON must be JSON numbers for totalAmount, ivaAmount, tipAmount (not strings). Output ONLY the JSON object, no markdown.`;
 
-const RECEIPT_PARSE_USER = `Read only text visible on this receipt image (totals, tax, vendor header, factura number, printed date). Ignore any idea of "today". Return the JSON object now.`;
+const RECEIPT_PARSE_USER = `Read only text visible on this receipt image (totals, tax, vendor header, factura or ALBARÁN/ALBARAN document number, printed date). Ignore any idea of "today". Return the JSON object now.`;
 
 /** Forge-encode to JPEG, then Gemini; on failure try raw JPEG/PNG or HEIC→JPEG. */
 async function runGoogleGeminiReceiptOcr(
@@ -1766,7 +1789,7 @@ async function runDualProviderImageReceiptOcr(
 const EMAIL_PARSE_PROMPT = `You are an expert at extracting invoice data from email content.
 Analyze the provided email text and extract invoice information.
 Return ONLY a valid JSON object with these exact keys:
-- invoiceNumber: string (invoice/factura number)
+- invoiceNumber: string (invoice/factura number, or ALBARÁN/ALBARAN delivery-note number when that is the only document id)
 - vendor: string (sender company/business name)
 - date: string (ISO format YYYY-MM-DD, European DD/MM/YYYY in source → convert correctly)
 - totalAmount: number (total amount in EUR)
@@ -1776,6 +1799,8 @@ Return ONLY a valid JSON object with these exact keys:
 - subject: string (email subject line)
 - items: array of {partName, quantity, unit:"kg", pricePerUnit, total}
 
+When the PDF or body shows ALBARÁN / ALBARAN (delivery note) and the reference is on the next line or after a colon, use that value as invoiceNumber if no separate factura number exists.
+
 For Meat invoices:
 - If the attachment or email clearly shows butcher / meat line items, return those items.
 - Include only actual meat cuts or weighted meat line items.
@@ -1783,6 +1808,46 @@ For Meat invoices:
 - If line items are not clear, return [].
 
 Return only the JSON, no markdown, no explanation.`;
+
+/**
+ * Spanish B2B PDFs often print ALBARÁN / ALBARAN with the document id on the same line (after ":") or on the following line.
+ */
+function extractDocumentIdNearAlbaranLabel(rawMultiline: string): string {
+  const text = String(rawMultiline ?? "");
+  const flattened = normalizeExtractedInvoiceText(text)
+    .replace(/\r\n|\r|\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const inline = flattened.match(
+    /\bALBAR[AÁ]N\b\s*(?:N[ºo°]?\.?|NUM(?:ERO)?\.?|N[ÚU]M\.?)?\s*[:\s#.-]*\s*([A-Z0-9][A-Z0-9\-_/]{2,})\b/i,
+  );
+  if (inline?.[1]) {
+    const id = cleanParsedInvoiceNumber(inline[1]);
+    if (id) return id;
+  }
+
+  const lines = text.replace(/\r\n|\r/g, "\n").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] ?? "").trim();
+    if (!/^ALBAR[AÁ]N\b/i.test(line)) continue;
+
+    const after = line.replace(/^ALBAR[AÁ]N\b\s*/i, "").trim();
+    if (after) {
+      const id = cleanParsedInvoiceNumber(after.replace(/^[:\s#.-]+/, ""));
+      if (id) return id;
+    }
+
+    for (let k = i + 1; k < Math.min(i + 6, lines.length); k++) {
+      const cand = (lines[k] ?? "").trim();
+      if (!cand) continue;
+      if (!/[0-9]/.test(cand)) break;
+      const id = cleanParsedInvoiceNumber(cand);
+      if (id) return id;
+      break;
+    }
+  }
+  return "";
+}
 
 function fallbackParseEmailInvoiceFromText(
   emailText: string,
@@ -1805,6 +1870,9 @@ function fallbackParseEmailInvoiceFromText(
     .replace(/\s+/g, " ")
     .trim();
   const invMatch =
+    normalized.match(
+      /\bALBAR[AÁ]N\b\s*(?:N[ºo°]?\.?|NUM(?:ERO)?\.?|N[ÚU]M\.?)?\s*[:\s#.-]*\s*([A-Z0-9][A-Z0-9\-_/]{2,})\b/i,
+    ) ??
     normalized.match(
       /\b(?:invoice|factura|n[úu]mero(?:\s*de)?\s*factura|n[úu]m(?:ero)?\.?\s*factura|n[oº°]\s*(?:de\s*)?factura)\s*[:#.]?\s*([A-Z0-9][A-Z0-9\-_/]{2,})/i,
     ) ??
@@ -1935,7 +2003,7 @@ function fallbackParseEmailInvoiceFromText(
       (line, index) =>
         index < 12 &&
         /[A-Za-zÀ-ÿ]/.test(line) &&
-        !/^(?:cliente|company|empresa|factura|invoice|receipt|from:|fecha:?|fra\s+simp:?|le\s+atendi[oó]:?|n\.?i\.?f\.?:?|nombre:?|direcci[oó]n:?|poblaci[oó]n:?|unid\.?|descripci[oó]n|precio|importe|base|% iva|total iva|subtotal|descuento|gratuity|impuesto|\[[^\]]+\])$/i.test(
+        !/^(?:cliente|company|empresa|factura|invoice|receipt|from:|fecha:?|fra\s+simp:?|le\s+atendi[oó]:?|n\.?i\.?f\.?:?|nombre:?|direcci[oó]n:?|poblaci[oó]n:?|unid\.?|descripci[oó]n|precio|importe|base|% iva|total iva|subtotal|descuento|gratuity|impuesto|albar[aá]n|\[[^\]]+\])$/i.test(
           line,
         ) &&
         !/^[^@\s]+@[^@\s]+\.[^@\s]+$/i.test(line) &&
@@ -2029,6 +2097,10 @@ function fallbackParseEmailInvoiceFromText(
     new Date().toISOString().split("T")[0];
 
   let invoiceNumberOut = cleanParsedInvoiceNumber(invMatch?.[1]);
+  if (!invoiceNumberOut) {
+    const fromAlbaran = extractDocumentIdNearAlbaranLabel(rawMultiline);
+    if (fromAlbaran) invoiceNumberOut = fromAlbaran;
+  }
   if (mercadonaInvoiceMatch?.[1]) {
     invoiceNumberOut = cleanParsedInvoiceNumber(mercadonaInvoiceMatch[1]);
   } else if (mercadonaSubjectId?.[1]) {
@@ -4160,9 +4232,21 @@ export const appRouter = router({
       .input(
         z.object({
           spreadsheetId: z.string(),
+          /** When `RESET_ALL_DATA_PASSWORD` is set on the server, must match exactly. */
+          resetPassword: z.string().optional().default(""),
         })
       )
       .mutation(async ({ input }) => {
+        const required = process.env.RESET_ALL_DATA_PASSWORD?.trim() ?? "";
+        if (required) {
+          const got = input.resetPassword?.trim() ?? "";
+          if (got !== required) {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Reset is protected: wrong or missing password.",
+            });
+          }
+        }
         try {
         const { spreadsheetId } = input;
         const accessToken = await getGoogleAccessToken();
