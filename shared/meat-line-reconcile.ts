@@ -21,6 +21,15 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * Spanish albarán “IVA” on a line is often **cuota (€)**, not **tipo (%)** (4 / 10 / 21).
+ * OCR sometimes puts 8.11 (€ tax) into `ivaPercent` — treat non-integer values &lt; 16 as invalid % so we default to 10%.
+ */
+function looksLikeIvaEuroCuotaNotPercent(n: number): boolean {
+  if (!Number.isFinite(n) || n <= 0 || n >= 16) return false;
+  return !Number.isInteger(n);
+}
+
 function parseLineIvaPercent(raw: Record<string, unknown>): number | null {
   const keys = ["ivaPercent", "iva", "lineIvaPercent", "iva_pct", "vatPercent", "vat"];
   for (const k of keys) {
@@ -28,7 +37,10 @@ function parseLineIvaPercent(raw: Record<string, unknown>): number | null {
     if (v === undefined || v === null || String(v).trim() === "") continue;
     const n = parseMoney(v);
     if (!Number.isFinite(n) || n < 0) continue;
-    if (n > 0 && n <= 30) return n;
+    if (n > 0 && n <= 30) {
+      if (looksLikeIvaEuroCuotaNotPercent(n)) continue;
+      return n;
+    }
   }
   return null;
 }

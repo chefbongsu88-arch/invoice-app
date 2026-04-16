@@ -388,6 +388,7 @@ export default function SettingsScreen() {
             ["K", "Notes", "Additional notes"],
             ["L", "Receipt", "Image or PDF link"],
             ["M", "Exported At", "Export timestamp"],
+            ["N", "Meat line items (JSON)", "Optional meat lines"],
           ].map(([col, name, desc]) => (
             <View key={col} style={styles.columnRow}>
               <View style={[styles.columnLetterBox, { backgroundColor: colors.primary }]}>

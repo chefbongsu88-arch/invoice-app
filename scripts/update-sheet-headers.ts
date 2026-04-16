@@ -22,6 +22,25 @@ const SERVICE_ACCOUNT_JSON = "";
 
 // ─── Header definition ───────────────────────────────────────────────────────
 
+/** Main tab A–N (must match server export / Receipt + column N). */
+const MAIN_TRACKER_HEADER = [
+  "Source",
+  "Invoice #",
+  "Vendor",
+  "Date",
+  "Total (€)",
+  "IVA (€)",
+  "Base (€)",
+  "Tip (€)",
+  "Category",
+  "Currency",
+  "Notes",
+  "Receipt",
+  "Exported At",
+  "Meat line items (JSON)",
+];
+
+/** Monthly / quarterly tabs (no column N). */
 const HEADER = [
   "Source",
   "Invoice #",
@@ -37,6 +56,9 @@ const HEADER = [
   "Image URL",
   "Exported At",
 ];
+
+const MAIN_TRACKER_SHEET =
+  process.env.GOOGLE_MAIN_SHEET_NAME ?? "2026 Invoice tracker";
 
 const MONTHLY_SHEETS = [
   "January", "February", "March", "April",
@@ -95,11 +117,25 @@ async function getAccessToken(serviceAccount: any): Promise<string> {
 
 // ─── Sheets helpers ───────────────────────────────────────────────────────────
 
-async function updateSheetHeader(
+function colLetterForLastHeader(len: number): string {
+  if (len <= 0) return "A";
+  let n = len;
+  let s = "";
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+async function updateSheetHeaderRow(
   sheetName: string,
-  accessToken: string
+  accessToken: string,
+  headers: string[],
 ): Promise<void> {
-  const range = encodeURIComponent(`${sheetName}!A1:M1`);
+  const end = colLetterForLastHeader(headers.length);
+  const range = encodeURIComponent(`${sheetName}!A1:${end}1`);
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}?valueInputOption=RAW`;
 
   const res = await fetch(url, {
@@ -108,7 +144,7 @@ async function updateSheetHeader(
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ values: [HEADER] }),
+    body: JSON.stringify({ values: [headers] }),
   });
 
   if (!res.ok) {
@@ -146,18 +182,22 @@ async function main() {
   const accessToken = await getAccessToken(serviceAccount);
   console.log("✅ Access token obtained.\n");
 
-  console.log("📋 Updating monthly sheet headers...");
+  console.log("📋 Updating main tracker header (fixes VAT → IVA, Receipt, column N)...");
+  await updateSheetHeaderRow(MAIN_TRACKER_SHEET, accessToken, MAIN_TRACKER_HEADER);
+
+  console.log("\n📋 Updating monthly sheet headers...");
   for (const sheet of MONTHLY_SHEETS) {
-    await updateSheetHeader(sheet, accessToken);
+    await updateSheetHeaderRow(sheet, accessToken, HEADER);
   }
 
   console.log("\n📋 Updating quarterly sheet headers...");
   for (const sheet of QUARTERLY_SHEETS) {
-    await updateSheetHeader(sheet, accessToken);
+    await updateSheetHeaderRow(sheet, accessToken, HEADER);
   }
 
   console.log("\n✅ All headers updated successfully!");
-  console.log(`   Header: ${HEADER.join(" | ")}`);
+  console.log(`   Main (${MAIN_TRACKER_SHEET}): ${MAIN_TRACKER_HEADER.length} columns`);
+  console.log(`   Month/Q: ${HEADER.join(" | ")}`);
 }
 
 main().catch((err) => {

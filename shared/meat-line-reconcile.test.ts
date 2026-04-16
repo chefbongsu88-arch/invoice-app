@@ -70,6 +70,26 @@ describe("reconcileMeatLineItemsForInvoice", () => {
     expect(out[0]?.pricePerKgExVat).toBe(25.9);
   });
 
+  it("ignores ivaPercent when it is tax € (e.g. 8.11) mistaken for % — uses 10% and gross-up", () => {
+    const raw = [
+      {
+        partName: "Quinta Costilla Angus Nacional MV",
+        quantity: 3.131,
+        unit: "kg",
+        pricePerUnit: 25.9,
+        total: 81.07,
+        ivaPercent: 8.11,
+      },
+    ];
+    const out = reconcileMeatLineItemsForInvoice(raw, {
+      totalAmount: 89.18,
+      vendor: "La Portenia",
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.ivaPercentResolved).toBe(10);
+    expect(out[0]?.total).toBe(89.18);
+  });
+
   it("infers net column N total for single tracked line when it matches gross header × IVA", () => {
     const raw = [
       {

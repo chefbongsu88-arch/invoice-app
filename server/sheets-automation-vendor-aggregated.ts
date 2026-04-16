@@ -686,14 +686,37 @@ type MeatItemRow = {
   invoiceNumber: string;
   cutName: string;
   quantityKg: number;
+  /** Internal only (net vs gross heuristic). Not written as its own column. */
   ivaPercent: number | "";
   pricePerKgExVat: number | "";
   pricePerKgIncVat: number;
+  /** Line gross total (IVA included), same idea as main column E. */
   totalEur: number;
+  /** Line IVA amount (€), same idea as main column F. */
+  ivaAmountEur: number | "";
+  /** Line net / base (€), same idea as main column G. */
+  baseEur: number | "";
   source: string;
   /** True: 줄 합계 ≠ 메인 시트 총액, 또는 kg×€/kg ≠ Importe (수동 확인 권장). */
   highlightWarning: boolean;
 };
+
+function roundMeatMoney(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function lineBaseAndIvaFromGross(
+  gross: number,
+  ivaPct: number | null,
+): { baseEur: number | ""; ivaAmountEur: number | "" } {
+  if (!(gross > 0)) return { baseEur: "", ivaAmountEur: "" };
+  if (ivaPct == null || ivaPct <= 0) {
+    return { baseEur: roundMeatMoney(gross), ivaAmountEur: "" };
+  }
+  const base = roundMeatMoney(gross / (1 + ivaPct / 100));
+  const iva = roundMeatMoney(gross - base);
+  return { baseEur: base, ivaAmountEur: iva };
+}
 
 export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
   const rows: MeatItemRow[] = [];
@@ -726,6 +749,7 @@ export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
       if (!cutName || quantityKg <= 0 || totalEur <= 0) continue;
       const iva = item.ivaPercentResolved;
       const ex = item.pricePerKgExVat;
+      const { baseEur, ivaAmountEur } = lineBaseAndIvaFromGross(totalEur, iva);
       chunk.push({
         month,
         monthIndex,
@@ -738,6 +762,8 @@ export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
         pricePerKgExVat: ex != null ? Math.round(ex * 100) / 100 : "",
         pricePerKgIncVat: Math.round(inc * 100) / 100,
         totalEur: Math.round(totalEur * 100) / 100,
+        ivaAmountEur,
+        baseEur,
         source: String(inv.source ?? "").toLowerCase() === "camera" ? "Camera" : "Email",
         highlightWarning: false,
       });
@@ -904,6 +930,7 @@ export async function updateMeatSheets(
   spreadsheetId: string,
   invoices: any[]
 ): Promise<void> {
+  /** Same euro semantics as main tracker: Total (gross) → IVA (€) → Base (€). */
   const lineItemHeader = [
     "Month",
     "Date",
@@ -911,10 +938,11 @@ export async function updateMeatSheets(
     "Invoice #",
     "Cut Name",
     "Quantity (kg)",
-    "IVA %",
     "€/kg ex IVA (Precio)",
     "€/kg inc IVA (P.V.P.)",
-    "Total (€) (Importe)",
+    "Total (€)",
+    "IVA (€)",
+    "Base (€)",
     "Source",
   ];
   const meatLineColumnCount = lineItemHeader.length;
@@ -946,10 +974,11 @@ export async function updateMeatSheets(
     item.invoiceNumber,
     item.cutName,
     item.quantityKg,
-    item.ivaPercent,
     item.pricePerKgExVat,
     item.pricePerKgIncVat,
     item.totalEur,
+    item.ivaAmountEur,
+    item.baseEur,
     item.source,
   ]);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Line_Items", lineItemHeader, lineItemRows);
