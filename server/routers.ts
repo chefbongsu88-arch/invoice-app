@@ -48,6 +48,7 @@ import {
   shouldIncludeInvoiceInMeatLineSheets,
   shouldTriggerMeatTrackerAutomationMerge,
 } from "../shared/invoice-types";
+import { reconcileMeatLineItemsForInvoice } from "../shared/meat-line-reconcile";
 import { canonicalVendorDisplayName } from "../shared/vendor-canonical";
 import {
   detectMimeFromBuffer,
@@ -1010,6 +1011,37 @@ function normalizeParsedMeatItems(raw: unknown): {
   return out;
 }
 
+function applyMeatLineReconcile(
+  normalized: {
+    partName: string;
+    quantity: number;
+    unit: "kg";
+    pricePerUnit: number;
+    total: number;
+  }[],
+  totalAmount: number,
+  vendorRaw: string,
+): {
+  partName: string;
+  quantity: number;
+  unit: "kg";
+  pricePerUnit: number;
+  total: number;
+}[] {
+  const v =
+    canonicalVendorDisplayName(String(vendorRaw ?? "").trim()) || String(vendorRaw ?? "").trim();
+  return reconcileMeatLineItemsForInvoice(normalized as unknown[], {
+    totalAmount,
+    vendor: v,
+  }).map((x) => ({
+    partName: x.partName,
+    quantity: x.quantity,
+    unit: "kg",
+    pricePerUnit: x.pricePerUnit,
+    total: x.total,
+  }));
+}
+
 function scoreEmailInvoiceCandidate(candidate: Partial<ParsedEmailInvoiceCandidate> | null | undefined): number {
   if (!candidate) return -1;
   let score = 0;
@@ -1096,16 +1128,18 @@ function receiptLikeCandidateFromRawParsed(
   opts: { headerFrom: string; headerDate: string; subject?: string },
 ): ParsedEmailInvoiceCandidate {
   const parsed = normalizeReceiptParsedFields(rawParsed);
+  const vendorOut = canonicalVendorDisplayName(pickBestParsedVendor(parsed.vendor, opts.headerFrom));
+  const totalAmt = parseMoneyNumber(parsed.totalAmount);
   return {
     invoiceNumber: cleanParsedInvoiceNumber(parsed.invoiceNumber),
-    vendor: canonicalVendorDisplayName(pickBestParsedVendor(parsed.vendor, opts.headerFrom)),
+    vendor: vendorOut,
     date: resolveReceiptDateIso(parsed) || dateIsoFromEmailDateHeader(opts.headerDate),
-    totalAmount: parseMoneyNumber(parsed.totalAmount),
+    totalAmount: totalAmt,
     ivaAmount: parseMoneyNumber(parsed.ivaAmount),
     tipAmount: parseMoneyNumber(parsed.tipAmount),
     category: String(parsed.category ?? "Other").trim() || "Other",
     subject: opts.subject ?? "",
-    items: normalizeParsedMeatItems(parsed.items),
+    items: applyMeatLineReconcile(normalizeParsedMeatItems(parsed.items), totalAmt, vendorOut),
   };
 }
 
@@ -1331,6 +1365,7 @@ function normalizeEmailInvoiceModelFields(
 
   const category = String(flat.category ?? "Other").trim() || "Other";
 
+  const vendorCanon = canonicalVendorDisplayName(vendor) || vendor;
   return {
     totalAmount,
     ivaAmount,
@@ -1339,7 +1374,7 @@ function normalizeEmailInvoiceModelFields(
     dateIso,
     invoiceNumber,
     category,
-    items: normalizeParsedMeatItems(flat.items),
+    items: applyMeatLineReconcile(normalizeParsedMeatItems(flat.items), totalAmount, vendorCanon),
   };
 }
 
@@ -2319,15 +2354,19 @@ export const appRouter = router({
 
           const dateOut = resolveReceiptDateIso(parsed);
 
+          const vendorOcr =
+            canonicalVendorDisplayName(String(parsed.vendor ?? "").trim()) ||
+            String(parsed.vendor ?? "").trim();
+          const totalOcr = parseMoneyNumber(parsed.totalAmount);
           return {
             invoiceNumber: String(parsed.invoiceNumber ?? "").trim(),
-            vendor: String(parsed.vendor ?? "").trim(),
+            vendor: vendorOcr,
             date: dateOut,
-            totalAmount: parseMoneyNumber(parsed.totalAmount),
+            totalAmount: totalOcr,
             ivaAmount: parseMoneyNumber(parsed.ivaAmount),
             tipAmount: parseMoneyNumber(parsed.tipAmount),
             category: String(parsed.category ?? "Other").trim() || "Other",
-            items: normalizeParsedMeatItems(parsed.items),
+            items: applyMeatLineReconcile(normalizeParsedMeatItems(parsed.items), totalOcr, vendorOcr),
           };
         } catch (err) {
           if (err instanceof TRPCError) throw err;

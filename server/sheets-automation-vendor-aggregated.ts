@@ -2,6 +2,8 @@ import {
   isMeatLotOrigenTraceabilityLine,
   shouldIncludeInvoiceInMeatLineSheets,
 } from "../shared/invoice-types";
+import { parseMoney, reconcileMeatLineItemsForInvoice } from "../shared/meat-line-reconcile";
+import { canonicalVendorDisplayName } from "../shared/vendor-canonical";
 import { receiptSheetsReceiptUrlCell } from "../shared/sheets-defaults";
 import {
   applyBoldTextFormatToGridRange,
@@ -589,7 +591,8 @@ function getMonthIndexFromDate(dateStr: string): number {
 }
 
 function normalizeMeatVendorName(vendor: string): string {
-  return String(vendor ?? "").trim().replace(/\s+/g, " ") || "Unknown";
+  const c = canonicalVendorDisplayName(String(vendor ?? "").trim());
+  return c || String(vendor ?? "").trim().replace(/\s+/g, " ") || "Unknown";
 }
 
 function normalizeMeatCutName(cutName: string): string {
@@ -625,12 +628,16 @@ export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
     const monthIndex = getMonthIndexFromDate(inv.date || "");
     if (monthIndex < 0 || monthIndex > 11) continue;
     const month = MONTH_ABBR[monthIndex];
-    for (const item of inv.items) {
-      const cutName = normalizeMeatCutName(item?.partName);
+    const reconciled = reconcileMeatLineItemsForInvoice(inv.items, {
+      totalAmount: parseMoney(inv.totalAmount),
+      vendor: String(inv.vendor ?? ""),
+    });
+    for (const item of reconciled) {
+      const cutName = normalizeMeatCutName(item.partName);
       if (isMeatLotOrigenTraceabilityLine(cutName)) continue;
-      const quantityKg = parseAmount(item?.quantity);
-      const pricePerKg = parseAmount(item?.pricePerUnit);
-      const totalEur = parseAmount(item?.total);
+      const quantityKg = item.quantity;
+      const pricePerKg = item.pricePerUnit;
+      const totalEur = item.total;
       if (!cutName || quantityKg <= 0 || totalEur <= 0) continue;
       rows.push({
         month,
