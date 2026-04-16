@@ -705,6 +705,10 @@ function roundMeatMoney(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * Split a VAT-**inclusive** line total (Importe) into base + cuota IVA (Spain).
+ * For 10% general rate: IVA = gross × 10/110 (not gross × 10%), so Base + IVA = Total exactly.
+ */
 function lineBaseAndIvaFromGross(
   gross: number,
   ivaPct: number | null,
@@ -930,8 +934,9 @@ export async function updateMeatSheets(
   spreadsheetId: string,
   invoices: any[]
 ): Promise<void> {
-  /** Same euro semantics as main tracker: Total (gross) → IVA (€) → Base (€). */
+  /** Source first, Total (gross) last; Base → IVA → Total reads L→R like receipt lines. */
   const lineItemHeader = [
+    "Source",
     "Month",
     "Date",
     "Vendor",
@@ -940,10 +945,9 @@ export async function updateMeatSheets(
     "Quantity (kg)",
     "€/kg ex IVA (Precio)",
     "€/kg inc IVA (P.V.P.)",
-    "Total (€)",
-    "IVA (€)",
     "Base (€)",
-    "Source",
+    "IVA (€)",
+    "Total (€)",
   ];
   const meatLineColumnCount = lineItemHeader.length;
   const ordersHeader = ["Month", "Vendor", "Order Count", "Total Meat Kg", "Total Meat Spend (€)"];
@@ -968,6 +972,7 @@ export async function updateMeatSheets(
     return;
   }
   const lineItemRows = meatItems.map((item) => [
+    item.source,
     item.month,
     trackerDateToSheetsDateCell(item.date),
     item.vendor,
@@ -976,10 +981,9 @@ export async function updateMeatSheets(
     item.quantityKg,
     item.pricePerKgExVat,
     item.pricePerKgIncVat,
-    item.totalEur,
-    item.ivaAmountEur,
     item.baseEur,
-    item.source,
+    item.ivaAmountEur,
+    item.totalEur,
   ]);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Line_Items", lineItemHeader, lineItemRows);
   const meatLineItemsSheetId = await getSheetIdByTitle(spreadsheetId, "Meat_Line_Items", accessToken);
@@ -987,8 +991,8 @@ export async function updateMeatSheets(
     await applyDateDisplayFormatDdMmYyyy(spreadsheetId, accessToken, meatLineItemsSheetId, {
       startRowIndex: 1,
       endRowIndex: lineItemRows.length + 1,
-      startColumnIndex: 1,
-      endColumnIndex: 2,
+      startColumnIndex: 2,
+      endColumnIndex: 3,
     });
     const nFlag = meatItems.filter((r) => r.highlightWarning).length;
     if (nFlag > 0) {
