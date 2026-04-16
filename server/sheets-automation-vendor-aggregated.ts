@@ -988,9 +988,11 @@ export async function updateMeatSheets(
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Line_Items", lineItemHeader, lineItemRows);
   const meatLineItemsSheetId = await getSheetIdByTitle(spreadsheetId, "Meat_Line_Items", accessToken);
   if (meatLineItemsSheetId != null && lineItemRows.length > 0) {
+    /** Format entire Date column (C) for many rows so older lines also show dd/mm/yyyy after one rebuild. */
+    const dateFormatEndRow = Math.max(lineItemRows.length + 1, 1001);
     await applyDateDisplayFormatDdMmYyyy(spreadsheetId, accessToken, meatLineItemsSheetId, {
       startRowIndex: 1,
-      endRowIndex: lineItemRows.length + 1,
+      endRowIndex: dateFormatEndRow,
       startColumnIndex: 2,
       endColumnIndex: 3,
     });

@@ -2,7 +2,16 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useRouter } from "expo-router";
-import { useCallback, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,6 +23,7 @@ import {
   Text,
   TextInput,
   View,
+  type KeyboardTypeOptions,
 } from "react-native";
 
 import { APP_SCAN_STEP_TITLE } from "@/constants/app-typography";
@@ -79,6 +89,96 @@ async function encodeReceiptImageForServer(
 }
 
 type ScanStep = "capture" | "preview" | "review" | "done";
+
+/** Parse decimal from sheet-style input (comma or dot). */
+function parseDecimalInput(s: string): number {
+  const cleaned = String(s).replace(",", ".").replace(/[^\d.-]/g, "");
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Allow only one `.` and digits while typing (keeps `3.` visible until more digits). */
+function sanitizeDecimalTyping(raw: string): string {
+  const t = String(raw).replace(",", ".");
+  let out = "";
+  let dotSeen = false;
+  for (const c of t) {
+    if (c >= "0" && c <= "9") out += c;
+    else if (c === "." && !dotSeen) {
+      out += ".";
+      dotSeen = true;
+    }
+  }
+  return out;
+}
+
+type MeatLineDraftTexts = {
+  qty: string;
+  price: string;
+  total: string;
+  iva: string;
+};
+
+function emptyMeatDraft(): MeatLineDraftTexts {
+  return { qty: "", price: "", total: "", iva: "" };
+}
+
+function initMeatDraftsFromItems(its: MeatItem[]): MeatLineDraftTexts[] {
+  return its.map((it) => ({
+    qty: it.quantity === 0 ? "" : String(it.quantity),
+    price: it.pricePerUnit === 0 ? "" : String(it.pricePerUnit),
+    total: it.total === 0 ? "" : String(it.total),
+    iva: it.ivaPercent != null ? String(it.ivaPercent) : "",
+  }));
+}
+
+/** Apply draft strings to `items` row shape (call on Save so partial typing like `3.` is preserved until commit). */
+function mergeMeatItemsWithDrafts(rows: MeatItem[], drafts: MeatLineDraftTexts[]): MeatItem[] {
+  return rows.map((row, i) => {
+    const d = drafts[i] ?? emptyMeatDraft();
+    const ivaT = d.iva.trim();
+    const next: MeatItem = {
+      ...row,
+      quantity: parseDecimalInput(d.qty),
+      pricePerUnit: parseDecimalInput(d.price),
+      total: parseDecimalInput(d.total),
+    };
+    if (ivaT === "") {
+      const { ivaPercent: _x, ...rest } = next;
+      return rest as MeatItem;
+    }
+    return { ...next, ivaPercent: parseDecimalInput(ivaT) };
+  });
+}
+
+/** Keep only rows that can export to Sheets; drop empty drafts. */
+function sanitizeMeatItemsForSave(rows: MeatItem[]): MeatItem[] | undefined {
+  const out = rows
+    .map((it) => ({
+      ...it,
+      partName: String(it.partName ?? "").trim(),
+      unit: String(it.unit ?? "kg").trim() || "kg",
+    }))
+    .filter((it) => it.partName.length > 0 && it.quantity > 0 && it.total > 0);
+  return out.length > 0 ? out : undefined;
+}
+
+const EMPTY_MEAT_ITEM = (): MeatItem => ({
+  partName: "",
+  quantity: 0,
+  unit: "kg",
+  pricePerUnit: 0,
+  total: 0,
+});
+
+/**
+ * Android `decimal-pad` often hides `.` (and sometimes `,`). iOS pad includes a decimal key.
+ * Web/Android use a layout that exposes decimal separators.
+ */
+function keyboardForDecimals(): KeyboardTypeOptions {
+  if (Platform.OS === "ios") return "decimal-pad";
+  return "numbers-and-punctuation";
+}
 
 const PREDEFINED_CATEGORIES: InvoiceCategory[] = [
   "Meat",
@@ -147,7 +247,7 @@ function FieldRow({
   label: string;
   value: string;
   onChange: (v: string) => void;
-  keyboardType?: "default" | "decimal-pad";
+  keyboardType?: KeyboardTypeOptions;
   placeholder?: string;
 }) {
   const colors = useColors();
@@ -167,6 +267,148 @@ function FieldRow({
         returnKeyType="done"
       />
     </View>
+  );
+}
+
+function EditableMeatLineItems({
+  items,
+  setItems,
+  mergeRef,
+}: {
+  items: MeatItem[];
+  setItems: Dispatch<SetStateAction<MeatItem[]>>;
+  mergeRef: MutableRefObject<(() => MeatItem[]) | null>;
+}) {
+  const colors = useColors();
+
+  const [drafts, setDrafts] = useState<MeatLineDraftTexts[]>(() => initMeatDraftsFromItems(items));
+
+  useEffect(() => {
+    setDrafts((d) => {
+      if (items.length === d.length) return d;
+      if (items.length > d.length) {
+        const n = items.length - d.length;
+        return [...d, ...Array.from({ length: n }, () => emptyMeatDraft())];
+      }
+      return d.slice(0, items.length);
+    });
+  }, [items.length]);
+
+  useLayoutEffect(() => {
+    mergeRef.current = () => mergeMeatItemsWithDrafts(items, drafts);
+    return () => {
+      mergeRef.current = null;
+    };
+  }, [mergeRef, items, drafts]);
+
+  const updateRow = useCallback((idx: number, patch: Partial<MeatItem>) => {
+    setItems((prev) =>
+      prev.map((row, i) => (i === idx ? ({ ...row, ...patch } as MeatItem) : row)),
+    );
+  }, [setItems]);
+
+  const updateDraft = useCallback((idx: number, patch: Partial<MeatLineDraftTexts>) => {
+    setDrafts((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)),
+    );
+  }, []);
+
+  const clearIvaDraft = useCallback(
+    (idx: number) => {
+      updateDraft(idx, { iva: "" });
+      setItems((prev) =>
+        prev.map((row, i) => {
+          if (i !== idx) return row;
+          const { ivaPercent: _i, ...rest } = row;
+          return rest as MeatItem;
+        }),
+      );
+    },
+    [updateDraft, setItems],
+  );
+
+  return (
+    <>
+      {items.map((item, idx) => {
+        const d = drafts[idx] ?? emptyMeatDraft();
+        return (
+        <View
+          key={idx}
+          style={[styles.meatItemCard, { borderColor: colors.border, backgroundColor: colors.background }]}
+        >
+          <View style={styles.meatItemCardHeader}>
+            <Text style={[styles.meatItemIdx, { color: colors.muted }]}>Line {idx + 1}</Text>
+            <Pressable
+              onPress={() => setItems((prev) => prev.filter((_, i) => i !== idx))}
+              style={({ pressed }) => [styles.meatItemRemove, { opacity: pressed ? 0.7 : 1 }]}
+              hitSlop={8}
+            >
+              <Text style={{ color: "#C62828", fontSize: 13, fontWeight: "600" }}>Remove</Text>
+            </Pressable>
+          </View>
+          <FieldRow label="Product / cut" value={item.partName} onChange={(v) => updateRow(idx, { partName: v })} placeholder="e.g. Chuleton Angus" />
+          <FieldRow
+            label="Quantity (kg)"
+            value={d.qty}
+            onChange={(v) => updateDraft(idx, { qty: sanitizeDecimalTyping(v) })}
+            keyboardType={keyboardForDecimals()}
+            placeholder="0"
+          />
+          <FieldRow
+            label="€ / kg (line price)"
+            value={d.price}
+            onChange={(v) => updateDraft(idx, { price: sanitizeDecimalTyping(v) })}
+            keyboardType={keyboardForDecimals()}
+            placeholder="0"
+          />
+          <FieldRow
+            label="Line total (€)"
+            value={d.total}
+            onChange={(v) => updateDraft(idx, { total: sanitizeDecimalTyping(v) })}
+            keyboardType={keyboardForDecimals()}
+            placeholder="0"
+          />
+          <FieldRow
+            label="IVA % (optional, e.g. 10)"
+            value={d.iva}
+            onChange={(v) => {
+              const t = v.trim();
+              if (t === "") clearIvaDraft(idx);
+              else updateDraft(idx, { iva: sanitizeDecimalTyping(v) });
+            }}
+            keyboardType={keyboardForDecimals()}
+            placeholder="10"
+          />
+          <Pressable
+            onPress={() => {
+              const q = parseDecimalInput(d.qty);
+              const p = parseDecimalInput(d.price);
+              if (q <= 0 || p <= 0) return;
+              const t = Math.round(q * p * 100) / 100;
+              updateDraft(idx, { total: String(t) });
+              setItems((prev) =>
+                prev.map((r, i) =>
+                  i === idx ? { ...r, quantity: q, pricePerUnit: p, total: t } : r,
+                ),
+              );
+            }}
+            style={({ pressed }) => [styles.meatSyncTotalBtn, { opacity: pressed ? 0.75 : 1 }]}
+          >
+            <Text style={[styles.meatSyncTotalText, { color: colors.primary }]}>
+              Set line total = quantity × €/kg
+            </Text>
+          </Pressable>
+        </View>
+        );
+      })}
+      <Pressable
+        onPress={() => setItems((prev) => [...prev, EMPTY_MEAT_ITEM()])}
+        style={[styles.meatAddLineBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+      >
+        <IconSymbol name="plus.circle.fill" size={18} color={colors.primary} />
+        <Text style={[styles.meatAddLineText, { color: colors.primary }]}>Add line</Text>
+      </Pressable>
+    </>
   );
 }
 
@@ -200,6 +442,10 @@ export default function ScanScreen() {
   /** Prevents double Save / Continue / Process from creating duplicate rows (rapid taps). */
   const persistScanRef = useRef(false);
   const processScanRef = useRef(false);
+  /** Meat line numeric drafts merged into `items` on Save (keeps `3.` while typing). */
+  const meatMergeRef = useRef<(() => MeatItem[]) | null>(null);
+  /** Bump to remount meat editor so drafts re-init from fresh OCR `items`. */
+  const [meatEditorKey, setMeatEditorKey] = useState(0);
 
   const ocrMutation = trpc.invoices.parseReceipt.useMutation();
 
@@ -314,6 +560,7 @@ export default function ScanScreen() {
       setIvaAmount(parsed.ivaAmount?.toString() ?? "");
       setTip(""); // Reset tip for manual entry
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setMeatEditorKey((k) => k + 1);
       setStep("review");
     } catch (err) {
       console.error("OCR error:", err);
@@ -361,7 +608,9 @@ export default function ScanScreen() {
         notes: notes.trim(),
         tip: tipAmount > 0 ? tipAmount : undefined,
         imageUri: imageUrl ?? undefined,
-        items: hasMeatLineItems(items) ? items : undefined,
+        items: sanitizeMeatItemsForSave(
+          items.length > 0 && meatMergeRef.current ? meatMergeRef.current() : items,
+        ),
         exportedToSheets: false,
         createdAt: new Date().toISOString(),
       };
@@ -409,6 +658,7 @@ export default function ScanScreen() {
     setNotes("");
     setTip("");
     setItems([]);
+    setMeatEditorKey((k) => k + 1);
     setShowDuplicateDialog(false);
     setDuplicateWarning(null);
     setPendingInvoice(null);
@@ -640,9 +890,9 @@ export default function ScanScreen() {
               placeholder="e.g. FAC-2024-001 (optional if not on receipt)"
             />
             <FieldRow label="Date (YYYY-MM-DD)" value={date} onChange={setDate} placeholder="2024-01-15" />
-            <FieldRow label="Total Amount (€)" value={totalAmount} onChange={setTotalAmount} keyboardType="decimal-pad" placeholder="0.00" />
-            <FieldRow label="IVA amount (€)" value={ivaAmount} onChange={setIvaAmount} keyboardType="decimal-pad" placeholder="0.00" />
-            <FieldRow label="Tip (€) - optional" value={tip} onChange={setTip} keyboardType="decimal-pad" placeholder="0.00" />
+            <FieldRow label="Total Amount (€)" value={totalAmount} onChange={setTotalAmount} keyboardType={keyboardForDecimals()} placeholder="0.00" />
+            <FieldRow label="IVA amount (€)" value={ivaAmount} onChange={setIvaAmount} keyboardType={keyboardForDecimals()} placeholder="0.00" />
+            <FieldRow label="Tip (€) - optional" value={tip} onChange={setTip} keyboardType={keyboardForDecimals()} placeholder="0.00" />
             <FieldRow label="Notes (optional)" value={notes} onChange={setNotes} placeholder="Any additional notes" />
           </View>
 
@@ -688,19 +938,30 @@ export default function ScanScreen() {
             </View>
           )}
 
-          {items.length > 0 && (
+          {(items.length > 0 || category === "Meat") && (
             <View style={[styles.formCard, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 16 }]}>
-              <Text style={[styles.fieldLabel, { color: colors.foreground, marginBottom: 12 }]}>Meat / butcher line items</Text>
-              {items.map((item, idx) => (
-                <View key={idx} style={[styles.meatItemCard, { borderColor: colors.border, backgroundColor: colors.background }]}>
-                  <Text style={[styles.meatItemText, { color: colors.foreground }]}>
-                    {item.partName}
-                  </Text>
-                  <Text style={[styles.meatItemSubtext, { color: colors.muted }]}>
-                    {item.quantity.toFixed(2)} {item.unit} @ {item.pricePerUnit.toFixed(2)} €/{item.unit} = {item.total.toFixed(2)} €
-                  </Text>
-                </View>
-              ))}
+              <Text style={[styles.fieldLabel, { color: colors.foreground, marginBottom: 12 }]}>
+                Meat / butcher line items
+              </Text>
+              <Text style={[styles.meatEditorHint, { color: colors.muted }]}>
+                Fix any wrong numbers before saving — they are exported to Google Sheets column N.
+              </Text>
+              {items.length === 0 ? (
+                <Pressable
+                  onPress={() => setItems([EMPTY_MEAT_ITEM()])}
+                  style={[styles.meatAddLineBtn, { borderColor: colors.border, backgroundColor: colors.background }]}
+                >
+                  <IconSymbol name="plus.circle.fill" size={18} color={colors.primary} />
+                  <Text style={[styles.meatAddLineText, { color: colors.primary }]}>Add first line</Text>
+                </Pressable>
+              ) : (
+                <EditableMeatLineItems
+                  key={meatEditorKey}
+                  items={items}
+                  setItems={setItems}
+                  mergeRef={meatMergeRef}
+                />
+              )}
             </View>
           )}
 
@@ -879,11 +1140,33 @@ const styles = StyleSheet.create({
   meatItemCard: {
     borderRadius: 10,
     borderWidth: 1,
-    padding: 12,
-    marginBottom: 8,
+    padding: 0,
+    marginBottom: 12,
+    overflow: "hidden",
   },
-  meatItemText: { fontSize: 14, fontWeight: "600", marginBottom: 4 },
-  meatItemSubtext: { fontSize: 12, lineHeight: 16 },
+  meatItemCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 4,
+  },
+  meatItemIdx: { fontSize: 12, fontWeight: "600" },
+  meatItemRemove: { paddingVertical: 4, paddingHorizontal: 4 },
+  meatEditorHint: { fontSize: 12, lineHeight: 17, marginBottom: 12, paddingHorizontal: 2 },
+  meatSyncTotalBtn: { paddingVertical: 10, paddingHorizontal: 14 },
+  meatSyncTotalText: { fontSize: 13, fontWeight: "600" },
+  meatAddLineBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  meatAddLineText: { fontSize: 15, fontWeight: "600" },
   customCategoryBox: {
     borderRadius: 12,
     borderWidth: 1,

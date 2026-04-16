@@ -339,10 +339,7 @@ export async function applyDateDisplayFormatDdMmYyyy(
     endColumnIndex: number;
   },
 ): Promise<void> {
-  const now = Date.now();
-  if (sheetsCosmeticBatchBackoffUntilMs > now) {
-    return;
-  }
+  /** Do not gate on `sheetsCosmeticBatchBackoffUntilMs` — other cosmetics (bold/thin) often run first and set backoff, which silently skipped date display and mixed `dd/mm/yyyy` with locale default. */
   const batchRes = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
     {
