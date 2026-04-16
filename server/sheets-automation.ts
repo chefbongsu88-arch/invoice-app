@@ -250,6 +250,84 @@ export async function applyBoldTextFormatToGridRange(
 }
 
 /** Same display as main tracker date column: dd/mm/yyyy (values are usually =DATE(…) formulas). */
+/**
+ * Amber background + brown text on specific data rows (e.g. amount mismatch). Does not alter header row.
+ * `flags.length` = number of data rows; row `i` maps to grid rows `startDataRowIndex + i` (default startDataRowIndex=1 below header).
+ */
+export async function applyWarningHighlightToDataRows(
+  spreadsheetId: string,
+  accessToken: string,
+  sheetId: number,
+  flags: boolean[],
+  columnCount: number,
+  opts?: { startDataRowIndex?: number },
+): Promise<void> {
+  const startDataRowIndex = opts?.startDataRowIndex ?? 1;
+  const now = Date.now();
+  if (sheetsCosmeticBatchBackoffUntilMs > now) {
+    return;
+  }
+  const requests: Array<{ repeatCell: Record<string, unknown> }> = [];
+  for (let i = 0; i < flags.length; i++) {
+    if (!flags[i]) continue;
+    requests.push({
+      repeatCell: {
+        range: {
+          sheetId,
+          startRowIndex: startDataRowIndex + i,
+          endRowIndex: startDataRowIndex + i + 1,
+          startColumnIndex: 0,
+          endColumnIndex: Math.max(columnCount, 1),
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 1, green: 0.94, blue: 0.75 },
+            textFormat: {
+              foregroundColor: { red: 0.5, green: 0.22, blue: 0.1 },
+            },
+          },
+        },
+        fields: "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat.foregroundColor",
+      },
+    });
+  }
+  if (requests.length === 0) return;
+
+  const chunkSize = 35;
+  for (let offset = 0; offset < requests.length; offset += chunkSize) {
+    const chunk = requests.slice(offset, offset + chunkSize);
+    const batchRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ requests: chunk }),
+      },
+    );
+    if (!batchRes.ok) {
+      const errText = await batchRes.text();
+      if (
+        batchRes.status === 429 ||
+        /RATE_LIMIT_EXCEEDED|RESOURCE_EXHAUSTED|write requests per minute per user/i.test(errText)
+      ) {
+        sheetsCosmeticBatchBackoffUntilMs = Date.now() + 5 * 60 * 1000;
+        console.log(
+          "[Sheets] warning highlight (mismatch rows) skipped for 5m due to Sheets write quota (429).",
+        );
+        return;
+      }
+      console.warn(
+        "[Sheets] applyWarningHighlightToDataRows failed:",
+        errText.length > 220 ? `${errText.slice(0, 220)}...` : errText,
+      );
+      return;
+    }
+  }
+}
+
 export async function applyDateDisplayFormatDdMmYyyy(
   spreadsheetId: string,
   accessToken: string,

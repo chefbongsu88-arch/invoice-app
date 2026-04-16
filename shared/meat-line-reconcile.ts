@@ -11,23 +11,54 @@ export function parseMoney(value: unknown): number {
 
 const MONEY_EPS = 0.02;
 
+/** Default IVA% on meat lines when OCR omits per-line rate (Spanish butcher albaranes). */
+export const DEFAULT_MEAT_LINE_IVA_PERCENT = 10;
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function parseLineIvaPercent(raw: Record<string, unknown>): number | null {
+  const keys = ["ivaPercent", "iva", "lineIvaPercent", "iva_pct", "vatPercent", "vat"];
+  for (const k of keys) {
+    const v = raw[k as keyof typeof raw];
+    if (v === undefined || v === null || String(v).trim() === "") continue;
+    const n = parseMoney(v);
+    if (!Number.isFinite(n) || n < 0) continue;
+    if (n > 0 && n <= 30) return n;
+  }
+  return null;
 }
 
 export type MeatLineDraft = {
   partName: string;
   quantity: number;
   unit: string;
-  pricePerUnit: number;
+  /** €/kg including IVA (P.V.P.) — Importe ÷ kg. */
+  pricePerKgIncVat: number;
   total: number;
+  /** IVA % on line — OCR, else default for tracked meat suppliers, else null. */
+  ivaPercentResolved: number | null;
+  /** €/kg before IVA (Precio). */
+  pricePerKgExVat: number | null;
+};
+
+type WorkingLine = {
+  partName: string;
+  quantity: number;
+  unit: string;
+  total: number;
+  /** Candidate €/kg from OCR (often Precio ex IVA) — reconciled to inc VAT. */
+  priceKgHint: number;
+  ivaFromOcr: number | null;
 };
 
 /**
  * Meat receipt line reconciliation for Sheets + OCR:
  *
- * 1. Per line: Spanish albaranes often give ex-VAT €/kg (Precio) but line total = Importe (incl. IVA on that line).
- *    We treat line **total** as authoritative and set €/kg = total/qty so Quantity × €/kg ≈ Total.
+ * 1. Per line: Spanish albaranes print Precio (ex IVA), P.V.P./kg (inc IVA), and Importe. OCR often mixes Precio with
+ *    Importe — we keep **Importe** as truth, set **€/kg inc IVA** = Importe ÷ kg, then **€/kg ex IVA** = inc ÷ (1+IVA/100)
+ *    when IVA % is known (from OCR or default 10% for tracked meat suppliers).
  * 2. Per invoice (tracked meat suppliers only): if sum(line totals) drifts from header `totalAmount` by a few %,
  *    scale line totals to match the header (fixes OCR digit drops on lines vs OK footer total).
  */
@@ -35,7 +66,8 @@ export function reconcileMeatLineItemsForInvoice(
   rawItems: unknown[] | null | undefined,
   invoice: { totalAmount?: unknown; vendor?: unknown },
 ): MeatLineDraft[] {
-  const items: MeatLineDraft[] = [];
+  const vendor = String(invoice.vendor ?? "");
+  const working: WorkingLine[] = [];
 
   for (const raw of rawItems ?? []) {
     if (!raw || typeof raw !== "object") continue;
@@ -49,46 +81,48 @@ export function reconcileMeatLineItemsForInvoice(
       quantity = quantity / 1000;
     }
 
-    let pricePerUnit = parseMoney(
+    const priceKgHint = parseMoney(
       o.pricePerUnit ?? o.price_per_unit ?? o.unitPrice ?? o.priceKg ?? o.price_kg,
     );
-    let total = parseMoney(o.total ?? o.amount ?? o.importe ?? o.lineTotal);
+    const total = parseMoney(o.total ?? o.amount ?? o.importe ?? o.lineTotal);
 
     if (quantity <= 0 || total <= 0) continue;
 
-    const unit = rawUnit === "g" || rawUnit === "gram" || rawUnit === "grams" || rawUnit === "gr" ? "kg" : "kg";
+    const unit = "kg";
 
-    items.push({
+    working.push({
       partName,
       quantity: Math.round(quantity * 1000) / 1000,
       unit,
-      pricePerUnit: pricePerUnit > 0 ? round2(pricePerUnit) : 0,
       total: round2(total),
+      priceKgHint: priceKgHint > 0 ? round2(priceKgHint) : 0,
+      ivaFromOcr: parseLineIvaPercent(o),
     });
   }
 
-  if (items.length === 0) return items;
+  if (working.length === 0) return [];
 
-  for (const it of items) {
+  for (const it of working) {
     if (it.quantity <= 0) continue;
-    const implied = it.total / it.quantity;
-    const fromPp = it.pricePerUnit > 0 ? it.pricePerUnit : implied;
-    const gap = Math.abs(it.quantity * fromPp - it.total);
+    const impliedInc = it.total / it.quantity;
+    const fromHint = it.priceKgHint > 0 ? it.priceKgHint : impliedInc;
+    const gap = Math.abs(it.quantity * fromHint - it.total);
     const rel = gap / Math.max(it.total, 0.01);
+    let incPerKg: number;
     if (gap > MONEY_EPS && rel > 0.015) {
-      it.pricePerUnit = round2(implied);
+      incPerKg = round2(impliedInc);
     } else {
-      it.pricePerUnit = round2(fromPp);
-      const check = round2(it.quantity * it.pricePerUnit);
+      incPerKg = round2(fromHint);
+      const check = round2(it.quantity * incPerKg);
       if (Math.abs(check - it.total) > MONEY_EPS) {
-        it.pricePerUnit = round2(it.total / it.quantity);
+        incPerKg = round2(it.total / it.quantity);
       }
     }
+    it.priceKgHint = incPerKg;
   }
 
   const headerTotal = parseMoney(invoice.totalAmount);
-  const sumLines = round2(items.reduce((s, x) => s + x.total, 0));
-  const vendor = String(invoice.vendor ?? "");
+  const sumLines = round2(working.reduce((s, x) => s + x.total, 0));
 
   const relDiff =
     headerTotal > 0 && sumLines > 0
@@ -98,7 +132,7 @@ export function reconcileMeatLineItemsForInvoice(
   const allowHeaderScale =
     headerTotal > 0 &&
     sumLines > 0 &&
-    items.length >= 1 &&
+    working.length >= 1 &&
     Math.abs(sumLines - headerTotal) > MONEY_EPS &&
     isTrackedMeatSupplierVendor(vendor) &&
     relDiff <= 0.04;
@@ -106,19 +140,38 @@ export function reconcileMeatLineItemsForInvoice(
   if (allowHeaderScale) {
     const factor = headerTotal / sumLines;
     let acc = 0;
-    for (let i = 0; i < items.length; i++) {
-      const last = i === items.length - 1;
+    for (let i = 0; i < working.length; i++) {
+      const last = i === working.length - 1;
       if (last) {
-        items[i].total = round2(headerTotal - acc);
+        working[i].total = round2(headerTotal - acc);
       } else {
-        items[i].total = round2(items[i].total * factor);
-        acc += items[i].total;
+        working[i].total = round2(working[i].total * factor);
+        acc += working[i].total;
       }
     }
-    for (const it of items) {
-      if (it.quantity > 0) it.pricePerUnit = round2(it.total / it.quantity);
+    for (const it of working) {
+      if (it.quantity > 0) it.priceKgHint = round2(it.total / it.quantity);
     }
   }
 
-  return items;
+  const out: MeatLineDraft[] = working.map((it) => {
+    const inc = it.quantity > 0 ? round2(it.total / it.quantity) : 0;
+    const ivaPct =
+      it.ivaFromOcr ?? (isTrackedMeatSupplierVendor(vendor) ? DEFAULT_MEAT_LINE_IVA_PERCENT : null);
+    let ex: number | null = null;
+    if (ivaPct != null && ivaPct > 0 && inc > 0) {
+      ex = round2(inc / (1 + ivaPct / 100));
+    }
+    return {
+      partName: it.partName,
+      quantity: it.quantity,
+      unit: it.unit,
+      pricePerKgIncVat: inc,
+      total: it.total,
+      ivaPercentResolved: ivaPct,
+      pricePerKgExVat: ex,
+    };
+  });
+
+  return out;
 }

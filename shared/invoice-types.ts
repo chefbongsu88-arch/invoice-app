@@ -92,8 +92,11 @@ export interface MeatItem {
   partName: string; // e.g., "Quinta Costilla Angus"
   quantity: number; // in kg
   unit: string; // "kg"
-  pricePerUnit: number; // price per kg
-  total: number; // total price for this item
+  /** €/kg including VAT when known (P.V.P.); matches line Importe ÷ kg after reconciliation. */
+  pricePerUnit: number;
+  total: number; // line Importe (incl. VAT)
+  /** Line IVA % when printed (e.g. 10 on Spanish albaranes). Used for ex-VAT €/kg in Sheets. */
+  ivaPercent?: number;
 }
 
 export interface Invoice {

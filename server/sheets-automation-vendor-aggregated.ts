@@ -9,11 +9,15 @@ import {
   applyBoldTextFormatToGridRange,
   applyDateDisplayFormatDdMmYyyy,
   applyThinTextFormatToGridRange,
+  applyWarningHighlightToDataRows,
   encodeValuesRange,
   ensureSheetExists,
   getSheetIdByTitle,
   TRACKER_COLUMN_COUNT,
 } from "./sheets-automation";
+
+const LINE_QTY_PRICE_EPS = 0.07;
+const HEADER_VS_LINES_EPS = 0.06;
 
 /** Per-vendor lines are noisy in Railway; set VERBOSE_SHEETS_AGG_LOG=1 to enable. */
 const verboseSheetsAggLog =
@@ -542,9 +546,16 @@ async function createQuarterlySheets(
 
 const MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-/** Column N on main tracker: JSON array of { partName, quantity, unit, pricePerUnit, total }. */
+/** Column N on main tracker: JSON array of meat line items (optional ivaPercent). */
 export function parseTrackerMeatItemsJsonCell(val: unknown):
-  | Array<{ partName: string; quantity: number; unit: string; pricePerUnit: number; total: number }>
+  | Array<{
+      partName: string;
+      quantity: number;
+      unit: string;
+      pricePerUnit: number;
+      total: number;
+      ivaPercent?: number;
+    }>
   | undefined {
   if (val === null || val === undefined) return undefined;
   const s = String(val).trim();
@@ -553,7 +564,14 @@ export function parseTrackerMeatItemsJsonCell(val: unknown):
   try {
     const arr = JSON.parse(s) as unknown[];
     if (!Array.isArray(arr) || arr.length === 0) return undefined;
-    const out: Array<{ partName: string; quantity: number; unit: string; pricePerUnit: number; total: number }> = [];
+    const out: Array<{
+      partName: string;
+      quantity: number;
+      unit: string;
+      pricePerUnit: number;
+      total: number;
+      ivaPercent?: number;
+    }> = [];
     for (const el of arr) {
       if (!el || typeof el !== "object") continue;
       const o = el as Record<string, unknown>;
@@ -567,13 +585,18 @@ export function parseTrackerMeatItemsJsonCell(val: unknown):
         continue;
       }
       const pp = Number.isFinite(pricePerUnit) && pricePerUnit > 0 ? pricePerUnit : total / quantity;
-      out.push({
+      const ivaRaw = Number(o.ivaPercent ?? o.iva);
+      const row: (typeof out)[number] = {
         partName,
         quantity: Math.round(quantity * 1000) / 1000,
         unit,
         pricePerUnit: Math.round(pp * 100) / 100,
         total: Math.round(total * 100) / 100,
-      });
+      };
+      if (Number.isFinite(ivaRaw) && ivaRaw > 0 && ivaRaw <= 30) {
+        row.ivaPercent = Math.round(ivaRaw * 100) / 100;
+      }
+      out.push(row);
     }
     return out.length > 0 ? out : undefined;
   } catch {
@@ -607,9 +630,13 @@ type MeatItemRow = {
   invoiceNumber: string;
   cutName: string;
   quantityKg: number;
-  pricePerKg: number;
+  ivaPercent: number | "";
+  pricePerKgExVat: number | "";
+  pricePerKgIncVat: number;
   totalEur: number;
   source: string;
+  /** True: 줄 합계 ≠ 메인 시트 총액, 또는 kg×€/kg ≠ Importe (수동 확인 권장). */
+  highlightWarning: boolean;
 };
 
 export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
@@ -632,14 +659,18 @@ export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
       totalAmount: parseMoney(inv.totalAmount),
       vendor: String(inv.vendor ?? ""),
     });
+    const chunk: MeatItemRow[] = [];
+    const headerTotalMain = parseMoney(inv.totalAmount);
     for (const item of reconciled) {
       const cutName = normalizeMeatCutName(item.partName);
       if (isMeatLotOrigenTraceabilityLine(cutName)) continue;
       const quantityKg = item.quantity;
-      const pricePerKg = item.pricePerUnit;
       const totalEur = item.total;
+      const inc = item.pricePerKgIncVat;
       if (!cutName || quantityKg <= 0 || totalEur <= 0) continue;
-      rows.push({
+      const iva = item.ivaPercentResolved;
+      const ex = item.pricePerKgExVat;
+      chunk.push({
         month,
         monthIndex,
         date: String(inv.date ?? "").trim(),
@@ -647,11 +678,22 @@ export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
         invoiceNumber: String(inv.invoiceNumber ?? "").trim(),
         cutName,
         quantityKg: Math.round(quantityKg * 1000) / 1000,
-        pricePerKg: Math.round((pricePerKg > 0 ? pricePerKg : totalEur / quantityKg) * 100) / 100,
+        ivaPercent: iva != null ? iva : "",
+        pricePerKgExVat: ex != null ? Math.round(ex * 100) / 100 : "",
+        pricePerKgIncVat: Math.round(inc * 100) / 100,
         totalEur: Math.round(totalEur * 100) / 100,
         source: String(inv.source ?? "").toLowerCase() === "camera" ? "Camera" : "Email",
+        highlightWarning: false,
       });
     }
+    const sumChunk = chunk.reduce((s, r) => s + r.totalEur, 0);
+    const headerMismatch =
+      headerTotalMain > 0 && Math.abs(sumChunk - headerTotalMain) > HEADER_VS_LINES_EPS;
+    for (const r of chunk) {
+      const lineGap = Math.abs(r.quantityKg * r.pricePerKgIncVat - r.totalEur);
+      r.highlightWarning = headerMismatch || lineGap > LINE_QTY_PRICE_EPS;
+    }
+    rows.push(...chunk);
   }
   rows.sort((a, b) => {
     if (a.monthIndex !== b.monthIndex) return a.monthIndex - b.monthIndex;
@@ -720,7 +762,7 @@ function buildMeatCutSummaryRows(items: MeatItemRow[]): any[][] {
       entry.cutName,
       Math.round(entry.totalKg * 1000) / 1000,
       Math.round(entry.totalEur * 100) / 100,
-      entry.totalKg > 0 ? Math.round((entry.totalEur / entry.totalKg) * 100) / 100 : 0,
+      entry.totalKg > 0 ? Math.round((entry.totalEur / entry.totalKg) * 100) / 100 : 0, // avg €/kg inc IVA (= spend / kg)
     ]);
 }
 
@@ -812,12 +854,21 @@ export async function updateMeatSheets(
     "Invoice #",
     "Cut Name",
     "Quantity (kg)",
-    "Price / kg (€)",
-    "Total (€)",
+    "IVA %",
+    "€/kg ex IVA (Precio)",
+    "€/kg inc IVA (P.V.P.)",
+    "Total (€) (Importe)",
     "Source",
   ];
+  const meatLineColumnCount = lineItemHeader.length;
   const ordersHeader = ["Month", "Vendor", "Order Count", "Total Meat Kg", "Total Meat Spend (€)"];
-  const cutSummaryHeader = ["Month", "Cut Name", "Total Kg", "Total Spend (€)", "Avg Price / Kg (€)"];
+  const cutSummaryHeader = [
+    "Month",
+    "Cut Name",
+    "Total Kg",
+    "Total Spend (€)",
+    "Avg €/kg inc IVA",
+  ];
   const monthlySummaryHeader = ["Month", "Total Meat Kg", "Total Meat Spend (€)", "Invoice Count", "Vendor Count"];
 
   // Keep meat tabs visible with headers even when there are no meat rows yet.
@@ -838,7 +889,9 @@ export async function updateMeatSheets(
     item.invoiceNumber,
     item.cutName,
     item.quantityKg,
-    item.pricePerKg,
+    item.ivaPercent,
+    item.pricePerKgExVat,
+    item.pricePerKgIncVat,
     item.totalEur,
     item.source,
   ]);
@@ -851,6 +904,19 @@ export async function updateMeatSheets(
       startColumnIndex: 1,
       endColumnIndex: 2,
     });
+    const nFlag = meatItems.filter((r) => r.highlightWarning).length;
+    if (nFlag > 0) {
+      console.log(
+        `⚠️  Meat_Line_Items: ${nFlag} row(s) highlighted (amount ≠ main total or kg×€/kg ≠ line total — review colors)`,
+      );
+    }
+    await applyWarningHighlightToDataRows(
+      spreadsheetId,
+      accessToken,
+      meatLineItemsSheetId,
+      meatItems.map((m) => m.highlightWarning),
+      meatLineColumnCount,
+    );
   }
   const ordersRows = buildMeatOrdersRows(meatItems);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Orders", ordersHeader, ordersRows);

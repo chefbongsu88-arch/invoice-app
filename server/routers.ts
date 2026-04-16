@@ -342,20 +342,32 @@ function serializeMeatLineItemsForSheetsCell(
   category: string,
   vendor: string,
   items:
-    | Array<{ partName: string; quantity: number; unit: string; pricePerUnit: number; total: number }>
+    | Array<{
+        partName: string;
+        quantity: number;
+        unit: string;
+        pricePerUnit: number;
+        total: number;
+        ivaPercent?: number;
+      }>
     | undefined,
 ): string {
   if (!shouldIncludeInvoiceInMeatLineSheets({ items, category, vendor })) return "";
   if (!Array.isArray(items) || items.length === 0) return "";
   try {
     return JSON.stringify(
-      items.map((it) => ({
-        partName: String(it.partName ?? "").trim(),
-        quantity: Number(it.quantity),
-        unit: String(it.unit ?? "kg"),
-        pricePerUnit: Number(it.pricePerUnit),
-        total: Number(it.total),
-      })),
+      items.map((it) => {
+        const row: Record<string, unknown> = {
+          partName: String(it.partName ?? "").trim(),
+          quantity: Number(it.quantity),
+          unit: String(it.unit ?? "kg"),
+          pricePerUnit: Number(it.pricePerUnit),
+          total: Number(it.total),
+        };
+        const p = it.ivaPercent;
+        if (p !== undefined && Number.isFinite(p) && p > 0) row.ivaPercent = Number(p);
+        return row;
+      }),
     );
   } catch {
     return "";
@@ -951,6 +963,7 @@ function normalizeParsedMeatItems(raw: unknown): {
   unit: "kg";
   pricePerUnit: number;
   total: number;
+  ivaPercent?: number;
 }[] {
   if (!Array.isArray(raw)) return [];
   const out: {
@@ -959,6 +972,7 @@ function normalizeParsedMeatItems(raw: unknown): {
     unit: "kg";
     pricePerUnit: number;
     total: number;
+    ivaPercent?: number;
   }[] = [];
 
   for (const item of raw) {
@@ -991,6 +1005,8 @@ function normalizeParsedMeatItems(raw: unknown): {
     );
     let total = parseMoneyNumber(row.total ?? row.amount ?? row.importe ?? row.lineTotal ?? 0);
 
+    const ivaLine = parseMoneyNumber(row.ivaPercent ?? row.iva ?? row.lineIvaPercent ?? 0);
+
     if (quantity > 0 && total > 0 && pricePerUnit <= 0) {
       pricePerUnit = total / quantity;
     }
@@ -999,13 +1015,18 @@ function normalizeParsedMeatItems(raw: unknown): {
     }
     if (quantity <= 0 || total <= 0) continue;
 
-    out.push({
+    const base = {
       partName,
       quantity: Math.round(quantity * 1000) / 1000,
-      unit: "kg",
+      unit: "kg" as const,
       pricePerUnit: Math.round(pricePerUnit * 100) / 100,
       total: Math.round(total * 100) / 100,
-    });
+    };
+    if (ivaLine > 0 && ivaLine <= 30) {
+      out.push({ ...base, ivaPercent: Math.round(ivaLine * 100) / 100 });
+    } else {
+      out.push(base);
+    }
   }
 
   return out;
@@ -1018,6 +1039,7 @@ function applyMeatLineReconcile(
     unit: "kg";
     pricePerUnit: number;
     total: number;
+    ivaPercent?: number;
   }[],
   totalAmount: number,
   vendorRaw: string,
@@ -1027,6 +1049,7 @@ function applyMeatLineReconcile(
   unit: "kg";
   pricePerUnit: number;
   total: number;
+  ivaPercent?: number;
 }[] {
   const v =
     canonicalVendorDisplayName(String(vendorRaw ?? "").trim()) || String(vendorRaw ?? "").trim();
@@ -1037,8 +1060,9 @@ function applyMeatLineReconcile(
     partName: x.partName,
     quantity: x.quantity,
     unit: "kg",
-    pricePerUnit: x.pricePerUnit,
+    pricePerUnit: x.pricePerKgIncVat,
     total: x.total,
+    ...(x.ivaPercentResolved != null ? { ivaPercent: x.ivaPercentResolved } : {}),
   }));
 }
 
@@ -1741,7 +1765,8 @@ category — one exact string:
 Use "Meat" for butchers, carnicería, deli, embutidos, charcutería, names containing CARNS or similar.
 Use "Restaurant" for bars, cafés, menús.
 
-items: [{partName, quantity, unit:"kg", pricePerUnit, total}] ONLY when category is "Meat" AND the ticket shows weighted line items (carnicería / butcher style); for supermarkets with vegetables, fish, or mixed groceries use []. Otherwise [].
+items: [{partName, quantity, unit:"kg", pricePerUnit, total, ivaPercent?}] ONLY when category is "Meat" AND the ticket shows weighted line items (carnicería / butcher style); for supermarkets with vegetables, fish, or mixed groceries use []. Otherwise [].
+- On Spanish supplier albaranes, each product line often shows Precio (€/kg ex IVA), IVA % (e.g. 10), P.V.P. (€/kg inc IVA), and Importe (line total). Put ivaPercent as the printed VAT percent per line (e.g. 10) when visible. pricePerUnit should be Precio (ex VAT) €/kg when readable; total must be the line Importe (amount to pay for that line).
 - Never put traceability-only rows in items: lines whose text is mainly "LOTE: …", "Nº lote", "ORIGEN: …", "País de origen", or "TRAZABILIDAD" (often printed under the real cut with IMPORTE 0 or no weight) are not products — omit them entirely. Only real cuts (CHULETÓN, TAPA DE VACUNO, etc.) with real kg and line totals belong in items.
 
 Numbers in JSON must be JSON numbers for totalAmount, ivaAmount, tipAmount (not strings). Output ONLY the JSON object, no markdown.`;
@@ -1842,7 +1867,7 @@ Return ONLY a valid JSON object with these exact keys:
 - tipAmount: number (tip/gratuity amount in EUR, 0 if not found)
 - category: string (one of: "Meat", "Seafood", "Vegetables", "Restaurant", "Gas Station", "Water", "Beverages", "Asian Market", "Caviar", "Truffle", "Organic Farm", "Hardware Store", "Other")
 - subject: string (email subject line)
-- items: array of {partName, quantity, unit:"kg", pricePerUnit, total}
+- items: array of {partName, quantity, unit:"kg", pricePerUnit, total, ivaPercent?}
 
 When the PDF or body shows ALBARÁN / ALBARAN (delivery note) and the reference is on the next line or after a colon, use that value as invoiceNumber if no separate factura number exists.
 
@@ -3062,6 +3087,7 @@ export const appRouter = router({
                   unit: z.string(),
                   pricePerUnit: z.number(),
                   total: z.number(),
+                  ivaPercent: z.number().optional(),
                 })
               ).optional(),
             })
