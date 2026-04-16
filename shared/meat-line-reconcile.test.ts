@@ -47,4 +47,46 @@ describe("reconcileMeatLineItemsForInvoice", () => {
     expect(out).toHaveLength(1);
     expect(out[0]?.partName).toBe("CHULETON");
   });
+
+  it("grosses up net line total when totalIsNet is true (La Portenia-style)", () => {
+    const raw = [
+      {
+        partName: "Quinta Costilla Angus Nacional MV",
+        quantity: 3.13,
+        unit: "kg",
+        pricePerUnit: 25.9,
+        total: 81.07,
+        ivaPercent: 10,
+        totalIsNet: true,
+      },
+    ];
+    const out = reconcileMeatLineItemsForInvoice(raw, {
+      totalAmount: 89.18,
+      vendor: "La Portenia",
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.total).toBe(89.18);
+    expect(out[0]?.pricePerKgIncVat).toBe(28.49);
+    expect(out[0]?.pricePerKgExVat).toBe(25.9);
+  });
+
+  it("infers net column N total for single tracked line when it matches gross header × IVA", () => {
+    const raw = [
+      {
+        partName: "Quinta Costilla Angus Nacional MV",
+        quantity: 3.13,
+        unit: "kg",
+        pricePerUnit: 25.9,
+        total: 81.07,
+        ivaPercent: 10,
+      },
+    ];
+    const out = reconcileMeatLineItemsForInvoice(raw, {
+      totalAmount: 89.18,
+      vendor: "La Portenia",
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.total).toBe(89.18);
+    expect(out[0]?.pricePerKgIncVat).toBe(28.49);
+  });
 });

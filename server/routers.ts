@@ -964,6 +964,9 @@ function normalizeParsedMeatItems(raw: unknown): {
   pricePerUnit: number;
   total: number;
   ivaPercent?: number;
+  totalIsNet?: boolean;
+  lineTotalIsNet?: boolean;
+  totalIncludesVat?: boolean;
 }[] {
   if (!Array.isArray(raw)) return [];
   const out: {
@@ -973,6 +976,9 @@ function normalizeParsedMeatItems(raw: unknown): {
     pricePerUnit: number;
     total: number;
     ivaPercent?: number;
+    totalIsNet?: boolean;
+    lineTotalIsNet?: boolean;
+    totalIncludesVat?: boolean;
   }[] = [];
 
   for (const item of raw) {
@@ -1015,13 +1021,16 @@ function normalizeParsedMeatItems(raw: unknown): {
     }
     if (quantity <= 0 || total <= 0) continue;
 
-    const base = {
+    const base: (typeof out)[number] = {
       partName,
       quantity: Math.round(quantity * 1000) / 1000,
-      unit: "kg" as const,
+      unit: "kg",
       pricePerUnit: Math.round(pricePerUnit * 100) / 100,
       total: Math.round(total * 100) / 100,
     };
+    if (row.totalIsNet === true) base.totalIsNet = true;
+    if (row.lineTotalIsNet === true) base.lineTotalIsNet = true;
+    if (row.totalIncludesVat === false) base.totalIncludesVat = false;
     if (ivaLine > 0 && ivaLine <= 30) {
       out.push({ ...base, ivaPercent: Math.round(ivaLine * 100) / 100 });
     } else {
@@ -3088,6 +3097,9 @@ export const appRouter = router({
                   pricePerUnit: z.number(),
                   total: z.number(),
                   ivaPercent: z.number().optional(),
+                  totalIsNet: z.boolean().optional(),
+                  lineTotalIsNet: z.boolean().optional(),
+                  totalIncludesVat: z.boolean().optional(),
                 })
               ).optional(),
             })
@@ -3122,7 +3134,7 @@ export const appRouter = router({
         const accessToken = await getGoogleAccessToken();
 
         // First, ensure header row exists
-        // ✅ Column order (English labels for Sheets): Source, Invoice#, Vendor, Date, Total, VAT, Base, Tip, ...
+        // ✅ Column order (English labels for Sheets): Source, Invoice#, Vendor, Date, Total, IVA, Base, Tip, ...
         const headerValues = [
           [
             "Source",
@@ -3130,7 +3142,7 @@ export const appRouter = router({
             "Vendor",
             "Date",
             "Total (€)",
-            "VAT (€)",
+            "IVA (€)",
             "Base (€)",
             "Tip (€)",
             "Category",
@@ -3563,7 +3575,7 @@ export const appRouter = router({
               clampStringForSheetsCell(r.vendor, "Vendor"),
               clampStringForSheetsCell(formattedDate, "Date"),
               r.totalAmount,                                                           // E - Total (€)
-              r.ivaAmount ?? 0,                                                        // F - VAT (€)
+              r.ivaAmount ?? 0,                                                        // F - IVA (€)
               r.baseAmount != null ? r.baseAmount : r.totalAmount - (r.ivaAmount ?? 0), // G - Base (€) fallback for old invoices
               r.tip ?? 0,            // H - Tip (€)
               clampStringForSheetsCell(r.category, "Category"),
@@ -3831,16 +3843,46 @@ export const appRouter = router({
           accessToken,
           [],
         );
-        const { updateMeatSheets, buildMeatLineItems } = await import("./sheets-automation-vendor-aggregated");
+        const { updateMeatSheets, buildMeatLineItems, meatItemsColumnNDiagnostic } = await import(
+          "./sheets-automation-vendor-aggregated",
+        );
         await updateMeatSheets(accessToken, input.spreadsheetId, invoiceData);
         const meatLines = buildMeatLineItems(invoiceData);
+        let meatRebuildHint = "";
+        if (meatLines.length === 0) {
+          const diagUrl = `https://sheets.googleapis.com/v4/spreadsheets/${input.spreadsheetId}/values/${encodeValuesRange(input.sheetName, "A2:N")}?valueRenderOption=FORMULA`;
+          const diagRes = await fetch(diagUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+          if (diagRes.ok) {
+            const diagData = (await diagRes.json()) as { values?: unknown[][] };
+            const diagRows = diagData.values ?? [];
+            const hints = diagRows
+              .map((row, i) => {
+                const d = meatItemsColumnNDiagnostic(row[13]);
+                return d ? `Row ${i + 2} (N열): ${d}` : null;
+              })
+              .filter(Boolean) as string[];
+            if (hints.length > 0) meatRebuildHint = `\n\n${hints.join("\n")}`;
+          }
+          const excludedForCategory = invoiceData.filter(
+            (inv) =>
+              hasMeatLineItems(inv.items) &&
+              !shouldIncludeInvoiceInMeatLineSheets({
+                items: inv.items,
+                category: inv.category,
+                vendor: inv.vendor,
+              }),
+          );
+          if (excludedForCategory.length > 0) {
+            meatRebuildHint += `\n\n${excludedForCategory.length} row(s) have line items in N but are excluded from meat tabs (category must be Meat or vendor Es Cuco / La Portenia).`;
+          }
+        }
         return {
           success: true,
           trackerInvoiceCount: invoiceData.length,
           meatLineItemCount: meatLines.length,
           message:
             meatLines.length === 0
-              ? "No meat line items found. Add valid JSON to column N (Meat line items) for butcher rows, or re-export from the app with line items."
+              ? `No meat line items found. Add valid JSON array in column N (starts with [ ), or re-export from the app.${meatRebuildHint}`
               : `Meat sheets updated: ${meatLines.length} line item row(s) from ${invoiceData.length} tracker row(s).`,
         };
       }),

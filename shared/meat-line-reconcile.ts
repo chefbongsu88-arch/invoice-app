@@ -1,4 +1,7 @@
-import { isMeatLotOrigenTraceabilityLine, isTrackedMeatSupplierVendor } from "./invoice-types";
+import {
+  isMeatLotOrigenTraceabilityLine,
+  isTrackedMeatSupplierVendor,
+} from "./invoice-types";
 
 /** Parse amount from DB/OCR (Euro comma decimals, symbols). */
 export function parseMoney(value: unknown): number {
@@ -51,6 +54,8 @@ type WorkingLine = {
   /** Candidate €/kg from OCR (often Precio ex IVA) — reconciled to inc VAT. */
   priceKgHint: number;
   ivaFromOcr: number | null;
+  /** Column N flagged `totalIsNet` / `totalIncludesVat: false` — already grossed up in the first pass. */
+  explicitNet: boolean;
 };
 
 /**
@@ -61,12 +66,15 @@ type WorkingLine = {
  *    when IVA % is known (from OCR or default 10% for tracked meat suppliers).
  * 2. Per invoice (tracked meat suppliers only): if sum(line totals) drifts from header `totalAmount` by a few %,
  *    scale line totals to match the header (fixes OCR digit drops on lines vs OK footer total).
+ * 3. Column N may store **net** line `total` (matches Base (€)); use `totalIsNet`/`totalIncludesVat:false`, or for a single
+ *    La Portenia-style line infer gross when `total × (1+IVA%)` matches the main Total (€).
  */
 export function reconcileMeatLineItemsForInvoice(
   rawItems: unknown[] | null | undefined,
   invoice: { totalAmount?: unknown; vendor?: unknown },
 ): MeatLineDraft[] {
   const vendor = String(invoice.vendor ?? "");
+  const headerTotal = parseMoney(invoice.totalAmount);
   const working: WorkingLine[] = [];
 
   for (const raw of rawItems ?? []) {
@@ -84,9 +92,24 @@ export function reconcileMeatLineItemsForInvoice(
     const priceKgHint = parseMoney(
       o.pricePerUnit ?? o.price_per_unit ?? o.unitPrice ?? o.priceKg ?? o.price_kg,
     );
-    const total = parseMoney(o.total ?? o.amount ?? o.importe ?? o.lineTotal);
+    /** When true, `total` is net/base (before line IVA); we convert to gross for sums vs main TOTAL column. */
+    const totalIsNet =
+      o.totalIsNet === true ||
+      o.lineTotalIsNet === true ||
+      o.totalIncludesVat === false;
 
-    if (quantity <= 0 || total <= 0) continue;
+    let lineTotal = parseMoney(o.total ?? o.amount ?? o.importe ?? o.lineTotal);
+    const ivaFromLine = parseLineIvaPercent(o);
+    if (totalIsNet) {
+      const rate =
+        ivaFromLine ??
+        (isTrackedMeatSupplierVendor(vendor) ? DEFAULT_MEAT_LINE_IVA_PERCENT : null);
+      if (rate != null && rate > 0) {
+        lineTotal = round2(lineTotal * (1 + rate / 100));
+      }
+    }
+
+    if (quantity <= 0 || lineTotal <= 0) continue;
 
     const unit = "kg";
 
@@ -94,13 +117,34 @@ export function reconcileMeatLineItemsForInvoice(
       partName,
       quantity: Math.round(quantity * 1000) / 1000,
       unit,
-      total: round2(total),
+      total: round2(lineTotal),
       priceKgHint: priceKgHint > 0 ? round2(priceKgHint) : 0,
-      ivaFromOcr: parseLineIvaPercent(o),
+      ivaFromOcr: ivaFromLine,
+      explicitNet: totalIsNet,
     });
   }
 
   if (working.length === 0) return [];
+
+  /** Legacy column N: one line, `total` is base (81.07) while main Total (€) is gross (89.18) — bump when it fits. */
+  if (
+    working.length === 1 &&
+    !working[0]!.explicitNet &&
+    headerTotal > 0 &&
+    isTrackedMeatSupplierVendor(vendor)
+  ) {
+    const it = working[0]!;
+    const iva = it.ivaFromOcr ?? DEFAULT_MEAT_LINE_IVA_PERCENT;
+    if (iva > 0) {
+      const bumped = round2(it.total * (1 + iva / 100));
+      if (
+        Math.abs(bumped - headerTotal) <= 0.06 &&
+        Math.abs(it.total - headerTotal) > MONEY_EPS
+      ) {
+        it.total = bumped;
+      }
+    }
+  }
 
   for (const it of working) {
     if (it.quantity <= 0) continue;
@@ -121,7 +165,6 @@ export function reconcileMeatLineItemsForInvoice(
     it.priceKgHint = incPerKg;
   }
 
-  const headerTotal = parseMoney(invoice.totalAmount);
   const sumLines = round2(working.reduce((s, x) => s + x.total, 0));
 
   const relDiff =

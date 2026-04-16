@@ -28,7 +28,7 @@ const HEADER = [
   "Vendor",
   "Date",
   "Total (€)",
-  "VAT (€)",
+  "IVA (€)",
   "Base (€)",
   "Tip (€)",
   "Category",

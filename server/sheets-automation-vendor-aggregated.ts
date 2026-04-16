@@ -2,7 +2,11 @@ import {
   isMeatLotOrigenTraceabilityLine,
   shouldIncludeInvoiceInMeatLineSheets,
 } from "../shared/invoice-types";
-import { parseMoney, reconcileMeatLineItemsForInvoice } from "../shared/meat-line-reconcile";
+import {
+  DEFAULT_MEAT_LINE_IVA_PERCENT,
+  parseMoney,
+  reconcileMeatLineItemsForInvoice,
+} from "../shared/meat-line-reconcile";
 import { canonicalVendorDisplayName } from "../shared/vendor-canonical";
 import { receiptSheetsReceiptUrlCell } from "../shared/sheets-defaults";
 import {
@@ -18,6 +22,28 @@ import {
 
 const LINE_QTY_PRICE_EPS = 0.07;
 const HEADER_VS_LINES_EPS = 0.06;
+/** When main sheet total is gross (IVA incl.) but N column line totals are net/ex-VAT — allow ~10% gap. */
+const HEADER_NET_VS_GROSS_IVA_EPS = 0.18;
+
+/**
+ * Main tracker "Total" is often the amount **to pay** (IVA included). Column N may store line totals as
+ * **net / subtotal before invoice IVA** (e.g. La Portenia IMPORTE 81,07 vs TOTAL 89,18). Treat that as consistent.
+ */
+function headerMatchesMeatLineSumAllowingNetVsGross(
+  sumLines: number,
+  header: number,
+  lines: Array<{ ivaPercent: number | "" }>,
+): boolean {
+  if (header <= 0 || sumLines <= 0) return false;
+  if (Math.abs(sumLines - header) <= HEADER_VS_LINES_EPS) return true;
+  const ivas = lines.map((l) => l.ivaPercent).filter((x): x is number => typeof x === "number" && x > 0);
+  const ratePct = ivas.length > 0 ? ivas[0] : DEFAULT_MEAT_LINE_IVA_PERCENT;
+  const grossFromNet = sumLines * (1 + ratePct / 100);
+  const netFromGross = header / (1 + ratePct / 100);
+  if (Math.abs(grossFromNet - header) <= HEADER_NET_VS_GROSS_IVA_EPS) return true;
+  if (Math.abs(netFromGross - sumLines) <= HEADER_NET_VS_GROSS_IVA_EPS) return true;
+  return false;
+}
 
 /** Per-vendor lines are noisy in Railway; set VERBOSE_SHEETS_AGG_LOG=1 to enable. */
 const verboseSheetsAggLog =
@@ -305,7 +331,7 @@ async function createMonthlySheets(
   }
 
   const header = [
-    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)",
+    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)",
     "Category", "Currency", "Notes", "Receipt", "Exported At"
   ];
 
@@ -341,7 +367,7 @@ async function createMonthlySheets(
     const totalRow = [
       "", "", `${month} TOTAL`, "",
       "=SUM(E3:E1000)",      // E: Total (€) - auto sum
-      "=SUM(F3:F1000)",      // F: VAT (€) - auto sum
+      "=SUM(F3:F1000)",      // F: IVA (€) - auto sum
       "=SUM(G3:G1000)",      // G: Base (€) - auto sum
       "=SUM(H3:H1000)",      // H: Tip (€) - auto sum
       "", "", "", "", ""
@@ -356,7 +382,7 @@ async function createMonthlySheets(
         vendor.vendor,           // C: Vendor
         trackerDateToSheetsDateCell(vendor.date), // D: Date (=DATE like main tracker)
         vendor.totalAmount,      // E: Total (€) - as number, not string!
-        vendor.ivaAmount,        // F: VAT (€) - as number, not string!
+        vendor.ivaAmount,        // F: IVA (€) - as number, not string!
         vendor.baseAmount,       // G: Base (€) - as number, not string!
         vendor.tip ?? 0,         // H: Tip (€) - as number, not string!
         vendor.category,         // I: Category
@@ -436,7 +462,7 @@ async function createQuarterlySheets(
   }
 
   const header = [
-    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "VAT (€)", "Base (€)", "Tip (€)",
+    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)",
     "Category", "Currency", "Notes", "Receipt", "Exported At"
   ];
 
@@ -471,7 +497,7 @@ async function createQuarterlySheets(
     const totalRow = [
       "", "", "QUARTERLY TOTAL", "",
       "=SUM(E3:E1000)",      // E: Total (€) - auto sum
-      "=SUM(F3:F1000)",      // F: VAT (€) - auto sum
+      "=SUM(F3:F1000)",      // F: IVA (€) - auto sum
       "=SUM(G3:G1000)",      // G: Base (€) - auto sum
       "=SUM(H3:H1000)",      // H: Tip (€) - auto sum
       "", "", "", "", ""
@@ -486,7 +512,7 @@ async function createQuarterlySheets(
         vendor.vendor,           // C: Vendor
         trackerDateToSheetsDateCell(vendor.date), // D: Date (=DATE like main tracker)
         vendor.totalAmount,      // E: Total (€) - as number, not string!
-        vendor.ivaAmount,        // F: VAT (€) - as number, not string!
+        vendor.ivaAmount,        // F: IVA (€) - as number, not string!
         vendor.baseAmount,       // G: Base (€) - as number, not string!
         vendor.tip ?? 0,         // H: Tip (€) - as number, not string!
         vendor.category,         // I: Category
@@ -546,7 +572,28 @@ async function createQuarterlySheets(
 
 const MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-/** Column N on main tracker: JSON array of meat line items (optional ivaPercent). */
+/**
+ * Human-readable reason when column N cannot be turned into meat line items (rebuild / debug).
+ */
+export function meatItemsColumnNDiagnostic(val: unknown): string | null {
+  if (val === null || val === undefined) return "N열이 비어 있습니다.";
+  let s = String(val).replace(/^\uFEFF/, "").trim();
+  if (!s || s === "FALSE" || s === "TRUE") return "N열이 비어 있거나 불린입니다.";
+  if (!s.startsWith("[")) {
+    return `N열은 JSON 배열이어야 하며 [ 로 시작해야 합니다. 앞부분: ${JSON.stringify(s.slice(0, 36))}${s.length > 36 ? "…" : ""}`;
+  }
+  try {
+    JSON.parse(s);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return `JSON 문법 오류: ${msg} (따옴표/쉼표/대괄호를 다시 확인하세요)`;
+  }
+  const items = parseTrackerMeatItemsJsonCell(val);
+  if (items?.length) return null;
+  return "JSON은 읽혔지만 유효한 고기 줄이 없습니다. partName·quantity(>0)·total(>0)이 있는지, LOTE/추적 전용 줄만 있지 않은지 확인하세요.";
+}
+
+/** Column N on main tracker: JSON array of meat line items (optional ivaPercent, net total flags). */
 export function parseTrackerMeatItemsJsonCell(val: unknown):
   | Array<{
       partName: string;
@@ -555,10 +602,13 @@ export function parseTrackerMeatItemsJsonCell(val: unknown):
       pricePerUnit: number;
       total: number;
       ivaPercent?: number;
+      totalIsNet?: boolean;
+      lineTotalIsNet?: boolean;
+      totalIncludesVat?: boolean;
     }>
   | undefined {
   if (val === null || val === undefined) return undefined;
-  const s = String(val).trim();
+  const s = String(val).replace(/^\uFEFF/, "").trim();
   if (!s || s === "FALSE" || s === "TRUE") return undefined;
   if (!s.startsWith("[")) return undefined;
   try {
@@ -571,6 +621,9 @@ export function parseTrackerMeatItemsJsonCell(val: unknown):
       pricePerUnit: number;
       total: number;
       ivaPercent?: number;
+      totalIsNet?: boolean;
+      lineTotalIsNet?: boolean;
+      totalIncludesVat?: boolean;
     }> = [];
     for (const el of arr) {
       if (!el || typeof el !== "object") continue;
@@ -596,6 +649,9 @@ export function parseTrackerMeatItemsJsonCell(val: unknown):
       if (Number.isFinite(ivaRaw) && ivaRaw > 0 && ivaRaw <= 30) {
         row.ivaPercent = Math.round(ivaRaw * 100) / 100;
       }
+      if (o.totalIsNet === true) row.totalIsNet = true;
+      if (o.lineTotalIsNet === true) row.lineTotalIsNet = true;
+      if (o.totalIncludesVat === false) row.totalIncludesVat = false;
       out.push(row);
     }
     return out.length > 0 ? out : undefined;
@@ -688,7 +744,8 @@ export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
     }
     const sumChunk = chunk.reduce((s, r) => s + r.totalEur, 0);
     const headerMismatch =
-      headerTotalMain > 0 && Math.abs(sumChunk - headerTotalMain) > HEADER_VS_LINES_EPS;
+      headerTotalMain > 0 &&
+      !headerMatchesMeatLineSumAllowingNetVsGross(sumChunk, headerTotalMain, chunk);
     for (const r of chunk) {
       const lineGap = Math.abs(r.quantityKg * r.pricePerKgIncVat - r.totalEur);
       r.highlightWarning = headerMismatch || lineGap > LINE_QTY_PRICE_EPS;

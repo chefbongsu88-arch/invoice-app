@@ -97,6 +97,10 @@ export interface MeatItem {
   total: number; // line Importe (incl. VAT)
   /** Line IVA % when printed (e.g. 10 on Spanish albaranes). Used for ex-VAT €/kg in Sheets. */
   ivaPercent?: number;
+  /** When true, `total` is base (ex IVA); reconcile grosses up to match main Total (€) column. */
+  totalIsNet?: boolean;
+  lineTotalIsNet?: boolean;
+  totalIncludesVat?: boolean;
 }
 
 export interface Invoice {
