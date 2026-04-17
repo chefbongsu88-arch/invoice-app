@@ -556,6 +556,7 @@ export default function SettingsScreen() {
               <Text style={[styles.stepTitle, { color: colors.foreground }]}>Scan Receipts</Text>
               <Text style={[styles.stepDesc, { color: colors.muted }]}>
                 Use the Scan tab to capture paper receipts with your camera. AI will automatically extract the data.
+                Spanish/Catalan delivery notes often show ALBARÁN or N&apos;ALBARAN — the number next to that label is used as the invoice number when present.
               </Text>
             </View>
           </View>

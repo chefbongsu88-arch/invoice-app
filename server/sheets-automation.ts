@@ -70,8 +70,8 @@ const SHEETS_WRITE_MAX_RETRIES = 8;
 const SHEETS_WRITE_BASE_DELAY_MS = 2500;
 
 /**
- * Retry on HTTP 429 (Write requests per minute per user — often 60/min).
- * Use for values.clear / values.update so long runs (main + 12 months + Q + meat tabs) stay under quota bursts.
+ * Retry on HTTP 429 (Sheets API per-user quota — write and read limits both return 429).
+ * Use for values.get / values.clear / values.update during heavy automation bursts.
  */
 export async function fetchSheetsApiWithRetry(
   url: string,
@@ -88,7 +88,7 @@ export async function fetchSheetsApiWithRetry(
       ? Math.min(Math.max(parseInt(ra, 10) * 1000, delayMs), 120_000)
       : delayMs;
     console.warn(
-      `[Sheets] ${context}: 429 write quota — waiting ${Math.round(waitMs)}ms (attempt ${attempt}/${SHEETS_WRITE_MAX_RETRIES})`,
+      `[Sheets] ${context}: 429 — waiting ${Math.round(waitMs)}ms (attempt ${attempt}/${SHEETS_WRITE_MAX_RETRIES})`,
     );
     await sleepMs(waitMs);
     delayMs = Math.min(delayMs * 2, 45_000);
@@ -460,7 +460,11 @@ export async function ensureSheetExists(
     const topLeft = "A1:Z1";
     const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, topLeft)}`;
     const authHeaders = { Authorization: `Bearer ${accessToken}` };
-    const checkRes = await fetch(checkUrl, { headers: authHeaders });
+    const checkRes = await fetchSheetsApiWithRetry(
+      checkUrl,
+      { headers: authHeaders },
+      `ensureSheetExists ${sheetName} values.get`,
+    );
 
     let hasHeaderRow = false;
 
@@ -468,15 +472,19 @@ export async function ensureSheetExists(
       const parsed = await valuesRangeHasHeaderRow(checkRes);
       hasHeaderRow = parsed.hasHeader;
     } else {
-      // values.get can fail (e.g. 429) even when the tab exists — do not addSheet until we know.
+      // values.get can still fail after retries — do not addSheet until we know tab state.
       const existingId = await getSheetIdByTitle(spreadsheetId, sheetName, accessToken);
       if (existingId !== null) {
-        const retry = await fetch(checkUrl, { headers: authHeaders });
+        const retry = await fetchSheetsApiWithRetry(
+          checkUrl,
+          { headers: authHeaders },
+          `ensureSheetExists ${sheetName} values.get retry`,
+        );
         const parsed = await valuesRangeHasHeaderRow(retry);
         hasHeaderRow = parsed.hasHeader;
         if (!retry.ok) {
           console.warn(
-            `[Sheets] ensureSheetExists: tab "${sheetName}" exists but values read failed; skipping header write this run.`,
+            `[Sheets] ensureSheetExists: tab "${sheetName}" exists but values read failed after retry; skipping header write this run.`,
           );
           return true;
         }
@@ -509,7 +517,11 @@ export async function ensureSheetExists(
           }
         }
 
-        const afterCreate = await fetch(checkUrl, { headers: authHeaders });
+        const afterCreate = await fetchSheetsApiWithRetry(
+          checkUrl,
+          { headers: authHeaders },
+          `ensureSheetExists ${sheetName} values.get after create`,
+        );
         const parsed = await valuesRangeHasHeaderRow(afterCreate);
         hasHeaderRow = parsed.hasHeader;
       }
@@ -517,14 +529,18 @@ export async function ensureSheetExists(
 
     if (!hasHeaderRow) {
       const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, topLeft)}?valueInputOption=RAW`;
-      const putRes = await fetch(headerUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
+      const putRes = await fetchSheetsApiWithRetry(
+        headerUrl,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ values: [headers] }),
         },
-        body: JSON.stringify({ values: [headers] }),
-      });
+        `ensureSheetExists ${sheetName} header row`,
+      );
       if (!putRes.ok) {
         console.error(
           "Failed to write headers to",

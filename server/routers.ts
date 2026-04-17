@@ -1768,6 +1768,7 @@ CRITICAL — amounts (European style):
 invoiceNumber (document reference):
 - Prefer the printed invoice / factura id when you see labels like Nº Factura, FACTURA, Invoice No., etc.
 - On Spanish delivery notes and supplier tickets, the word ALBARÁN or ALBARAN (delivery note) is common: the document number is often on the same line after ":" or "-" or printed on the line directly below that heading. Use that full reference as invoiceNumber when no separate "Factura" number exists.
+- Some tickets print N'ALBARAN, N´ALBARAN, Nº ALBARÁN, or N.º ALBARÁN (Catalan / Spanish styles) — treat these the same as ALBARÁN: the albarán document id is the number after ":" or on the next line; use it as invoiceNumber.
 - **Never** use a **customer CIF/NIF** as invoiceNumber. The buyer tax id **B56819451** appears on many Es Cuco / supplier tickets near "Cliente" or "CIF" — it is **not** the albarán or factura number; leave invoiceNumber empty or use the real document id from ALBARÁN / Nº only, never B56819451.
 
 Vendor:
@@ -1797,7 +1798,7 @@ items: [{partName, quantity, unit:"kg", pricePerUnit, total, ivaPercent?}] ONLY 
 
 Numbers in JSON must be JSON numbers for totalAmount, ivaAmount, tipAmount (not strings). Output ONLY the JSON object, no markdown.`;
 
-const RECEIPT_PARSE_USER = `Read only text visible on this receipt image (totals, tax, vendor header, factura or ALBARÁN/ALBARAN document number, printed date). Ignore any idea of "today". Return the JSON object now.`;
+const RECEIPT_PARSE_USER = `Read only text visible on this receipt image (totals, tax, vendor header, factura or ALBARÁN / ALBARAN / N'ALBARAN document number, printed date). Ignore any idea of "today". Return the JSON object now.`;
 
 /** Forge-encode to JPEG, then Gemini; on failure try raw JPEG/PNG or HEIC→JPEG. */
 async function runGoogleGeminiReceiptOcr(
@@ -1895,7 +1896,7 @@ Return ONLY a valid JSON object with these exact keys:
 - subject: string (email subject line)
 - items: array of {partName, quantity, unit:"kg", pricePerUnit, total, ivaPercent?}
 
-When the PDF or body shows ALBARÁN / ALBARAN (delivery note) and the reference is on the next line or after a colon, use that value as invoiceNumber if no separate factura number exists.
+When the PDF or body shows ALBARÁN / ALBARAN / N'ALBARAN / Nº ALBARÁN (delivery note) and the reference is on the next line or after a colon, use that value as invoiceNumber if no separate factura number exists.
 - **Never** set invoiceNumber to **B56819451** — that is a customer **CIF**, not a document number.
 
 For Meat invoices:
@@ -1910,14 +1911,39 @@ For Meat invoices:
 Return only the JSON, no markdown, no explanation.`;
 
 /**
- * Spanish B2B PDFs often print ALBARÁN / ALBARAN with the document id on the same line (after ":") or on the following line.
+ * Spanish / Catalan B2B PDFs: ALBARÁN, ALBARAN, N'ALBARAN, Nº ALBARÁN — document id after ":" or on the next line.
  */
+function stripLeadingAlbaranHeading(line: string): string | null {
+  const patterns = [
+    /^N[''\u2019´`]\s*ALBAR[AÁ]N\b\s*/i,
+    /^N[ºo°]\.?\s*ALBAR[AÁ]N\b\s*/i,
+    /^ALBAR[AÁ]N\b\s*/i,
+  ];
+  for (const re of patterns) {
+    if (re.test(line)) return line.replace(re, "").trim();
+  }
+  return null;
+}
+
 function extractDocumentIdNearAlbaranLabel(rawMultiline: string): string {
   const text = String(rawMultiline ?? "");
   const flattened = normalizeExtractedInvoiceText(text)
     .replace(/\r\n|\r|\n/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+  const nAlbaranInline: RegExp[] = [
+    /\bN[''\u2019´`]\s*ALBAR[AÁ]N\b\s*[:\s#.-]*\s*([A-Z0-9][A-Z0-9\-_/]{2,})\b/i,
+    /\bN[ºo°]\.?\s*ALBAR[AÁ]N\b\s*[:\s#.-]*\s*([A-Z0-9][A-Z0-9\-_/]{2,})\b/i,
+  ];
+  for (const re of nAlbaranInline) {
+    const m = flattened.match(re);
+    if (m?.[1]) {
+      const id = cleanParsedInvoiceNumber(m[1]);
+      if (id) return id;
+    }
+  }
+
   const inline = flattened.match(
     /\bALBAR[AÁ]N\b\s*(?:N[ºo°]?\.?|NUM(?:ERO)?\.?|N[ÚU]M\.?)?\s*[:\s#.-]*\s*([A-Z0-9][A-Z0-9\-_/]{2,})\b/i,
   );
@@ -1929,11 +1955,11 @@ function extractDocumentIdNearAlbaranLabel(rawMultiline: string): string {
   const lines = text.replace(/\r\n|\r/g, "\n").split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = (lines[i] ?? "").trim();
-    if (!/^ALBAR[AÁ]N\b/i.test(line)) continue;
+    const afterHeading = stripLeadingAlbaranHeading(line);
+    if (afterHeading === null) continue;
 
-    const after = line.replace(/^ALBAR[AÁ]N\b\s*/i, "").trim();
-    if (after) {
-      const id = cleanParsedInvoiceNumber(after.replace(/^[:\s#.-]+/, ""));
+    if (afterHeading) {
+      const id = cleanParsedInvoiceNumber(afterHeading.replace(/^[:\s#.-]+/, ""));
       if (id) return id;
     }
 
@@ -1970,6 +1996,8 @@ function fallbackParseEmailInvoiceFromText(
     .replace(/\s+/g, " ")
     .trim();
   const invMatch =
+    normalized.match(/\bN[''\u2019´`]\s*ALBAR[AÁ]N\b\s*[:\s#.-]*\s*([A-Z0-9][A-Z0-9\-_/]{2,})\b/i) ??
+    normalized.match(/\bN[ºo°]\.?\s*ALBAR[AÁ]N\b\s*[:\s#.-]*\s*([A-Z0-9][A-Z0-9\-_/]{2,})\b/i) ??
     normalized.match(
       /\bALBAR[AÁ]N\b\s*(?:N[ºo°]?\.?|NUM(?:ERO)?\.?|N[ÚU]M\.?)?\s*[:\s#.-]*\s*([A-Z0-9][A-Z0-9\-_/]{2,})\b/i,
     ) ??
