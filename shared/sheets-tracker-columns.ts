@@ -12,7 +12,7 @@ export const MAIN_TRACKER_HEADER_ROW: readonly string[] = [
   "IVA (€)",
   "Base (€)",
   "Tip (€)",
-  "Total (€)",
+  "Total (€) inc IVA",
   "Category",
   "Currency",
   "Notes",
@@ -51,14 +51,19 @@ const CURRENT_MONEY: MainTrackerMoneyIndices = {
 export function resolveMainTrackerMoneyColumnIndices(headerRow: unknown[]): MainTrackerMoneyIndices {
   const h = headerRow.map((x) => String(x ?? "").trim());
   const idx = (name: string) => h.indexOf(name);
-  const t = idx("Total (€)");
-  const i = idx("IVA (€)");
+  const tInc = idx("Total (€) inc IVA");
+  const t = tInc >= 0 ? tInc : idx("Total (€)");
+  const iVa = idx("IVA (€)");
+  const i = iVa >= 0 ? iVa : idx("VAT (€)");
   const b = idx("Base (€)");
   const tip = idx("Tip (€)");
   if (t >= 0 && i >= 0 && b >= 0 && tip >= 0) {
     return { total: t, iva: i, base: b, tip };
   }
-  if (h[4] === "IVA (€)" && h[7] === "Total (€)") return CURRENT_MONEY;
+  const h7 = h[7];
+  const totalAtH =
+    h7 === "Total (€) inc IVA" || h7 === "Total (€)";
+  if ((h[4] === "IVA (€)" || h[4] === "VAT (€)") && totalAtH) return CURRENT_MONEY;
   if (h[4] === "Total (€)" && h[7] === "Tip (€)") return LEGACY_MONEY;
   return LEGACY_MONEY;
 }

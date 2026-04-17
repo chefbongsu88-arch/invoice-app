@@ -90,6 +90,38 @@ describe("reconcileMeatLineItemsForInvoice", () => {
     expect(out[0]?.total).toBe(89.18);
   });
 
+  it("grosses up each line when two net Importe lines sum to NETO and header is IVA-incl. total (La Portenia)", () => {
+    const raw = [
+      {
+        partName: "Brisket Angus USA",
+        quantity: 14,
+        unit: "kg",
+        pricePerUnit: 17.9,
+        total: 250.6,
+        ivaPercent: 10,
+      },
+      {
+        partName: "Wagyu Lomo bajo",
+        quantity: 5,
+        unit: "kg",
+        pricePerUnit: 125,
+        total: 625,
+        ivaPercent: 10,
+      },
+    ];
+    const out = reconcileMeatLineItemsForInvoice(raw, {
+      totalAmount: 963.16,
+      vendor: "La Portenia",
+    });
+    expect(out).toHaveLength(2);
+    const sum = Math.round(out.reduce((s, x) => s + x.total, 0) * 100) / 100;
+    expect(sum).toBe(963.16);
+    expect(out[0]?.total).toBe(275.66);
+    expect(out[1]?.total).toBe(687.5);
+    expect(out[0]?.pricePerKgExVat).toBe(17.9);
+    expect(out[1]?.pricePerKgExVat).toBe(125);
+  });
+
   it("infers net column N total for single tracked line when it matches gross header × IVA", () => {
     const raw = [
       {

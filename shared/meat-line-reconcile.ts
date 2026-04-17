@@ -158,6 +158,45 @@ export function reconcileMeatLineItemsForInvoice(
     }
   }
 
+  /**
+   * Multi-line albaranes: each line `total` is often **Importe (net / NETO GRAVADO)** while the main tracker
+   * `totalAmount` is **IVA included**. Single-line net→gross is handled above; without this, two nets that
+   * sum to e.g. 875.60 vs header 963.16 skip `allowHeaderScale` (≈9% gap > 4%) and lines stay net → wrong Base/IVA.
+   */
+  if (
+    working.length >= 2 &&
+    headerTotal > 0 &&
+    isTrackedMeatSupplierVendor(vendor) &&
+    !working.some((w) => w.explicitNet)
+  ) {
+    const sumLinesPre = round2(working.reduce((s, x) => s + x.total, 0));
+    if (Math.abs(sumLinesPre - headerTotal) > MONEY_EPS) {
+      const rateCandidates = new Set<number>();
+      for (const w of working) {
+        if (w.ivaFromOcr != null && w.ivaFromOcr > 0) rateCandidates.add(w.ivaFromOcr);
+      }
+      rateCandidates.add(DEFAULT_MEAT_LINE_IVA_PERCENT);
+      rateCandidates.add(21);
+      for (const rate of rateCandidates) {
+        const impliedGross = round2(sumLinesPre * (1 + rate / 100));
+        if (Math.abs(impliedGross - headerTotal) <= 0.18) {
+          let acc = 0;
+          for (let i = 0; i < working.length; i++) {
+            const last = i === working.length - 1;
+            if (last) {
+              working[i]!.total = round2(headerTotal - acc);
+            } else {
+              const g = round2(working[i]!.total * (1 + rate / 100));
+              working[i]!.total = g;
+              acc += g;
+            }
+          }
+          break;
+        }
+      }
+    }
+  }
+
   for (const it of working) {
     if (it.quantity <= 0) continue;
     const impliedInc = it.total / it.quantity;

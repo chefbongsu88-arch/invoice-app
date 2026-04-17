@@ -184,7 +184,7 @@ export default function SettingsScreen() {
     }
     Alert.alert(
       "Rebuild meat sheets?",
-      "Reads the main tracker tab and refreshes Meat_Line_Items, Meat_Orders, Meat_Cut_Summary, and Meat_Monthly_Summary. Line items come from column N (JSON) when present. Monthly and quarterly tabs are not changed.",
+      "Reads the main tracker tab and refreshes Meat_Line_Items, Meat_Orders, Meat_Cut_Summary, and Meat_Monthly_Summary. Line items come from column N (JSON) when present; meat line totals are IVA-inclusive (gross). Monthly and quarterly tabs are not changed.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -382,7 +382,7 @@ export default function SettingsScreen() {
             ["E", "IVA (€)", "IVA amount"],
             ["F", "Base (€)", "Amount before tax"],
             ["G", "Tip (€)", "Tip (restaurants)"],
-            ["H", "Total (€)", "Total amount"],
+            ["H", "Total (€) inc IVA", "Total amount (IVA included)"],
             ["I", "Category", "AI classification"],
             ["J", "Currency", "EUR"],
             ["K", "Notes", "Additional notes"],

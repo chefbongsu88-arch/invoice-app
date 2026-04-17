@@ -20,8 +20,10 @@ import {
   TRACKER_COLUMN_COUNT,
 } from "./sheets-automation";
 
+/** Max |round2(kg×€/kg) − Importe| in €; avoids false warnings when €/kg is rounded for display. */
 const LINE_QTY_PRICE_EPS = 0.07;
-const HEADER_VS_LINES_EPS = 0.06;
+/** Main Total vs sum of meat line Importe (€); slightly loose for sheet float + cent rounding. */
+const HEADER_VS_LINES_EPS = 0.12;
 /** When main sheet total is gross (IVA incl.) but N column line totals are net/ex-VAT — allow ~10% gap. */
 const HEADER_NET_VS_GROSS_IVA_EPS = 0.18;
 
@@ -331,7 +333,7 @@ async function createMonthlySheets(
   }
 
   const header = [
-    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)",
+    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€) inc IVA",
     "Category", "Currency", "Notes", "Receipt", "Exported At"
   ];
 
@@ -462,7 +464,7 @@ async function createQuarterlySheets(
   }
 
   const header = [
-    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)",
+    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€) inc IVA",
     "Category", "Currency", "Notes", "Receipt", "Exported At"
   ];
 
@@ -772,12 +774,13 @@ export function buildMeatLineItems(invoices: any[]): MeatItemRow[] {
         highlightWarning: false,
       });
     }
-    const sumChunk = chunk.reduce((s, r) => s + r.totalEur, 0);
+    const sumChunk = roundMeatMoney(chunk.reduce((s, r) => s + r.totalEur, 0));
     const headerMismatch =
       headerTotalMain > 0 &&
       !headerMatchesMeatLineSumAllowingNetVsGross(sumChunk, headerTotalMain, chunk);
     for (const r of chunk) {
-      const lineGap = Math.abs(r.quantityKg * r.pricePerKgIncVat - r.totalEur);
+      const impliedFromDisplayed = roundMeatMoney(r.quantityKg * r.pricePerKgIncVat);
+      const lineGap = Math.abs(impliedFromDisplayed - r.totalEur);
       r.highlightWarning = headerMismatch || lineGap > LINE_QTY_PRICE_EPS;
     }
     rows.push(...chunk);
@@ -934,7 +937,8 @@ export async function updateMeatSheets(
   spreadsheetId: string,
   invoices: any[]
 ): Promise<void> {
-  /** Source first, Total (gross) last; Base → IVA → Total reads L→R like receipt lines. */
+  /** Source first; last column is line gross (IVA included), matching main tracker Total (€). */
+  /** No separate €/kg ex column — derivable from €/kg inc IVA and IVA % (or from Base ÷ kg). */
   const lineItemHeader = [
     "Source",
     "Month",
@@ -943,22 +947,27 @@ export async function updateMeatSheets(
     "Invoice #",
     "Cut Name",
     "Quantity (kg)",
-    "€/kg ex IVA (Precio)",
     "€/kg inc IVA (P.V.P.)",
     "Base (€)",
     "IVA (€)",
-    "Total (€)",
+    "Total (€) inc IVA",
   ];
   const meatLineColumnCount = lineItemHeader.length;
-  const ordersHeader = ["Month", "Vendor", "Order Count", "Total Meat Kg", "Total Meat Spend (€)"];
+  const ordersHeader = ["Month", "Vendor", "Order Count", "Total Meat Kg", "Total Meat Spend (€) inc IVA"];
   const cutSummaryHeader = [
     "Month",
     "Cut Name",
     "Total Kg",
-    "Total Spend (€)",
+    "Total Spend (€) inc IVA",
     "Avg €/kg inc IVA",
   ];
-  const monthlySummaryHeader = ["Month", "Total Meat Kg", "Total Meat Spend (€)", "Invoice Count", "Vendor Count"];
+  const monthlySummaryHeader = [
+    "Month",
+    "Total Meat Kg",
+    "Total Meat Spend (€) inc IVA",
+    "Invoice Count",
+    "Vendor Count",
+  ];
 
   // Keep meat tabs visible with headers even when there are no meat rows yet.
   await ensureSheetExists(spreadsheetId, "Meat_Line_Items", accessToken, lineItemHeader);
@@ -979,7 +988,6 @@ export async function updateMeatSheets(
     item.invoiceNumber,
     item.cutName,
     item.quantityKg,
-    item.pricePerKgExVat,
     item.pricePerKgIncVat,
     item.baseEur,
     item.ivaAmountEur,

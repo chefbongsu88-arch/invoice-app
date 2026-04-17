@@ -26,7 +26,7 @@ const SERVICE_ACCOUNT_JSON = "";
 /** Main tab A–N — same as server `MAIN_TRACKER_HEADER_ROW` (Total after Tip, before Category). */
 const MAIN_TRACKER_HEADER = [...MAIN_TRACKER_HEADER_ROW];
 
-/** Monthly / quarterly tabs (no column N). Total (€) is column H, after Tip. */
+/** Monthly / quarterly tabs (no column N). Total (€) inc IVA is column H, after Tip. */
 const HEADER = [
   "Source",
   "Invoice #",
@@ -35,7 +35,7 @@ const HEADER = [
   "IVA (€)",
   "Base (€)",
   "Tip (€)",
-  "Total (€)",
+  "Total (€) inc IVA",
   "Category",
   "Currency",
   "Notes",
