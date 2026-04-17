@@ -3,6 +3,8 @@
  * Standardizes all monthly sheets to match January template
  */
 
+import { resolveMainTrackerMoneyColumnIndices } from "../shared/sheets-tracker-columns";
+
 /**
  * Clear and rebuild a sheet with correct structure
  */
@@ -23,7 +25,7 @@ export async function fixMonthlySheet(
 
   try {
     // Step 1: Get all data from main sheet
-    const trackerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("2026 Invoice tracker")}!A2:L`;
+    const trackerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("2026 Invoice tracker")}!A1:L`;
     const trackerRes = await fetch(trackerUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
@@ -33,7 +35,9 @@ export async function fixMonthlySheet(
     }
 
     const trackerData = await trackerRes.json() as any;
-    const allInvoices = trackerData.values || [];
+    const allRows = trackerData.values || [];
+    const money = resolveMainTrackerMoneyColumnIndices(allRows[0] ?? []);
+    const allInvoices = allRows.slice(1);
 
     // Step 2: Filter invoices for this month
     const monthNumber = getMonthNumber(monthName);
@@ -51,10 +55,10 @@ export async function fixMonthlySheet(
 
     monthInvoices.forEach((row: any) => {
       const vendor = row[2]; // Column C: Vendor
-      const total = parseFloat(row[4]) || 0; // Column E: Total
-      const iva = parseFloat(row[5]) || 0; // Column F: IVA
-      const base = parseFloat(row[6]) || 0; // Column G: Base
-      const tip = parseFloat(row[7]) || 0; // Column H: Tip
+      const total = parseFloat(row[money.total]) || 0;
+      const iva = parseFloat(row[money.iva]) || 0;
+      const base = parseFloat(row[money.base]) || 0;
+      const tip = parseFloat(row[money.tip]) || 0;
 
       if (vendor) {
         const existing = vendorMap.get(vendor) || { total: 0, iva: 0, base: 0, tip: 0 };
@@ -78,10 +82,10 @@ export async function fixMonthlySheet(
         "", // Invoice # (will use SUMIF)
         vendor, // Vendor
         "", // Date
-        `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${monthStart(monthNumber)}",...)`, // Total - SUMIF
-        `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${monthStart(monthNumber)}",...)`, // IVA - SUMIF
-        `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${monthStart(monthNumber)}",...)`, // Base - SUMIF
-        `=SUMIFS('2026 Invoice tracker'!H:H,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${monthStart(monthNumber)}",...)`, // Tip - SUMIF
+        `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${monthStart(monthNumber)}",...)`, // IVA - SUMIF
+        `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${monthStart(monthNumber)}",...)`, // Base - SUMIF
+        `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${monthStart(monthNumber)}",...)`, // Tip - SUMIF
+        `=SUMIFS('2026 Invoice tracker'!H:H,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${monthStart(monthNumber)}",...)`, // Total - SUMIF
         monthInvoices.find((r: any) => r[2] === vendor)?.[8] || "Meat", // Category
         "EUR", // Currency
         "", // Notes

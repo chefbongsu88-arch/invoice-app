@@ -6,6 +6,7 @@
  * - No TOTAL rows (user doesn't want them)
  */
 
+import { resolveMainTrackerMoneyColumnIndices } from "../shared/sheets-tracker-columns";
 import { uploadImageToStorage } from "./image-upload-storage";
 import { encodeValuesRange } from "./sheets-automation";
 
@@ -66,17 +67,19 @@ export async function exportToSheetsFixed(
   const now = new Date().toISOString();
   
   // Fetch existing invoices to check for duplicates
-  const existingUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(mainSheetName)}!A2:M`;
+  const existingUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(mainSheetName)}!A1:M`;
   const existingRes = await fetch(existingUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   
   const existingData = await existingRes.json() as { values?: any[][] };
-  const existingInvoices = (existingData.values || []).map((row: any[]) => ({
+  const existingRows = existingData.values || [];
+  const existingMoney = resolveMainTrackerMoneyColumnIndices(existingRows[0] ?? []);
+  const existingInvoices = existingRows.slice(1).map((row: any[]) => ({
     invoiceNumber: row[1] || "",
     vendor: row[2] || "",
     date: row[3] || "",
-    totalAmount: parseFloat(row[4]) || 0,
+    totalAmount: parseFloat(row[existingMoney.total]) || 0,
   }));
   
   const warnings: string[] = [];
@@ -167,12 +170,12 @@ export async function exportToSheetsFixed(
         r.invoiceNumber,
         r.vendor,
         formattedDate,
-        r.totalAmount,
         r.ivaAmount,
         r.baseAmount,
+        r.tip ?? 0,
+        r.totalAmount,
         r.category,
         r.currency,
-        r.tip ?? 0,
         r.notes ?? "",
         imageUrl,
         now,
@@ -202,7 +205,7 @@ export async function exportToSheetsFixed(
   // Step 2: Fetch ALL invoices from main sheet
   console.log(`[Export] Fetching all invoices from main sheet...`);
   
-  const allInvoicesUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(mainSheetName)}!A2:M`;
+  const allInvoicesUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(mainSheetName)}!A1:M`;
   const allInvoicesRes = await fetch(allInvoicesUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -212,17 +215,19 @@ export async function exportToSheetsFixed(
   }
   
   const allInvoicesData = await allInvoicesRes.json() as { values?: any[][] };
-  const allInvoices = (allInvoicesData.values || []).map((row: any[]) => ({
+  const allRows = allInvoicesData.values || [];
+  const allMoney = resolveMainTrackerMoneyColumnIndices(allRows[0] ?? []);
+  const allInvoices = allRows.slice(1).map((row: any[]) => ({
     source: row[0] || "",
     invoiceNumber: row[1] || "",
     vendor: row[2] || "",
     date: row[3] || "",
-    totalAmount: parseFloat(row[4]) || 0,
-    ivaAmount: parseFloat(row[5]) || 0,
-    baseAmount: parseFloat(row[6]) || 0,
-    category: row[7] || "",
-    currency: row[8] || "EUR",
-    tip: parseFloat(row[9]) || 0,
+    totalAmount: parseFloat(row[allMoney.total]) || 0,
+    ivaAmount: parseFloat(row[allMoney.iva]) || 0,
+    baseAmount: parseFloat(row[allMoney.base]) || 0,
+    category: row[8] || "",
+    currency: row[9] || "EUR",
+    tip: parseFloat(row[allMoney.tip]) || 0,
     notes: row[10] || "",
     imageUrl: row[11] || "",
   }));
@@ -241,7 +246,7 @@ export async function exportToSheetsFixed(
     
     // Build rows: header + TOTAL row (Row 2) + data
     const rows = [
-      ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"],
+      ["Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"],
     ];
     
     // Calculate totals for this month
@@ -261,10 +266,10 @@ export async function exportToSheetsFixed(
           inv.invoiceNumber,
           inv.vendor,
           inv.date,
-          inv.totalAmount,
           inv.ivaAmount,
           inv.baseAmount,
           inv.tip ?? 0,
+          inv.totalAmount,
           inv.category,
           inv.currency,
           inv.notes,
@@ -286,10 +291,10 @@ export async function exportToSheetsFixed(
       "",
       "TOTAL",
       "",
-      monthTotal.toString(),
       monthIva.toString(),
       monthBase.toString(),
       monthTip.toString(),
+      monthTotal.toString(),
       "",
       "",
       "",

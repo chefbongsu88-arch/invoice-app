@@ -9,12 +9,14 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "channel": "development",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://invoice-app-production-18c0.up.railway.app"
       }
     },
     "preview": {
       "distribution": "internal",
+      "channel": "preview",
       "android": {
         "buildType": "apk"
       },
@@ -24,6 +26,7 @@
     },
     "production": {
       "autoIncrement": true,
+      "channel": "production",
       "android": {
         "buildType": "apk"
       },
@@ -34,6 +37,7 @@
     "testflight": {
       "distribution": "store",
       "autoIncrement": true,
+      "channel": "production",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://invoice-app-production-18c0.up.railway.app"
       }

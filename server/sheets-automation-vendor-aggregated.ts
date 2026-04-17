@@ -331,7 +331,7 @@ async function createMonthlySheets(
   }
 
   const header = [
-    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)",
+    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)",
     "Category", "Currency", "Notes", "Receipt", "Exported At"
   ];
 
@@ -366,10 +366,10 @@ async function createMonthlySheets(
     // Always add TOTAL row with SUM formulas for automatic calculation
     const totalRow = [
       "", "", `${month} TOTAL`, "",
-      "=SUM(E3:E1000)",      // E: Total (€) - auto sum
-      "=SUM(F3:F1000)",      // F: IVA (€) - auto sum
-      "=SUM(G3:G1000)",      // G: Base (€) - auto sum
-      "=SUM(H3:H1000)",      // H: Tip (€) - auto sum
+      "=SUM(E3:E1000)",      // E: IVA (€) - auto sum
+      "=SUM(F3:F1000)",      // F: Base (€) - auto sum
+      "=SUM(G3:G1000)",      // G: Tip (€) - auto sum
+      "=SUM(H3:H1000)",      // H: Total (€) - auto sum
       "", "", "", "", ""
     ];
     sheetRows.push(totalRow);
@@ -381,10 +381,10 @@ async function createMonthlySheets(
         vendor.invoiceNumber,    // B: Invoice #
         vendor.vendor,           // C: Vendor
         trackerDateToSheetsDateCell(vendor.date), // D: Date (=DATE like main tracker)
-        vendor.totalAmount,      // E: Total (€) - as number, not string!
-        vendor.ivaAmount,        // F: IVA (€) - as number, not string!
-        vendor.baseAmount,       // G: Base (€) - as number, not string!
-        vendor.tip ?? 0,         // H: Tip (€) - as number, not string!
+        vendor.ivaAmount,        // E: IVA (€) - as number, not string!
+        vendor.baseAmount,       // F: Base (€) - as number, not string!
+        vendor.tip ?? 0,         // G: Tip (€) - as number, not string!
+        vendor.totalAmount,      // H: Total (€) - as number, not string!
         vendor.category,         // I: Category
         vendor.currency,         // J: Currency
         vendor.notes,            // K: Notes
@@ -462,7 +462,7 @@ async function createQuarterlySheets(
   }
 
   const header = [
-    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)",
+    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)",
     "Category", "Currency", "Notes", "Receipt", "Exported At"
   ];
 
@@ -496,10 +496,10 @@ async function createQuarterlySheets(
     // Always add TOTAL row with SUM formulas for automatic calculation
     const totalRow = [
       "", "", "QUARTERLY TOTAL", "",
-      "=SUM(E3:E1000)",      // E: Total (€) - auto sum
-      "=SUM(F3:F1000)",      // F: IVA (€) - auto sum
-      "=SUM(G3:G1000)",      // G: Base (€) - auto sum
-      "=SUM(H3:H1000)",      // H: Tip (€) - auto sum
+      "=SUM(E3:E1000)",      // E: IVA (€) - auto sum
+      "=SUM(F3:F1000)",      // F: Base (€) - auto sum
+      "=SUM(G3:G1000)",      // G: Tip (€) - auto sum
+      "=SUM(H3:H1000)",      // H: Total (€) - auto sum
       "", "", "", "", ""
     ];
     sheetRows.push(totalRow);
@@ -511,10 +511,10 @@ async function createQuarterlySheets(
         vendor.invoiceNumber,    // B: Invoice #
         vendor.vendor,           // C: Vendor
         trackerDateToSheetsDateCell(vendor.date), // D: Date (=DATE like main tracker)
-        vendor.totalAmount,      // E: Total (€) - as number, not string!
-        vendor.ivaAmount,        // F: IVA (€) - as number, not string!
-        vendor.baseAmount,       // G: Base (€) - as number, not string!
-        vendor.tip ?? 0,         // H: Tip (€) - as number, not string!
+        vendor.ivaAmount,        // E: IVA (€) - as number, not string!
+        vendor.baseAmount,       // F: Base (€) - as number, not string!
+        vendor.tip ?? 0,         // G: Tip (€) - as number, not string!
+        vendor.totalAmount,      // H: Total (€) - as number, not string!
         vendor.category,         // I: Category
         vendor.currency,         // J: Currency
         vendor.notes,            // K: Notes

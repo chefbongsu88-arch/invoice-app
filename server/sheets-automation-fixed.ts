@@ -131,10 +131,10 @@ async function updateSheet(
  * B: Invoice #
  * C: Vendor
  * D: Date
- * E: Total (€)
- * F: IVA (€)
- * G: Base (€)
- * H: Tip (€)
+ * E: IVA (€)
+ * F: Base (€)
+ * G: Tip (€)
+ * H: Total (€)
  * I: Category
  * J: Currency
  * K: Notes
@@ -150,7 +150,7 @@ export async function createMonthlySheets(
   ];
 
   const headers = [
-    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
+    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
   ];
 
   for (let monthIndex = 0; monthIndex < months.length; monthIndex++) {
@@ -177,10 +177,10 @@ export async function createMonthlySheets(
         "",  // Invoice # (from INDEX/MATCH if needed, but left blank for simplicity)
         vendor,
         "",  // Date (left blank for summary row)
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!E:E)`,  // Total
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!F:F)`,  // IVA
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!G:G)`,  // Base
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!H:H)`,  // Tip
+        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!E:E)`,  // IVA
+        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!F:F)`,  // Base
+        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!G:G)`,  // Tip
+        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!H:H)`,  // Total
         "",  // Category
         "",  // Currency
         "",  // Notes
@@ -197,10 +197,10 @@ export async function createMonthlySheets(
       "",  // Invoice #
       `${month} TOTAL`,
       "",  // Date
-      `=SUM(E2:E${totalRowNum - 1})`,  // Total
-      `=SUM(F2:F${totalRowNum - 1})`,  // IVA
-      `=SUM(G2:G${totalRowNum - 1})`,  // Base
-      `=SUM(H2:H${totalRowNum - 1})`,  // Tip
+      `=SUM(E2:E${totalRowNum - 1})`,  // IVA
+      `=SUM(F2:F${totalRowNum - 1})`,  // Base
+      `=SUM(G2:G${totalRowNum - 1})`,  // Tip
+      `=SUM(H2:H${totalRowNum - 1})`,  // Total
       "",  // Category
       "",  // Currency
       "",  // Notes
@@ -231,7 +231,7 @@ export async function createQuarterlySummarySheets(
   };
 
   const headers = [
-    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
+    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
   ];
 
   for (const quarter of quarters) {
@@ -257,10 +257,10 @@ export async function createQuarterlySummarySheets(
         "",  // Invoice #
         vendor,
         "",  // Date
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!E:E)`,  // Total
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!F:F)`,  // IVA
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!G:G)`,  // Base
-        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!H:H)`,  // Tip
+        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!E:E)`,  // IVA
+        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!F:F)`,  // Base
+        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!G:G)`,  // Tip
+        `=SUMIF('2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!H:H)`,  // Total
         "",  // Category
         "",  // Currency
         "",  // Notes
@@ -277,10 +277,10 @@ export async function createQuarterlySummarySheets(
       "",  // Invoice #
       `${quarter} TOTAL`,
       "",  // Date
-      `=SUM(E2:E${totalRowNum - 1})`,  // Total
-      `=SUM(F2:F${totalRowNum - 1})`,  // IVA
-      `=SUM(G2:G${totalRowNum - 1})`,  // Base
-      `=SUM(H2:H${totalRowNum - 1})`,  // Tip
+      `=SUM(E2:E${totalRowNum - 1})`,  // IVA
+      `=SUM(F2:F${totalRowNum - 1})`,  // Base
+      `=SUM(G2:G${totalRowNum - 1})`,  // Tip
+      `=SUM(H2:H${totalRowNum - 1})`,  // Total
       "",  // Category
       "",  // Currency
       "",  // Notes

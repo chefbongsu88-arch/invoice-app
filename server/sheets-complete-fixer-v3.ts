@@ -4,6 +4,7 @@
  */
 
 import { createSign } from "crypto";
+import { resolveMainTrackerMoneyColumnIndices } from "../shared/sheets-tracker-columns";
 
 const SPREADSHEET_ID = "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
 const MONTHS = [
@@ -64,6 +65,7 @@ async function getMainSheetData(accessToken: string): Promise<Invoice[]> {
 
   const data = await res.json();
   const rows = data.values || [];
+  const money = resolveMainTrackerMoneyColumnIndices(rows[0] ?? []);
 
   // Skip header, parse invoices
   const invoices: Invoice[] = [];
@@ -76,12 +78,12 @@ async function getMainSheetData(accessToken: string): Promise<Invoice[]> {
       invoiceNumber: row[1] || "",
       vendor: row[2],
       date: row[3] || "",
-      totalAmount: parseFloat(row[4]) || 0,
-      ivaAmount: parseFloat(row[5]) || 0,
-      baseAmount: parseFloat(row[6]) || 0,
+      totalAmount: parseFloat(row[money.total]) || 0,
+      ivaAmount: parseFloat(row[money.iva]) || 0,
+      baseAmount: parseFloat(row[money.base]) || 0,
       category: row[8] || "Other",
       currency: row[9] || "EUR",
-      tip: parseFloat(row[7]) || 0,
+      tip: parseFloat(row[money.tip]) || 0,
       notes: row[10] || "",
       imageUrl: row[11] || "",
       exportedAt: row[12] || "",
@@ -157,7 +159,7 @@ export async function fixAllSheets(serviceAccount: any): Promise<any> {
 
       // Build rows for this month
       const rows: any[][] = [
-        ["Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"],
+        ["Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"],
         ["", "", "TOTAL", "", "=SUM(E3:E1000)", "=SUM(F3:F1000)", "=SUM(G3:G1000)", "=SUM(H3:H1000)", "", "", "", "", ""],
       ];
 
@@ -168,10 +170,10 @@ export async function fixAllSheets(serviceAccount: any): Promise<any> {
           inv.invoiceNumber,
           inv.vendor,
           inv.date,
-          inv.totalAmount,
           inv.ivaAmount,
           inv.baseAmount,
           inv.tip || 0,
+          inv.totalAmount,
           inv.category,
           inv.currency,
           inv.notes,

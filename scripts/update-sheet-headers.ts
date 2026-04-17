@@ -11,6 +11,7 @@
  */
 
 import { createSign } from "crypto";
+import { MAIN_TRACKER_HEADER_ROW } from "../shared/sheets-tracker-columns";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -22,34 +23,19 @@ const SERVICE_ACCOUNT_JSON = "";
 
 // ─── Header definition ───────────────────────────────────────────────────────
 
-/** Main tab A–N (must match server export / Receipt + column N). */
-const MAIN_TRACKER_HEADER = [
-  "Source",
-  "Invoice #",
-  "Vendor",
-  "Date",
-  "Total (€)",
-  "IVA (€)",
-  "Base (€)",
-  "Tip (€)",
-  "Category",
-  "Currency",
-  "Notes",
-  "Receipt",
-  "Exported At",
-  "Meat line items (JSON)",
-];
+/** Main tab A–N — same as server `MAIN_TRACKER_HEADER_ROW` (Total after Tip, before Category). */
+const MAIN_TRACKER_HEADER = [...MAIN_TRACKER_HEADER_ROW];
 
-/** Monthly / quarterly tabs (no column N). */
+/** Monthly / quarterly tabs (no column N). Total (€) is column H, after Tip. */
 const HEADER = [
   "Source",
   "Invoice #",
   "Vendor",
   "Date",
-  "Total (€)",
   "IVA (€)",
   "Base (€)",
   "Tip (€)",
+  "Total (€)",
   "Category",
   "Currency",
   "Notes",

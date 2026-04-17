@@ -50,7 +50,10 @@ const config: ExpoConfig = {
     },
   },
   updates: {
-    url: "https://u.expo.dev/" + ("cb8f8ffb-f1b9-468a-b905-c4a06fc0d2ba"),
+    url: "https://u.expo.dev/" + "cb8f8ffb-f1b9-468a-b905-c4a06fc0d2ba",
+    /** EAS Update: check on launch (production builds). */
+    checkAutomatically: "ON_LOAD",
+    fallbackToCacheTimeout: 0,
   },
   orientation: "portrait",
   icon: "./assets/images/icon.png",
@@ -99,6 +102,7 @@ const config: ExpoConfig = {
     favicon: "./assets/images/favicon.png",
   },
   plugins: [
+    "expo-updates",
     "expo-router",
     [
       "expo-camera",

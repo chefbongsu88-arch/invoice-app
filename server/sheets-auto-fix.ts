@@ -66,7 +66,7 @@ export async function analyzeJanuaryTemplate(
 
   // Extract formulas from total row
   const totalRowFormulas: { [key: string]: string } = {};
-  const columnLetters = ["E", "F", "G", "H"]; // Total, IVA, Base, Tip
+  const columnLetters = ["E", "F", "G", "H"]; // Money columns E–H (IVA, Base, Tip, Total when using current header)
   columnLetters.forEach((col, idx) => {
     const cellValue = totalRow[4 + idx];
     if (typeof cellValue === "string" && cellValue.startsWith("=")) {

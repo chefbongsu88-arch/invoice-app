@@ -4,6 +4,7 @@
  * Uses Google Sheets API via fetch (no external googleapis library needed)
  */
 
+import { resolveMainTrackerMoneyColumnIndices } from "../shared/sheets-tracker-columns";
 import { encodeValuesRange } from "./sheets-automation";
 
 export interface SheetDiagnosis {
@@ -71,6 +72,7 @@ export async function diagnoseSheetsComprehensive(
       const rows = valuesData.values || [];
       const headers = rows[0] || [];
       const dataRows = rows.slice(1);
+      const money = resolveMainTrackerMoneyColumnIndices(headers);
 
       // Analyze issues
       const issues: string[] = [];
@@ -97,9 +99,12 @@ export async function diagnoseSheetsComprehensive(
           emptyImageUrls++;
         }
 
-        // Check for formulas
-        if (typeof row[4] === "string" && (row[4] as string).startsWith("=")) {
-          hasFormulas = true;
+        // Check for formulas in money columns
+        for (const ci of [money.iva, money.base, money.tip, money.total]) {
+          if (typeof row[ci] === "string" && (row[ci] as string).startsWith("=")) {
+            hasFormulas = true;
+            break;
+          }
         }
       });
 
@@ -124,7 +129,7 @@ export async function diagnoseSheetsComprehensive(
       const vendorAmounts = new Map<string, number[]>();
       dataRows.forEach((row: any) => {
         const vendor = row[2]; // Column C
-        const amount = parseFloat(row[4]); // Column E
+        const amount = parseFloat(row[money.total]);
         if (vendor && !isNaN(amount)) {
           if (!vendorAmounts.has(vendor)) {
             vendorAmounts.set(vendor, []);
@@ -211,6 +216,7 @@ export async function analyzeSheetStructure(
     const rows = valuesData.values || [];
     const headers = rows[0] || [];
     const data = rows.slice(1);
+    const money = resolveMainTrackerMoneyColumnIndices(headers);
 
     // Calculate summary
     const vendors = new Set<string>();
@@ -219,7 +225,7 @@ export async function analyzeSheetStructure(
 
     data.forEach((row: any) => {
       const vendor = row[2];
-      const amount = parseFloat(row[4]);
+      const amount = parseFloat(row[money.total]);
 
       if (vendor) vendors.add(vendor);
       if (!isNaN(amount)) totalAmount += amount;

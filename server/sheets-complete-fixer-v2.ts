@@ -94,10 +94,10 @@ function buildSumifFormula(
   if (!dates) return "";
 
   const columnMap: { [key: string]: string } = {
-    "E": "E", // Total
-    "F": "F", // IVA
-    "G": "G", // Base
-    "H": "H", // Tip
+    "E": "E", // IVA
+    "F": "F", // Base
+    "G": "G", // Tip
+    "H": "H", // Total
   };
 
   const col = columnMap[column];
@@ -119,10 +119,10 @@ function buildTotalRow(lastRow: number): any[] {
     "", // B: Invoice #
     "TOTAL", // C: Vendor
     "", // D: Date
-    `=SUM(E3:E${lastRow})`, // E: Total
-    `=SUM(F3:F${lastRow})`, // F: IVA
-    `=SUM(G3:G${lastRow})`, // G: Base
-    `=SUM(H3:H${lastRow})`, // H: Tip
+    `=SUM(E3:E${lastRow})`, // E: IVA
+    `=SUM(F3:F${lastRow})`, // F: Base
+    `=SUM(G3:G${lastRow})`, // G: Tip
+    `=SUM(H3:H${lastRow})`, // H: Total
     "", // I: Category
     "", // J: Currency
     "", // K: Notes
@@ -158,10 +158,10 @@ async function fixMonthSheet(
       "Invoice #",
       "Vendor",
       "Date",
-      "Total (€)",
       "IVA (€)",
       "Base (€)",
       "Tip (€)",
+      "Total (€)",
       "Category",
       "Currency",
       "Notes",
@@ -177,10 +177,10 @@ async function fixMonthSheet(
         "", // B: Invoice #
         vendor, // C: Vendor
         "", // D: Date
-        buildSumifFormula(vendor, "E", monthName), // E: Total (SUMIF)
-        buildSumifFormula(vendor, "F", monthName), // F: IVA (SUMIF)
-        buildSumifFormula(vendor, "G", monthName), // G: Base (SUMIF)
-        buildSumifFormula(vendor, "H", monthName), // H: Tip (SUMIF)
+        buildSumifFormula(vendor, "E", monthName), // E: IVA (SUMIF)
+        buildSumifFormula(vendor, "F", monthName), // F: Base (SUMIF)
+        buildSumifFormula(vendor, "G", monthName), // G: Tip (SUMIF)
+        buildSumifFormula(vendor, "H", monthName), // H: Total (SUMIF)
         "", // I: Category
         "", // J: Currency
         "", // K: Notes

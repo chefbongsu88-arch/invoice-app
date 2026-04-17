@@ -124,7 +124,7 @@ async function updateSheet(
 
 /**
  * Apply currency formatting to specific columns
- * Columns E, F, G, H (Total, IVA, Base, Tip) should be formatted as currency
+ * Columns E, F, G, H (IVA, Base, Tip, Total) should be formatted as currency
  */
 async function applyCurrencyFormatting(
   spreadsheetId: string,
@@ -204,7 +204,7 @@ export async function createMonthlySheets(
   ];
 
   const headers = [
-    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
+    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
   ];
 
   for (let monthIndex = 0; monthIndex < months.length; monthIndex++) {
@@ -230,10 +230,10 @@ export async function createMonthlySheets(
       "",  // Invoice #
       `${month} TOTAL`,
       "",  // Date
-      "=SUM(E3:E1000)",  // Total - will sum all data rows
-      "=SUM(F3:F1000)",  // IVA
-      "=SUM(G3:G1000)",  // Base
-      "=SUM(H3:H1000)",  // Tip
+      "=SUM(E3:E1000)",  // IVA
+      "=SUM(F3:F1000)",  // Base
+      "=SUM(G3:G1000)",  // Tip
+      "=SUM(H3:H1000)",  // Total
       "",  // Category
       "",  // Currency
       "",  // Notes
@@ -248,10 +248,10 @@ export async function createMonthlySheets(
         invoice.invoiceNumber || "",
         invoice.vendor,
         invoice.date,
-        invoice.totalAmount,
         invoice.ivaAmount,
         invoice.baseAmount,
         invoice.tip || 0,
+        invoice.totalAmount,
         invoice.category || "",
         invoice.currency || "EUR",
         invoice.notes || "",
@@ -289,7 +289,7 @@ export async function createQuarterlySummarySheets(
   };
 
   const headers = [
-    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
+    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
   ];
 
   for (const quarter of quarters) {
@@ -311,10 +311,10 @@ export async function createQuarterlySummarySheets(
       "",  // Invoice #
       `${quarter} TOTAL`,
       "",  // Date
-      "=SUM(E3:E1000)",  // Total - will sum all data rows
-      "=SUM(F3:F1000)",  // IVA
-      "=SUM(G3:G1000)",  // Base
-      "=SUM(H3:H1000)",  // Tip
+      "=SUM(E3:E1000)",  // IVA
+      "=SUM(F3:F1000)",  // Base
+      "=SUM(G3:G1000)",  // Tip
+      "=SUM(H3:H1000)",  // Total
       "",  // Category
       "",  // Currency
       "",  // Notes
@@ -329,10 +329,10 @@ export async function createQuarterlySummarySheets(
         invoice.invoiceNumber || "",
         invoice.vendor,
         invoice.date,
-        invoice.totalAmount,
         invoice.ivaAmount,
         invoice.baseAmount,
         invoice.tip || 0,
+        invoice.totalAmount,
         invoice.category || "",
         invoice.currency || "EUR",
         invoice.notes || "",

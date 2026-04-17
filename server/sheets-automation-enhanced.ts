@@ -167,10 +167,10 @@ export async function appendToSheet(
  * B: Invoice #
  * C: Vendor
  * D: Date
- * E: Total (€)
- * F: IVA (€)
- * G: Base (€)
- * H: Tip (€)
+ * E: IVA (€)
+ * F: Base (€)
+ * G: Tip (€)
+ * H: Total (€)
  * I: Category
  * J: Currency
  * K: Notes
@@ -186,7 +186,7 @@ export async function createMonthlySheets(
   ];
 
   const headers = [
-    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
+    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
   ];
 
   for (let monthIndex = 0; monthIndex < months.length; monthIndex++) {
@@ -223,21 +223,21 @@ export async function createMonthlySheets(
       const imageUrlFormula = `=IFERROR(INDEX('2026 Invoice tracker'!L:L,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       const exportedAtFormula = `=IFERROR(INDEX('2026 Invoice tracker'!M:M,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       
-      // SUMIF formulas for aggregation
-      const totalFormula = `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
-      const ivaFormula = `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
-      const baseFormula = `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
-      const tipFormula = `=SUMIFS('2026 Invoice tracker'!H:H,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      // SUMIF formulas for aggregation (main tracker: E=IVA, F=Base, G=Tip, H=Total)
+      const ivaFormula = `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const baseFormula = `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const tipFormula = `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const totalFormula = `=SUMIFS('2026 Invoice tracker'!H:H,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
       
       const row = [
         sourceFormula,
         invoiceNumberFormula,
         vendor,
         dateFormula,
-        totalFormula,
         ivaFormula,
         baseFormula,
         tipFormula,
+        totalFormula,
         categoryFormula,
         currencyFormula,
         notesFormula,
@@ -288,7 +288,7 @@ export async function createQuarterlySummarySheets(
   };
 
   const headers = [
-    "Source", "Invoice #", "Vendor", "Date", "Total (€)", "IVA (€)", "Base (€)", "Tip (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
+    "Source", "Invoice #", "Vendor", "Date", "IVA (€)", "Base (€)", "Tip (€)", "Total (€)", "Category", "Currency", "Notes", "Image URL", "Exported At"
   ];
 
   for (const quarter of quarters) {
@@ -322,20 +322,20 @@ export async function createQuarterlySummarySheets(
       const imageUrlFormula = `=IFERROR(INDEX('2026 Invoice tracker'!L:L,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
       const exportedAtFormula = `=IFERROR(INDEX('2026 Invoice tracker'!M:M,MATCH("${vendor}",'2026 Invoice tracker'!C:C,0)),"")`;
 
-      const totalFormula = `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
-      const ivaFormula = `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
-      const baseFormula = `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
-      const tipFormula = `=SUMIFS('2026 Invoice tracker'!H:H,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const ivaFormula = `=SUMIFS('2026 Invoice tracker'!E:E,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const baseFormula = `=SUMIFS('2026 Invoice tracker'!F:F,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const tipFormula = `=SUMIFS('2026 Invoice tracker'!G:G,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
+      const totalFormula = `=SUMIFS('2026 Invoice tracker'!H:H,'2026 Invoice tracker'!C:C,"${vendor}",'2026 Invoice tracker'!D:D,">=${startDate}",'2026 Invoice tracker'!D:D,"<${endDate}")`;
 
       const row = [
         sourceFormula,
         invoiceNumberFormula,
         vendor,
         dateFormula,
-        totalFormula,
         ivaFormula,
         baseFormula,
         tipFormula,
+        totalFormula,
         categoryFormula,
         currencyFormula,
         notesFormula,

@@ -5,6 +5,10 @@ import {
   DEFAULT_MAIN_TRACKER_SHEET_NAME,
   receiptSheetsReceiptUrlCell,
 } from "../shared/sheets-defaults.js";
+import {
+  MAIN_TRACKER_HEADER_ROW,
+  resolveMainTrackerMoneyColumnIndices,
+} from "../shared/sheets-tracker-columns.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import {
   ENV,
@@ -417,7 +421,7 @@ async function buildAutomationInvoiceDataFromMainTracker(
     }>;
   }> = [],
 ): Promise<AutomationInvoiceRow[]> {
-  const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A2:N")}?valueRenderOption=FORMULA`;
+  const trackerSheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:N")}?valueRenderOption=FORMULA`;
   const trackerRes = await fetch(trackerSheetUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -428,8 +432,15 @@ async function buildAutomationInvoiceDataFromMainTracker(
   if (trackerRes.ok) {
     const trackerData = (await trackerRes.json()) as { values?: any[][] };
     const trackerRawRows = trackerData.values;
-    if (trackerRawRows) {
-      const mapped = trackerRawRows.map((row: any[]) => {
+    if (trackerRawRows?.length) {
+      const first = trackerRawRows[0] ?? [];
+      const looksLikeHeader =
+        String(first[0] ?? "").trim().toLowerCase() === "source" ||
+        String(first[2] ?? "").trim().toLowerCase() === "vendor";
+      const headerRow = looksLikeHeader ? first : [];
+      const money = resolveMainTrackerMoneyColumnIndices(headerRow);
+      const dataRowsOnly = looksLikeHeader ? trackerRawRows.slice(1) : trackerRawRows;
+      const mapped = dataRowsOnly.map((row: any[]) => {
         const parseCurrency = (val: any) => {
           if (!val) return 0;
           const numStr = String(val).replace(/[€,\s]/g, "").trim();
@@ -444,10 +455,10 @@ async function buildAutomationInvoiceDataFromMainTracker(
           invoiceNumber: row[1] || "",
           vendor: row[2] || "",
           date: parseDate(row[3]),
-          totalAmount: parseCurrency(row[4]),
-          ivaAmount: parseCurrency(row[5]),
-          baseAmount: parseCurrency(row[6]),
-          tip: parseCurrency(row[7]),
+          totalAmount: parseCurrency(row[money.total]),
+          ivaAmount: parseCurrency(row[money.iva]),
+          baseAmount: parseCurrency(row[money.base]),
+          tip: parseCurrency(row[money.tip]),
           category: row[8] || "",
           currency: row[9] || "EUR",
           notes: row[10] || "",
@@ -3134,25 +3145,8 @@ export const appRouter = router({
         const accessToken = await getGoogleAccessToken();
 
         // First, ensure header row exists
-        // ✅ Column order (English labels for Sheets): Source, Invoice#, Vendor, Date, Total, IVA, Base, Tip, ...
-        const headerValues = [
-          [
-            "Source",
-            "Invoice #",
-            "Vendor",
-            "Date",
-            "Total (€)",
-            "IVA (€)",
-            "Base (€)",
-            "Tip (€)",
-            "Category",
-            "Currency",
-            "Notes",
-            "Receipt",
-            "Exported At",
-            "Meat line items (JSON)",
-          ],
-        ];
+        // ✅ Column order: Source…Date, then IVA, Base, Tip, Total (€) — Total immediately after Tip.
+        const headerValues = [[...MAIN_TRACKER_HEADER_ROW]];
 
         // Check if sheet exists and has headers
         const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:N1")}`;
@@ -3201,20 +3195,22 @@ export const appRouter = router({
         });
 
         const existingData = await existingRes.json() as { values?: string[][] };
+        const existingRows = existingData.values ?? [];
+        const existingMoneyIdx = resolveMainTrackerMoneyColumnIndices(existingRows[0] ?? []);
         const existingInvoicesByNumber = new Set(
-          existingData.values?.slice(1).map((row) => {
+          existingRows.slice(1).map((row) => {
             const invoiceNum = normalizeInvoiceNumberKey(row[1] ?? "");
             return invoiceNum;
-          }).filter(num => num.length > 0) || []
+          }).filter(num => num.length > 0)
         );
 
         const existingInvoicesByVendorDateAmount = new Set(
-          existingData.values?.slice(1).map((row) => {
+          existingRows.slice(1).map((row) => {
             const vendor = row[2] || "";
             const date = row[3] || "";
-            const amount = row[4] ?? "";
+            const amount = row[existingMoneyIdx.total] ?? "";
             return duplicateRowKey(vendor, String(date), amount);
-          }) || [],
+          }),
         );
 
         const requestInvoicesByNumber = new Set<string>();
@@ -3574,10 +3570,10 @@ export const appRouter = router({
               clampStringForSheetsCell(r.invoiceNumber, "Invoice #"),
               clampStringForSheetsCell(r.vendor, "Vendor"),
               clampStringForSheetsCell(formattedDate, "Date"),
-              r.totalAmount,                                                           // E - Total (€)
-              r.ivaAmount ?? 0,                                                        // F - IVA (€)
-              r.baseAmount != null ? r.baseAmount : r.totalAmount - (r.ivaAmount ?? 0), // G - Base (€) fallback for old invoices
-              r.tip ?? 0,            // H - Tip (€)
+              r.ivaAmount ?? 0,                                                        // E - IVA (€)
+              r.baseAmount != null ? r.baseAmount : r.totalAmount - (r.ivaAmount ?? 0), // F - Base (€)
+              r.tip ?? 0,                                                              // G - Tip (€)
+              r.totalAmount,                                                           // H - Total (€)
               clampStringForSheetsCell(r.category, "Category"),
               clampStringForSheetsCell(r.currency, "Currency"),
               clampStringForSheetsCell(r.notes ?? "", "Notes"),

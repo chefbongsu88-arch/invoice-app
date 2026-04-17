@@ -1,0 +1,30 @@
+Invoice Tracker — 폰에서 여는 방법
+================================
+
+1) 폰에 "Expo Go" 설치 (App Store / Play 스토어)
+
+2) PC에서 이 프로젝트 폴더로 이동한 뒤 터미널 실행:
+   pnpm phone:lan
+   (같은 Wi‑Fi일 때, 가장 빠름)
+
+   같은 Wi‑Fi가 안 되거나 QR이 안 되면:
+   pnpm phone
+   (터널 — 처음에 ngrok 등이 잠깐 걸릴 수 있음)
+
+3) 터미널에 나오는 QR 코드를
+   - iPhone: 카메라 앱 또는 Expo Go 앱 안의 "Scan QR code"
+   - Android: Expo Go 앱의 "Scan QR code"
+   로 스캔합니다.
+
+※ Expo Go 앱 안에서 "Invoice"를 검색해도 나오지 않는 것이 정상입니다.
+   반드시 위 QR으로 연결해야 합니다.
+
+4) 개발용 APK(EAS development build)를 깔았다면 Expo Go가 아니라 그 앱으로 열고:
+   pnpm phone:dev
+   (PC와 폰이 같은 Wi‑Fi — ngrok 터널 없이 연결, 가장 안정적)
+
+   다른 네트워크에서만 터널이 필요하면 (ngrok이 느리거나 실패할 수 있음):
+   pnpm phone:dev:tunnel
+
+5) 터미널에 나온 exp://... 주소를 PNG로 저장하려면:
+   pnpm qr "exp://여기에주소붙여넣기"
