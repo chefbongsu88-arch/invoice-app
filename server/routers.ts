@@ -1787,6 +1787,11 @@ Use "Restaurant" for bars, cafés, menús.
 
 items: [{partName, quantity, unit:"kg", pricePerUnit, total, ivaPercent?}] ONLY when category is "Meat" AND the ticket shows weighted line items (carnicería / butcher style); for supermarkets with vegetables, fish, or mixed groceries use []. Otherwise [].
 - On Spanish supplier albaranes, each product line often shows Precio (€/kg ex IVA), IVA % (e.g. 10), P.V.P. (€/kg inc IVA), and Importe (line total). Put ivaPercent as the printed VAT percent per line (e.g. 10) when visible. pricePerUnit should be Precio (ex VAT) €/kg when readable; total must be the line Importe (amount to pay for that line).
+- **Only** for the two primary meat suppliers **La Portenia** / La Porteña (Carne Argentina) **or** **Es Cuco** / Super Es Cuco / Es Cuco Carns — when the ticket is an ALBARÁN whose table uses **CANT.** (or **CANT**), **TARIFA**, **IVA**, **IMPORTE**: for each meat line read from the **cell under that column header** on the same product row (do not shift digits between columns):
+  • quantity = number **under CANT.** / CANT (kg). Never use IVA or IMPORTE for quantity.
+  • pricePerUnit = **TARIFA** (€/kg ex IVA). **Never** put the **IVA** column amount (tax €) in pricePerUnit.
+  • total = **IMPORTE** (line net). **Never** use the IVA column as line total.
+- For any other meat vendor, do **not** assume this exact column layout; use the general albarán line rules above.
 - Never put traceability-only rows in items: lines whose text is mainly "LOTE: …", "Nº lote", "ORIGEN: …", "País de origen", or "TRAZABILIDAD" (often printed under the real cut with IMPORTE 0 or no weight) are not products — omit them entirely. Only real cuts (CHULETÓN, TAPA DE VACUNO, etc.) with real kg and line totals belong in items.
 
 Numbers in JSON must be JSON numbers for totalAmount, ivaAmount, tipAmount (not strings). Output ONLY the JSON object, no markdown.`;
@@ -1896,6 +1901,7 @@ For Meat invoices:
 - Include only actual meat cuts or weighted meat line items.
 - Do not include packaging, sauces, drinks, vegetables, fish, or other non-meat products.
 - Omit traceability-only lines (e.g. Spanish albarán "LOTE: … ORIGEN: ESPAÑA", "Nº lote", "País de origen", "TRAZABILIDAD") — they are not billable items even if OCR shows a quantity column.
+- **Only** for **La Portenia** / La Porteña or **Es Cuco** ALBARÁN PDFs: columns **CANT.** (or CANT), **TARIFA**, **IVA**, **IMPORTE** — quantity under **CANT.**; pricePerUnit = **TARIFA** (€/kg, not IVA €); total = **IMPORTE** (line net). Do not use the IVA column as price or total. Other meat suppliers: use generic line extraction, not this fixed layout.
 - If line items are not clear, return [].
 
 Return only the JSON, no markdown, no explanation.`;
