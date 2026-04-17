@@ -16,7 +16,9 @@ import {
   applyWarningHighlightToDataRows,
   encodeValuesRange,
   ensureSheetExists,
+  fetchSheetsApiWithRetry,
   getSheetIdByTitle,
+  sleepMs,
   TRACKER_COLUMN_COUNT,
 } from "./sheets-automation";
 
@@ -899,17 +901,28 @@ async function rewriteMeatSheet(
 
   const sheetData = [headerRow, ...dataRows];
   const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, "A:AZ")}:clear`;
-  await fetch(clearUrl, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-  });
+  const clearRes = await fetchSheetsApiWithRetry(
+    clearUrl,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    },
+    `${sheetTitle} values.clear`,
+  );
+  if (!clearRes.ok) {
+    throw new Error(`${sheetTitle} clear error: ${await clearRes.text()}`);
+  }
 
   const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, "A1")}?valueInputOption=USER_ENTERED`;
-  const writeRes = await fetch(writeUrl, {
-    method: "PUT",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ values: sheetData }),
-  });
+  const writeRes = await fetchSheetsApiWithRetry(
+    writeUrl,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ values: sheetData }),
+    },
+    `${sheetTitle} values.update`,
+  );
   if (!writeRes.ok) throw new Error(`${sheetTitle} write error: ${await writeRes.text()}`);
 
   const sheetId = await getSheetIdByTitle(spreadsheetId, sheetTitle, accessToken);
@@ -1018,10 +1031,14 @@ export async function updateMeatSheets(
       meatLineColumnCount,
     );
   }
+  /** Space out meat tab writes — same 60 writes/min bucket as monthly/Q automation above. */
+  await sleepMs(1200);
   const ordersRows = buildMeatOrdersRows(meatItems);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Orders", ordersHeader, ordersRows);
+  await sleepMs(1200);
   const cutSummaryRows = buildMeatCutSummaryRows(meatItems);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Cut_Summary", cutSummaryHeader, cutSummaryRows);
+  await sleepMs(1200);
   const monthlySummaryRows = buildMeatMonthlySummaryRows(meatItems);
   await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Monthly_Summary", monthlySummaryHeader, monthlySummaryRows);
 

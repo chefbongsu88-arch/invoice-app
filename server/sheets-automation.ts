@@ -62,6 +62,40 @@ export function encodeValuesRange(sheetName: string, a1: string): string {
   return encodeURIComponent(`${quoted}!${a1}`);
 }
 
+export function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const SHEETS_WRITE_MAX_RETRIES = 8;
+const SHEETS_WRITE_BASE_DELAY_MS = 2500;
+
+/**
+ * Retry on HTTP 429 (Write requests per minute per user — often 60/min).
+ * Use for values.clear / values.update so long runs (main + 12 months + Q + meat tabs) stay under quota bursts.
+ */
+export async function fetchSheetsApiWithRetry(
+  url: string,
+  init: RequestInit,
+  context: string,
+): Promise<Response> {
+  let delayMs = SHEETS_WRITE_BASE_DELAY_MS;
+  for (let attempt = 1; attempt <= SHEETS_WRITE_MAX_RETRIES; attempt++) {
+    const res = await fetch(url, init);
+    if (res.status !== 429) return res;
+    if (attempt === SHEETS_WRITE_MAX_RETRIES) return res;
+    const ra = res.headers.get("Retry-After");
+    const waitMs = ra
+      ? Math.min(Math.max(parseInt(ra, 10) * 1000, delayMs), 120_000)
+      : delayMs;
+    console.warn(
+      `[Sheets] ${context}: 429 write quota — waiting ${Math.round(waitMs)}ms (attempt ${attempt}/${SHEETS_WRITE_MAX_RETRIES})`,
+    );
+    await sleepMs(waitMs);
+    delayMs = Math.min(delayMs * 2, 45_000);
+  }
+  throw new Error(`fetchSheetsApiWithRetry: internal error (${context})`);
+}
+
 /** Columns A–N for tracker-style sheets (13 core + Meat line items JSON in N). */
 export const TRACKER_COLUMN_COUNT = 14;
 /** Shared backoff for cosmetic repeatCell batchUpdate calls (bold/thin/date) — same Sheets write quota bucket. */
