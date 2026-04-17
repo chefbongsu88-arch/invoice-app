@@ -24,6 +24,7 @@
     "test": "vitest run",
     "verify:receipt-image": "node scripts/verify-receipt-image-pipeline.mjs",
     "verify:forge": "node scripts/verify-forge-storage.mjs",
+    "verify:google": "node scripts/verify-google-oauth.mjs",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
     "android": "expo start --android",
     "ios": "expo start --ios",

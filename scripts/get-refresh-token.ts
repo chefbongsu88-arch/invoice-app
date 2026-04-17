@@ -19,7 +19,7 @@
  *   pnpm exec tsx scripts/get-refresh-token.ts --manual --code-file=C:\Users\You\oauth-redirect.txt
  */
 
-import { execFileSync } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import * as fs from "fs";
 import * as http from "http";
 import * as os from "os";
@@ -54,7 +54,9 @@ const CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || "";
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const REDIRECT_URI  = "http://localhost:3001/oauth2callback";
 
-const SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+/** Sheets + per-file Drive access (upload receipts into a folder you pick). Re-consent after changing scopes. */
+const SCOPE =
+  "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file";
 
 function parseAuthCodeFromUserInput(raw: string): string {
   const trimmed = raw.trim();
@@ -137,11 +139,17 @@ async function main() {
   console.log("\n📋 Open this URL in your browser and sign in with Google:\n");
   console.log(authUrlString);
   console.log(
-    "\n⚠️  Windows: copying from the terminal can break the link (you may see “response_type missing”).\n" +
-      `    → One-line copy: open Notepad → File → Open → paste this path in the address bar:\n` +
-      `      ${urlBackupPath}\n` +
-      "    → Or we try to open your default browser now…\n",
+    "\n⚠️  “response_type missing” 오류 = 주소가 잘린 것입니다. 터미널에서 복사하지 말고 아래를 따르세요.\n" +
+      `    → 전체 URL 한 줄 파일: ${urlBackupPath}\n` +
+      "    → Windows: 메모장이 열리면 Ctrl+A → 복사 → 브라우저 주소창에 붙여넣기(한 줄인지 확인).\n",
   );
+  if (process.platform === "win32") {
+    try {
+      spawn("notepad.exe", [urlBackupPath], { detached: true, stdio: "ignore" }).unref();
+    } catch {
+      /* optional */
+    }
+  }
   tryOpenDefaultBrowser(authUrlString);
 
   let code: string;

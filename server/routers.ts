@@ -32,6 +32,7 @@ import {
 } from "./_core/receipt-gemini-google";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
+import { uploadReceiptToGoogleDrive } from "./drive-upload";
 import { uploadImageToStorage, uploadReceiptBinaryToForgeIfConfigured } from "./image-upload-storage";
 import {
   applyThinTextFormatToGridRange,
@@ -1625,6 +1626,177 @@ function needsPublicReceiptHttpsUrl(url: string | undefined | null): boolean {
   return !/^https?:\/\//i.test(s);
 }
 
+function sanitizeReceiptFileNamePart(vendor: string): string {
+  const s = String(vendor ?? "invoice")
+    .replace(/[/\\?%*:|"<>]/g, "-")
+    .replace(/\s+/g, "_")
+    .slice(0, 64)
+    .trim();
+  return s || "invoice";
+}
+
+function receiptFileExtensionFromMime(mime: string): string {
+  const m = mime.toLowerCase();
+  if (m.includes("png")) return "png";
+  if (m.includes("pdf")) return "pdf";
+  if (m.includes("webp")) return "webp";
+  if (m.includes("gif")) return "gif";
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  return "bin";
+}
+
+/** YYYY-MM-DD for Drive search/sort; falls back to sanitized raw date text. */
+function formatDateForDriveFilename(rawDate: string | undefined): string {
+  const t = String(rawDate ?? "").trim();
+  if (!t) return "no-date";
+  try {
+    const d = parseInvoiceDateDDMMYYYY(t);
+    if (Number.isNaN(d.getTime())) {
+      return sanitizeReceiptFileNamePart(t).slice(0, 16) || "no-date";
+    }
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  } catch {
+    return sanitizeReceiptFileNamePart(t).slice(0, 16) || "no-date";
+  }
+}
+
+/** e.g. EUR123.45 — searchable in Drive by amount or "EUR". */
+function formatAmountForDriveFilename(eur: number | undefined): string {
+  if (eur == null || !Number.isFinite(eur)) return "EUR0.00";
+  return `EUR${eur.toFixed(2)}`;
+}
+
+/**
+ * Search-friendly name: date_amount_vendor[_invoice#]_shortid.ext
+ * (Keep under ~200 chars; vendor truncated if needed.)
+ */
+function buildDriveReceiptFileName(opts: {
+  mime: string;
+  vendor: string;
+  invoiceDateRaw?: string;
+  totalAmount?: number;
+  invoiceNumber?: string;
+}): string {
+  const ext = receiptFileExtensionFromMime(opts.mime);
+  const datePart = formatDateForDriveFilename(opts.invoiceDateRaw);
+  const amtPart = formatAmountForDriveFilename(opts.totalAmount);
+  const vendorPart = sanitizeReceiptFileNamePart(opts.vendor).slice(0, 72);
+  let invPart = "";
+  const invRaw = String(opts.invoiceNumber ?? "").trim();
+  if (invRaw) {
+    invPart = "_" + sanitizeReceiptFileNamePart(invRaw).slice(0, 28);
+  }
+  const uniq = Date.now().toString(36);
+  const MAX = 200;
+  let base = `${datePart}_${amtPart}_${vendorPart}${invPart}_${uniq}.${ext}`;
+  if (base.length <= MAX) return base;
+  const overhead = `${datePart}_${amtPart}_`.length + `${invPart}_${uniq}.${ext}`.length;
+  const maxVendor = Math.max(8, MAX - overhead);
+  const v = sanitizeReceiptFileNamePart(opts.vendor).slice(0, maxVendor);
+  base = `${datePart}_${amtPart}_${v}${invPart}_${uniq}.${ext}`;
+  return base.length > MAX ? base.slice(0, MAX - ext.length - 1) + `.${ext}` : base;
+}
+
+/** Drive (if GOOGLE_DRIVE_RECEIPTS_FOLDER_ID) → Forge → /api/receipt-share */
+async function resolveReceiptImageUrlForSheetsExport(opts: {
+  accessToken: string;
+  receiptPublicBase: string | undefined;
+  buf: Buffer;
+  mime: string;
+  vendor: string;
+  kind?: "data" | "gmail";
+  /** Row fields for Drive filename (date, amount, vendor, invoice #). */
+  invoiceDateRaw?: string;
+  totalAmount?: number;
+  invoiceNumber?: string;
+}): Promise<string> {
+  const { accessToken, receiptPublicBase, buf, mime, vendor } = opts;
+  const kind = opts.kind ?? "data";
+  const isGmail = kind === "gmail";
+  let imageUrl = "";
+
+  const driveFolderId = process.env.GOOGLE_DRIVE_RECEIPTS_FOLDER_ID?.trim();
+  if (driveFolderId) {
+    try {
+      const fileName = buildDriveReceiptFileName({
+        mime,
+        vendor,
+        invoiceDateRaw: opts.invoiceDateRaw,
+        totalAmount: opts.totalAmount,
+        invoiceNumber: opts.invoiceNumber,
+      });
+      const driveUrl = await uploadReceiptToGoogleDrive(
+        buf,
+        mime,
+        fileName,
+        accessToken,
+        driveFolderId,
+      );
+      if (driveUrl) {
+        console.log(
+          isGmail
+            ? `[Export] Gmail attachment → Google Drive: ${vendor}`
+            : `[Export] Receipt for Sheets (Google Drive): ${vendor}`,
+        );
+        return driveUrl;
+      }
+    } catch (e) {
+      console.warn(`[Export] Google Drive upload failed (${vendor}):`, e);
+    }
+  }
+
+  if (isForgeStorageConfigured()) {
+    const forgeUrl = await uploadReceiptBinaryToForgeIfConfigured(buf, mime, vendor);
+    if (forgeUrl) {
+      imageUrl = forgeUrl;
+      console.log(
+        isGmail
+          ? `[Export] Gmail attachment → Forge (persistent): ${vendor} (${mime})`
+          : `[Export] Receipt for Sheets (Forge, persistent): ${vendor}`,
+      );
+    } else {
+      console.log(
+        isGmail
+          ? `[Export] Gmail → /api/receipt-share for ${vendor} (Forge did not return a URL).`
+          : `[Export] Using /api/receipt-share for ${vendor} (Forge did not return a URL).`,
+      );
+    }
+  }
+
+  if (needsPublicReceiptHttpsUrl(imageUrl)) {
+    const token = putReceiptShareImage(buf, mime);
+    if (token && receiptPublicBase) {
+      imageUrl = `${receiptPublicBase}/api/receipt-share/${token}`;
+      console.log(
+        isGmail
+          ? `[Export] Gmail attachment → receipt-share: ${vendor} (${mime})`
+          : `[Export] Receipt image for Sheets (/api/receipt-share): ${vendor}`,
+      );
+    } else if (!receiptPublicBase) {
+      console.warn(
+        "[Export] No public API base URL — pass publicApiBaseUrl from the app (getApiBaseUrl) or set PUBLIC_SERVER_URL / RECEIPT_IMAGE_PUBLIC_BASE_URL on the server.",
+      );
+    } else if (!token) {
+      console.warn(
+        isGmail
+          ? `[Export] Gmail attachment too large or empty for receipt-share: ${vendor} (${mime}, bytes=${buf.length})`
+          : `[Export] /api/receipt-share skipped (max 8 MiB per image): ${vendor}`,
+      );
+    }
+  }
+
+  if (!String(imageUrl ?? "").trim()) {
+    console.warn(
+      `[Export] No receipt image URL for ${vendor} (check Drive folder id, Forge env, /api/receipt-share token, RECEIPT_SHARE_DISK_DIR, or 8 MiB limit).`,
+    );
+  }
+
+  return imageUrl;
+}
+
 function googleSheetsErrorLooksLikeCellCharLimit(msg: string): boolean {
   const m = msg.toLowerCase();
   return (
@@ -3177,6 +3349,12 @@ export const appRouter = router({
         console.log(
           `[Export] Sheets row image: publicBase=${receiptPublicBase ? receiptPublicBase.slice(0, 48) : "MISSING"}`,
         );
+        {
+          const fid = process.env.GOOGLE_DRIVE_RECEIPTS_FOLDER_ID?.trim();
+          console.log(
+            `[Export] drive_folder=${fid ? `set (id len=${fid.length})` : "MISSING — add GOOGLE_DRIVE_RECEIPTS_FOLDER_ID on the server or receipts use Forge/receipt-share only"}`,
+          );
+        }
 
         // Get access token using OAuth Refresh Token
         const accessToken = await getGoogleAccessToken();
@@ -3445,37 +3623,17 @@ export const appRouter = router({
                   const mime = detectMimeFromBuffer(buf) || mimeFromDataUrl;
                   const base = receiptPublicBase;
 
-                  if (isForgeStorageConfigured()) {
-                    const forgeUrl = await uploadReceiptBinaryToForgeIfConfigured(buf, mime, r.vendor);
-                    if (forgeUrl) {
-                      imageUrl = forgeUrl;
-                      console.log(`[Export] Receipt for Sheets (Forge, persistent): ${r.vendor}`);
-                    } else {
-                      console.log(`[Export] Using /api/receipt-share for ${r.vendor} (Forge did not return a URL).`);
-                    }
-                  }
-
-                  if (needsPublicReceiptHttpsUrl(imageUrl)) {
-                    const token = putReceiptShareImage(buf, mime);
-                    if (token && base) {
-                      imageUrl = `${base}/api/receipt-share/${token}`;
-                      console.log(`[Export] Receipt image for Sheets (/api/receipt-share): ${r.vendor}`);
-                    } else if (!base) {
-                      console.warn(
-                        "[Export] No public API base URL — pass publicApiBaseUrl from the app (getApiBaseUrl) or set PUBLIC_SERVER_URL / RECEIPT_IMAGE_PUBLIC_BASE_URL on the server.",
-                      );
-                    } else if (!token) {
-                      console.warn(
-                        `[Export] /api/receipt-share skipped (max 8 MiB per image): ${r.vendor}`,
-                      );
-                    }
-                  }
-
-                  if (!String(imageUrl ?? "").trim()) {
-                    console.warn(
-                      `[Export] No receipt image URL for ${r.vendor} (check Forge env, /api/receipt-share token, RECEIPT_SHARE_DISK_DIR, or 8 MiB limit).`,
-                    );
-                  }
+                  imageUrl = await resolveReceiptImageUrlForSheetsExport({
+                    accessToken,
+                    receiptPublicBase: base,
+                    buf,
+                    mime,
+                    vendor: r.vendor,
+                    kind: "data",
+                    invoiceDateRaw: r.date,
+                    totalAmount: r.totalAmount,
+                    invoiceNumber: r.invoiceNumber,
+                  });
                 }
               } catch (error) {
                 console.error(`[Export] Failed to upload image for ${r.vendor}:`, error);
@@ -3516,35 +3674,17 @@ export const appRouter = router({
                   }
                   const base = receiptPublicBase;
 
-                  if (isForgeStorageConfigured()) {
-                    const forgeUrl = await uploadReceiptBinaryToForgeIfConfigured(buf, mime, r.vendor);
-                    if (forgeUrl) {
-                      imageUrl = forgeUrl;
-                      console.log(`[Export] Gmail attachment → Forge (persistent): ${r.vendor} (${mime})`);
-                    } else {
-                      console.log(
-                        `[Export] Gmail → /api/receipt-share for ${r.vendor} (Forge did not return a URL).`,
-                      );
-                    }
-                  }
-
-                  if (needsPublicReceiptHttpsUrl(imageUrl)) {
-                    const token = putReceiptShareImage(buf, mime);
-                    if (token && base) {
-                      imageUrl = `${base}/api/receipt-share/${token}`;
-                      console.log(
-                        `[Export] Gmail attachment → receipt-share: ${r.vendor} (${mime})`,
-                      );
-                    } else if (!token) {
-                      console.warn(
-                        `[Export] Gmail attachment too large or empty for receipt-share: ${r.vendor} (${mime}, bytes=${buf.length})`,
-                      );
-                    } else if (!base) {
-                      console.warn(
-                        "[Export] Gmail attachment skipped — no public API base URL for receipt-share.",
-                      );
-                    }
-                  }
+                  imageUrl = await resolveReceiptImageUrlForSheetsExport({
+                    accessToken,
+                    receiptPublicBase: base,
+                    buf,
+                    mime,
+                    vendor: r.vendor,
+                    kind: "gmail",
+                    invoiceDateRaw: r.date,
+                    totalAmount: r.totalAmount,
+                    invoiceNumber: r.invoiceNumber,
+                  });
                 }
               } catch (gmailAttErr) {
                 console.error(

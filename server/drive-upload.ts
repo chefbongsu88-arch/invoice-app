@@ -1,101 +1,123 @@
 /**
- * Google Drive Image Upload Handler
- * Uploads receipt images to Google Drive and returns public URLs
+ * Google Drive upload for receipt binaries (same OAuth user as Sheets).
+ * Returns a public HTTPS URL suitable for Google Sheets =IMAGE() / links.
  */
 
 /**
- * Upload image to Google Drive using the Service Account
- * Returns a public URL that can be embedded in Google Sheets
+ * Upload receipt bytes to a Drive folder and return a view URL.
+ * Returns null on failure (caller may fall back to Forge / receipt-share).
+ */
+export async function uploadReceiptToGoogleDrive(
+  buffer: Buffer,
+  mimeType: string,
+  fileName: string,
+  accessToken: string,
+  folderId: string | undefined,
+): Promise<string | null> {
+  try {
+    const id = await uploadMultipartToDrive(buffer, mimeType, fileName, accessToken, folderId);
+    await makeFilePublic(id, accessToken);
+    return `https://drive.google.com/uc?export=view&id=${id}`;
+  } catch (error) {
+    console.error("[Drive] Receipt upload failed:", error);
+    return null;
+  }
+}
+
+/**
+ * Upload image to Google Drive (legacy JPEG/base64 API).
+ * Returns a public URL that can be embedded in Google Sheets.
  */
 export async function uploadImageToDrive(
   imageBase64: string,
   fileName: string,
   accessToken: string,
-  folderId?: string
+  folderId?: string,
 ): Promise<string> {
-  try {
-    // Create metadata for the file
-    const metadata = {
-      name: fileName,
-      mimeType: "image/jpeg",
-      ...(folderId && { parents: [folderId] }),
-    };
-
-    // Create multipart body
-    const boundary = "===============7330845974216740156==";
-    const delimiter = `\r\n--${boundary}\r\n`;
-    const closeDelimiter = `\r\n--${boundary}--`;
-
-    // Convert base64 to binary
-    const binaryString = Buffer.from(imageBase64, "base64");
-
-    const multipartBody = 
-      delimiter +
-      `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-      JSON.stringify(metadata) +
-      delimiter +
-      `Content-Type: image/jpeg\r\n\r\n` +
-      binaryString.toString("binary") +
-      closeDelimiter;
-
-    // Upload to Google Drive
-    const uploadUrl = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
-    const uploadRes = await fetch(uploadUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": `multipart/related; boundary="${boundary}"`,
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: multipartBody,
-    });
-
-    if (!uploadRes.ok) {
-      const errText = await uploadRes.text();
-      console.error("Drive upload error:", errText);
-      throw new Error("Failed to upload image to Google Drive");
-    }
-
-    const uploadData = await uploadRes.json() as { id: string };
-    const fileId = uploadData.id;
-
-    // Make file public
-    await makeFilePublic(fileId, accessToken);
-
-    // Return public URL
-    const publicUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
-    return publicUrl;
-  } catch (error) {
-    console.error("Error uploading image to Drive:", error);
+  const buf = Buffer.from(imageBase64, "base64");
+  const url = await uploadReceiptToGoogleDrive(buf, "image/jpeg", fileName, accessToken, folderId);
+  if (!url) {
     throw new Error("Failed to upload image to Google Drive");
   }
+  return url;
+}
+
+async function uploadMultipartToDrive(
+  buffer: Buffer,
+  mimeType: string,
+  fileName: string,
+  accessToken: string,
+  folderId: string | undefined,
+): Promise<string> {
+  const metadata: Record<string, unknown> = {
+    name: fileName,
+    mimeType,
+  };
+  const trimmed = folderId?.trim();
+  if (trimmed) {
+    metadata.parents = [trimmed];
+  }
+
+  const boundary = "===============7330845974216740156==";
+  // multipart/related: first part starts with --boundary (RFC 2387 / Drive samples)
+  const partJson = Buffer.concat([
+    Buffer.from(`--${boundary}\r\n`),
+    Buffer.from(`Content-Type: application/json; charset=UTF-8\r\n\r\n`),
+    Buffer.from(JSON.stringify(metadata)),
+  ]);
+  const partMedia = Buffer.concat([
+    Buffer.from(`\r\n--${boundary}\r\n`),
+    Buffer.from(`Content-Type: ${mimeType}\r\n\r\n`),
+    buffer,
+    Buffer.from(`\r\n--${boundary}--`),
+  ]);
+  const body = Buffer.concat([partJson, partMedia]);
+
+  const uploadUrl = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
+  const uploadRes = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": `multipart/related; boundary="${boundary}"`,
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body,
+  });
+
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text();
+    console.error("[Drive] Upload error:", uploadRes.status, errText);
+    throw new Error(`Failed to upload file to Google Drive (${uploadRes.status})`);
+  }
+
+  const uploadData = (await uploadRes.json()) as { id?: string };
+  const id = uploadData.id;
+  if (!id) {
+    throw new Error("Drive upload response missing file id");
+  }
+  return id;
 }
 
 /**
- * Make a Google Drive file publicly accessible
+ * Make a Google Drive file publicly accessible (anyone with link can view).
  */
 async function makeFilePublic(fileId: string, accessToken: string): Promise<void> {
-  try {
-    const permissionUrl = `https://www.googleapis.com/drive/v3/files/${fileId}/permissions`;
-    const permissionRes = await fetch(permissionUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        role: "reader",
-        type: "anyone",
-      }),
-    });
+  const permissionUrl = `https://www.googleapis.com/drive/v3/files/${fileId}/permissions`;
+  const permissionRes = await fetch(permissionUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      role: "reader",
+      type: "anyone",
+    }),
+  });
 
-    if (!permissionRes.ok) {
-      const errText = await permissionRes.text();
-      console.error("Permission error:", errText);
-      throw new Error("Failed to make file public");
-    }
-  } catch (error) {
-    console.error("Error making file public:", error);
-    throw new Error("Failed to set file permissions");
+  if (!permissionRes.ok) {
+    const errText = await permissionRes.text();
+    console.error("[Drive] Permission error:", permissionRes.status, errText);
+    throw new Error("Failed to make file public");
   }
 }
 
@@ -115,7 +137,7 @@ export async function getOrCreateInvoiceFolder(accessToken: string): Promise<str
     });
 
     if (searchRes.ok) {
-      const searchData = await searchRes.json() as { files?: Array<{ id: string }> };
+      const searchData = (await searchRes.json()) as { files?: Array<{ id: string }> };
       if (searchData.files && searchData.files.length > 0) {
         return searchData.files[0].id;
       }
@@ -137,11 +159,11 @@ export async function getOrCreateInvoiceFolder(accessToken: string): Promise<str
 
     if (!createRes.ok) {
       const errText = await createRes.text();
-      console.error("Folder creation error:", errText);
+      console.error("[Drive] Folder creation error:", errText);
       throw new Error("Failed to create folder");
     }
 
-    const createData = await createRes.json() as { id: string };
+    const createData = (await createRes.json()) as { id: string };
     const folderId = createData.id;
 
     // Make folder public
@@ -149,7 +171,7 @@ export async function getOrCreateInvoiceFolder(accessToken: string): Promise<str
 
     return folderId;
   } catch (error) {
-    console.error("Error getting/creating folder:", error);
+    console.error("[Drive] Error getting/creating folder:", error);
     throw new Error("Failed to manage Google Drive folder");
   }
 }
