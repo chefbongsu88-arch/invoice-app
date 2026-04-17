@@ -953,6 +953,8 @@ function cleanParsedInvoiceNumber(raw: unknown): string {
   }
   if (!/[0-9]/.test(s)) return "";
   if (/^(?:cliente|company|empresa|vendor|merchant|factura|invoice)$/i.test(s)) return "";
+  /** Common buyer CIF on Es Cuco / B2B tickets — not a document id (OCR often misreads as invoice #). */
+  if (s.replace(/[\s-]/g, "").toUpperCase() === "B56819451") return "";
   return s;
 }
 
@@ -1766,6 +1768,7 @@ CRITICAL — amounts (European style):
 invoiceNumber (document reference):
 - Prefer the printed invoice / factura id when you see labels like Nº Factura, FACTURA, Invoice No., etc.
 - On Spanish delivery notes and supplier tickets, the word ALBARÁN or ALBARAN (delivery note) is common: the document number is often on the same line after ":" or "-" or printed on the line directly below that heading. Use that full reference as invoiceNumber when no separate "Factura" number exists.
+- **Never** use a **customer CIF/NIF** as invoiceNumber. The buyer tax id **B56819451** appears on many Es Cuco / supplier tickets near "Cliente" or "CIF" — it is **not** the albarán or factura number; leave invoiceNumber empty or use the real document id from ALBARÁN / Nº only, never B56819451.
 
 Vendor:
 - Copy the shop / issuer name from the header (Factura, NIF block, or letterhead). Partial names are OK. Use "" only if truly unreadable.
@@ -1787,11 +1790,9 @@ Use "Restaurant" for bars, cafés, menús.
 
 items: [{partName, quantity, unit:"kg", pricePerUnit, total, ivaPercent?}] ONLY when category is "Meat" AND the ticket shows weighted line items (carnicería / butcher style); for supermarkets with vegetables, fish, or mixed groceries use []. Otherwise [].
 - On Spanish supplier albaranes, each product line often shows Precio (€/kg ex IVA), IVA % (e.g. 10), P.V.P. (€/kg inc IVA), and Importe (line total). Put ivaPercent as the printed VAT percent per line (e.g. 10) when visible. pricePerUnit should be Precio (ex VAT) €/kg when readable; total must be the line Importe (amount to pay for that line).
-- **Only** for the two primary meat suppliers **La Portenia** / La Porteña (Carne Argentina) **or** **Es Cuco** / Super Es Cuco / Es Cuco Carns — when the ticket is an ALBARÁN whose table uses **CANT.** (or **CANT**), **TARIFA**, **IVA**, **IMPORTE**: for each meat line read from the **cell under that column header** on the same product row (do not shift digits between columns):
-  • quantity = number **under CANT.** / CANT (kg). Never use IVA or IMPORTE for quantity.
-  • pricePerUnit = **TARIFA** (€/kg ex IVA). **Never** put the **IVA** column amount (tax €) in pricePerUnit.
-  • total = **IMPORTE** (line net). **Never** use the IVA column as line total.
-- For any other meat vendor, do **not** assume this exact column layout; use the general albarán line rules above.
+- **La Portenia** / La Porteña only — ALBARÁN table with **CANT.** / **CANT**, **TARIFA**, **IVA**, **IMPORTE**: quantity = under **CANT.** / CANT (kg); pricePerUnit = **TARIFA** (€/kg ex IVA); total = **IMPORTE** (line net). Never use the **IVA** column for quantity, price, or line total.
+- **Es Cuco** only — ALBARÁN table with **CANT**, **P.V.P.**, **IMPORTE** (and often IVA): quantity = number **under CANT**; pricePerUnit = **P.V.P.** (follow the €/kg value under the **P.V.P.** column on that line); total = **IMPORTE** (line net under **IMPORTE**). Do not read line price from TARIFA unless that is what is printed for Es Cuco; do not confuse **IVA** (tax €) with P.V.P. or total.
+- For any other meat vendor, use the general albarán line rules above; do not assume La Portenia or Es Cuco column layouts.
 - Never put traceability-only rows in items: lines whose text is mainly "LOTE: …", "Nº lote", "ORIGEN: …", "País de origen", or "TRAZABILIDAD" (often printed under the real cut with IMPORTE 0 or no weight) are not products — omit them entirely. Only real cuts (CHULETÓN, TAPA DE VACUNO, etc.) with real kg and line totals belong in items.
 
 Numbers in JSON must be JSON numbers for totalAmount, ivaAmount, tipAmount (not strings). Output ONLY the JSON object, no markdown.`;
@@ -1895,13 +1896,15 @@ Return ONLY a valid JSON object with these exact keys:
 - items: array of {partName, quantity, unit:"kg", pricePerUnit, total, ivaPercent?}
 
 When the PDF or body shows ALBARÁN / ALBARAN (delivery note) and the reference is on the next line or after a colon, use that value as invoiceNumber if no separate factura number exists.
+- **Never** set invoiceNumber to **B56819451** — that is a customer **CIF**, not a document number.
 
 For Meat invoices:
 - If the attachment or email clearly shows butcher / meat line items, return those items.
 - Include only actual meat cuts or weighted meat line items.
 - Do not include packaging, sauces, drinks, vegetables, fish, or other non-meat products.
 - Omit traceability-only lines (e.g. Spanish albarán "LOTE: … ORIGEN: ESPAÑA", "Nº lote", "País de origen", "TRAZABILIDAD") — they are not billable items even if OCR shows a quantity column.
-- **Only** for **La Portenia** / La Porteña or **Es Cuco** ALBARÁN PDFs: columns **CANT.** (or CANT), **TARIFA**, **IVA**, **IMPORTE** — quantity under **CANT.**; pricePerUnit = **TARIFA** (€/kg, not IVA €); total = **IMPORTE** (line net). Do not use the IVA column as price or total. Other meat suppliers: use generic line extraction, not this fixed layout.
+- **La Portenia** ALBARÁN PDFs: **CANT.** / CANT, **TARIFA**, **IVA**, **IMPORTE** — quantity under CANT; pricePerUnit = **TARIFA**; total = **IMPORTE** (line net).
+- **Es Cuco** ALBARÁN PDFs: **CANT**, **P.V.P.**, **IMPORTE** — quantity under **CANT**; pricePerUnit = **P.V.P.** (€/kg under that column); total = **IMPORTE**. Never use customer CIF **B56819451** as invoiceNumber.
 - If line items are not clear, return [].
 
 Return only the JSON, no markdown, no explanation.`;
