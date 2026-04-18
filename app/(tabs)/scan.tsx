@@ -182,6 +182,7 @@ function keyboardForDecimals(): KeyboardTypeOptions {
 
 const PREDEFINED_CATEGORIES: InvoiceCategory[] = [
   "Meat",
+  "Mercadona",
   "Seafood",
   "Vegetables",
   "Restaurant",

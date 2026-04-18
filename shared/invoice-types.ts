@@ -74,6 +74,7 @@ export function isMeatLotOrigenTraceabilityLine(description: string): boolean {
 
 export type InvoiceCategory =
   | "Meat"
+  | "Mercadona"
   | "Seafood"
   | "Vegetables"
   | "Restaurant"

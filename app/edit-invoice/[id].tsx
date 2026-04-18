@@ -22,6 +22,7 @@ import type { InvoiceCategory } from "@/shared/invoice-types";
 
 const CATEGORIES: InvoiceCategory[] = [
   "Meat",
+  "Mercadona",
   "Seafood",
   "Vegetables",
   "Restaurant",

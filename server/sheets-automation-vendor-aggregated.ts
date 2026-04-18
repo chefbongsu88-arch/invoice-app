@@ -532,7 +532,7 @@ async function createMonthlySheets(
         vendor.category,         // I: Category
         vendor.currency,         // J: Currency
         vendor.notes,            // K: Notes
-        receiptCellForAggregatedSheet(vendor.imageUrl), // L: same formula as main tracker when possible
+        "",                      // L: Receipt intentionally empty on monthly aggregate rows
         ""                       // M: Exported At
       ];
       sheetRows.push(row);
@@ -626,7 +626,7 @@ async function createQuarterlySheets(
         vendor.category,         // I: Category
         vendor.currency,         // J: Currency
         vendor.notes,            // K: Notes
-        receiptCellForAggregatedSheet(vendor.imageUrl),
+        "",                      // L: Receipt intentionally empty on quarterly aggregate rows
         ""                       // M: Exported At
       ];
       sheetRows.push(row);

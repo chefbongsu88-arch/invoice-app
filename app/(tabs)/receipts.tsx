@@ -39,6 +39,7 @@ const SPREADSHEET_ID = "1-6DV0NCrWGRiTyQV_WWS_uHC6ALfDrFJT9PVKO9eq5E";
 const CATEGORIES = [
   "All",
   "Meat",
+  "Mercadona",
   "Seafood",
   "Vegetables",
   "Restaurant",

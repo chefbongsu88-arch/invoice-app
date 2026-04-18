@@ -1958,7 +1958,7 @@ Date (critical — read ONLY what is printed on the paper):
 - If no legible date is on the receipt, use "" (empty string). Never invent a date.
 
 category — one exact string:
-"Meat","Seafood","Vegetables","Restaurant","Gas Station","Water","Beverages","Asian Market","Caviar","Truffle","Organic Farm","Hardware Store","Other"
+"Meat","Mercadona","Seafood","Vegetables","Restaurant","Gas Station","Water","Beverages","Asian Market","Caviar","Truffle","Organic Farm","Hardware Store","Other"
 Use "Meat" for butchers, carnicería, deli, embutidos, charcutería, names containing CARNS or similar.
 Use "Restaurant" for bars, cafés, menús.
 
@@ -2065,7 +2065,7 @@ Return ONLY a valid JSON object with these exact keys:
 - totalAmount: number (total amount in EUR)
 - ivaAmount: number (IVA/VAT amount in EUR, 0 if not found)
 - tipAmount: number (tip/gratuity amount in EUR, 0 if not found)
-- category: string (one of: "Meat", "Seafood", "Vegetables", "Restaurant", "Gas Station", "Water", "Beverages", "Asian Market", "Caviar", "Truffle", "Organic Farm", "Hardware Store", "Other")
+- category: string (one of: "Meat", "Mercadona", "Seafood", "Vegetables", "Restaurant", "Gas Station", "Water", "Beverages", "Asian Market", "Caviar", "Truffle", "Organic Farm", "Hardware Store", "Other")
 - subject: string (email subject line)
 - items: array of {partName, quantity, unit:"kg", pricePerUnit, total, ivaPercent?}
 
