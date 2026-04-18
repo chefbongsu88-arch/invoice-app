@@ -1734,6 +1734,7 @@ async function resolveReceiptImageUrlForSheetsExport(opts: {
         fileName,
         accessToken,
         driveFolderId,
+        isGmail ? "view" : "direct",
       );
       if (driveUrl) {
         console.log(

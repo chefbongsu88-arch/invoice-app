@@ -13,10 +13,14 @@ export async function uploadReceiptToGoogleDrive(
   fileName: string,
   accessToken: string,
   folderId: string | undefined,
+  linkMode: "direct" | "view" = "direct",
 ): Promise<string | null> {
   try {
     const id = await uploadMultipartToDrive(buffer, mimeType, fileName, accessToken, folderId);
     await makeFilePublic(id, accessToken);
+    if (linkMode === "view") {
+      return `https://drive.google.com/file/d/${id}/view`;
+    }
     return `https://drive.google.com/uc?export=view&id=${id}`;
   } catch (error) {
     console.error("[Drive] Receipt upload failed:", error);
