@@ -32,6 +32,7 @@ import { trpc } from "@/lib/trpc";
 import { getApiBaseUrl } from "@/constants/oauth";
 import { PRODUCTION_API_ORIGIN } from "@/constants/receipt-api-origin";
 import { coerceInvoiceDateIsoForStorage, displayInvoiceNumber } from "@/lib/invoice-display";
+import { runWithScreenStayAwake } from "@/lib/keep-awake-export";
 import { getSheetsExportTarget } from "@/lib/sheets-settings";
 import { DEFAULT_MAIN_TRACKER_SHEET_NAME } from "@/shared/sheets-defaults";
 import {
@@ -727,6 +728,7 @@ export default function GmailScreen() {
         let relabelFailed = false;
         if (autoExportEnabled) {
           try {
+            await runWithScreenStayAwake(async () => {
             const gmailTokForExport =
               accessToken.trim() ||
               (await AsyncStorage.getItem(GMAIL_TOKEN_KEY))?.trim() ||
@@ -800,6 +802,7 @@ export default function GmailScreen() {
             exportOutcome = result.rowsAdded === 0 ? "duplicate" : "ok";
             exportReceiptMissing =
               exportOutcome === "ok" && Boolean(result.receiptImageMissing);
+            });
           } catch (err) {
             console.error("[Gmail] exportToSheets failed:", err);
             exportOutcome = "failed";

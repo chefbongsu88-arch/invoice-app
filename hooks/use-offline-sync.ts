@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "@/constants/oauth";
+import { runWithScreenStayAwake } from "@/lib/keep-awake-export";
 import { getSheetsExportTarget } from "@/lib/sheets-settings";
 import { trpc } from "@/lib/trpc";
 
@@ -50,20 +51,22 @@ export function useOfflineSync() {
 
     setUploadStatus("uploading");
     try {
-      const { spreadsheetId } = await getSheetsExportTarget();
-      for (const entry of entries) {
-        await exportMutation.mutateAsync({
-          spreadsheetId,
-          sheetName: entry.sheetName,
-          publicApiBaseUrl: getApiBaseUrl(),
-          rows: [entry.row],
-          automateSheets: true,
-        });
-      }
-      await AsyncStorage.removeItem(OFFLINE_INVOICES_KEY);
-      setOfflineCount(0);
-      setUploadStatus("success");
-      setTimeout(() => setUploadStatus("idle"), 4000);
+      await runWithScreenStayAwake(async () => {
+        const { spreadsheetId } = await getSheetsExportTarget();
+        for (const entry of entries) {
+          await exportMutation.mutateAsync({
+            spreadsheetId,
+            sheetName: entry.sheetName,
+            publicApiBaseUrl: getApiBaseUrl(),
+            rows: [entry.row],
+            automateSheets: true,
+          });
+        }
+        await AsyncStorage.removeItem(OFFLINE_INVOICES_KEY);
+        setOfflineCount(0);
+        setUploadStatus("success");
+        setTimeout(() => setUploadStatus("idle"), 4000);
+      });
     } catch {
       setUploadStatus("failed");
     }

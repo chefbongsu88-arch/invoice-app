@@ -53,6 +53,7 @@ function headerMatchesMeatLineSumAllowingNetVsGross(
 const verboseSheetsAggLog =
   process.env.VERBOSE_SHEETS_AGG_LOG === "1" ||
   process.env.NODE_ENV === "development";
+const MEAT_SHEET_WRITE_GAP_MS = 3000;
 
 export interface SheetAutomationConfig {
   spreadsheetId: string;
@@ -308,6 +309,137 @@ function formatCurrency(amount: number): number {
   return Math.round(amount * 100) / 100;
 }
 
+function toQuotedA1Range(sheetTitle: string, a1: string): string {
+  return `'${String(sheetTitle).replace(/'/g, "''")}'!${a1}`;
+}
+
+function parseSheetTitleFromA1Range(range: string): string {
+  const raw = String(range ?? "").trim();
+  const bang = raw.indexOf("!");
+  const left = bang >= 0 ? raw.slice(0, bang).trim() : raw;
+  if (!left) return "";
+  if (left.startsWith("'") && left.endsWith("'") && left.length >= 2) {
+    return left.slice(1, -1).replace(/''/g, "'");
+  }
+  return left;
+}
+
+async function batchGetSheetValuesByTitle(
+  accessToken: string,
+  spreadsheetId: string,
+  rangesByTitle: Record<string, string>,
+): Promise<Record<string, unknown[][]>> {
+  const entries = Object.entries(rangesByTitle);
+  if (entries.length === 0) return {};
+
+  const query = new URLSearchParams();
+  for (const [sheetTitle, a1] of entries) {
+    query.append("ranges", toQuotedA1Range(sheetTitle, a1));
+  }
+  query.set("valueRenderOption", "FORMULA");
+  query.set("majorDimension", "ROWS");
+
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${query.toString()}`;
+  const res = await fetchSheetsApiWithRetry(
+    url,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+    "batchGet values",
+  );
+  if (!res.ok) {
+    throw new Error(`batchGet values error: ${await res.text()}`);
+  }
+  const payload = (await res.json()) as {
+    valueRanges?: Array<{ range?: string; values?: unknown[][] }>;
+  };
+  const byTitle = new Map<string, unknown[][]>();
+  for (const vr of payload.valueRanges ?? []) {
+    const title = parseSheetTitleFromA1Range(String(vr.range ?? ""));
+    if (title) byTitle.set(title, vr.values ?? []);
+  }
+  const out: Record<string, unknown[][]> = {};
+  for (const [sheetTitle] of entries) {
+    out[sheetTitle] = byTitle.get(sheetTitle) ?? [];
+  }
+  return out;
+}
+
+async function rewriteAggregatedTrackerSheet(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetTitle: string,
+  sheetRows: any[][],
+  existingValues?: unknown[][],
+): Promise<"updated" | "unchanged"> {
+  const nCols = Math.max(
+    1,
+    sheetRows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0),
+  );
+  const endCol = toA1ColumnLabel(nCols);
+  const compareRows = existingValues ?? [];
+  if (areSheetRowsEquivalent(compareRows, sheetRows)) {
+    return "unchanged";
+  }
+
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, `A:${endCol}`)}:clear`;
+  const clearRes = await fetchSheetsApiWithRetry(
+    clearUrl,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    },
+    `${sheetTitle} values.clear`,
+  );
+  if (!clearRes.ok) {
+    throw new Error(`${sheetTitle} clear error: ${await clearRes.text()}`);
+  }
+
+  const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, "A1")}?valueInputOption=USER_ENTERED`;
+  const updateRes = await fetchSheetsApiWithRetry(
+    updateUrl,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ values: sheetRows }),
+    },
+    `${sheetTitle} values.update`,
+  );
+  if (!updateRes.ok) {
+    throw new Error(`${sheetTitle} update error: ${await updateRes.text()}`);
+  }
+
+  const sheetId = await getSheetIdByTitle(spreadsheetId, sheetTitle, accessToken);
+  if (sheetId != null && sheetRows.length > 0) {
+    await applyBoldTextFormatToGridRange(spreadsheetId, accessToken, sheetId, {
+      startRowIndex: 0,
+      endRowIndex: Math.min(2, sheetRows.length),
+      startColumnIndex: 0,
+      endColumnIndex: TRACKER_COLUMN_COUNT,
+    });
+    if (sheetRows.length > 2) {
+      await applyThinTextFormatToGridRange(spreadsheetId, accessToken, sheetId, {
+        startRowIndex: 2,
+        endRowIndex: sheetRows.length,
+        startColumnIndex: 0,
+        endColumnIndex: TRACKER_COLUMN_COUNT,
+      });
+      await applyDateDisplayFormatDdMmYyyy(spreadsheetId, accessToken, sheetId, {
+        startRowIndex: 2,
+        endRowIndex: sheetRows.length,
+        startColumnIndex: 3,
+        endColumnIndex: 4,
+      });
+    }
+  }
+
+  return "updated";
+}
+
 /**
  * Create monthly sheets with vendor aggregation
  */
@@ -346,6 +478,11 @@ async function createMonthlySheets(
       console.warn(`⚠️ Could not ensure sheet "${month}" — skipping`);
     }
   }
+  const readRanges: Record<string, string> = {};
+  for (const month of months) {
+    readRanges[month] = `A1:${toA1ColumnLabel(header.length)}`;
+  }
+  const existingByMonth = await batchGetSheetValuesByTitle(accessToken, spreadsheetId, readRanges);
 
   // Always refresh every month tab (header + TOTAL row). Previously only `activeMonths` were
   // updated, so November/December often kept an old layout or missed the TOTAL row when empty.
@@ -353,19 +490,7 @@ async function createMonthlySheets(
     const monthInvoices = invoicesByMonth[month];
     const aggregated = aggregateByVendor(monthInvoices);
 
-    const ok = await ensureSheetExists(spreadsheetId, month, accessToken, header);
-    if (!ok) {
-      console.warn(`⚠️ Could not ensure sheet "${month}" — skipping`);
-      continue;
-    }
-
     const sheetRows: any[] = [header];
-
-    // Calculate TOTAL
-    const totalAmount = aggregated.reduce((sum, v) => sum + v.totalAmount, 0);
-    const totalIva = aggregated.reduce((sum, v) => sum + v.ivaAmount, 0);
-    const totalBase = aggregated.reduce((sum, v) => sum + v.baseAmount, 0);
-    const totalTip = aggregated.reduce((sum, v) => sum + v.tip, 0);
 
     // Always add TOTAL row with SUM formulas for automatic calculation
     const totalRow = [
@@ -398,47 +523,18 @@ async function createMonthlySheets(
       sheetRows.push(row);
     }
 
-    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(month, "A:M")}:clear`;
-    await fetch(clearUrl, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }
-    });
-
-    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(month, `A1:M${sheetRows.length}`)}?valueInputOption=USER_ENTERED`;
-    await fetch(updateUrl, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ values: sheetRows })
-    });
-
-    const monthSheetId = await getSheetIdByTitle(spreadsheetId, month, accessToken);
-    if (monthSheetId != null && sheetRows.length > 0) {
-      await applyBoldTextFormatToGridRange(spreadsheetId, accessToken, monthSheetId, {
-        startRowIndex: 0,
-        endRowIndex: Math.min(2, sheetRows.length),
-        startColumnIndex: 0,
-        endColumnIndex: TRACKER_COLUMN_COUNT,
-      });
-      if (sheetRows.length > 2) {
-        await applyThinTextFormatToGridRange(spreadsheetId, accessToken, monthSheetId, {
-          startRowIndex: 2,
-          endRowIndex: sheetRows.length,
-          startColumnIndex: 0,
-          endColumnIndex: TRACKER_COLUMN_COUNT,
-        });
-        await applyDateDisplayFormatDdMmYyyy(spreadsheetId, accessToken, monthSheetId, {
-          startRowIndex: 2,
-          endRowIndex: sheetRows.length,
-          startColumnIndex: 3,
-          endColumnIndex: 4,
-        });
-      }
+    const status = await rewriteAggregatedTrackerSheet(
+      accessToken,
+      spreadsheetId,
+      month,
+      sheetRows,
+      existingByMonth[month],
+    );
+    if (status === "unchanged") {
+      console.log(`ℹ️  ${month} sheet unchanged: skipped clear/update (${aggregated.length} vendors)`);
+    } else {
+      console.log(`✅ Updated ${month} sheet: ${aggregated.length} vendors`);
     }
-
-    console.log(`✅ Updated ${month} sheet: ${aggregated.length} vendors`);
   }
 }
 
@@ -477,25 +573,18 @@ async function createQuarterlySheets(
       console.warn(`⚠️ Could not ensure sheet "${quarter}" — skipping`);
     }
   }
+  const readRanges: Record<string, string> = {};
+  for (const quarter of quarters) {
+    readRanges[quarter] = `A1:${toA1ColumnLabel(header.length)}`;
+  }
+  const existingByQuarter = await batchGetSheetValuesByTitle(accessToken, spreadsheetId, readRanges);
 
   // Always refresh all quarter tabs so Q4 (Oct–Dec) gets the same header + TOTAL template even when empty.
   for (const quarter of quarters) {
     const quarterInvoices = invoicesByQuarter[quarter];
     const aggregated = aggregateByVendor(quarterInvoices);
 
-    const ok = await ensureSheetExists(spreadsheetId, quarter, accessToken, header);
-    if (!ok) {
-      console.warn(`⚠️ Could not ensure sheet "${quarter}" — skipping`);
-      continue;
-    }
-
     const sheetRows: any[] = [header];
-
-    // Calculate TOTAL
-    const totalAmount = aggregated.reduce((sum, v) => sum + v.totalAmount, 0);
-    const totalIva = aggregated.reduce((sum, v) => sum + v.ivaAmount, 0);
-    const totalBase = aggregated.reduce((sum, v) => sum + v.baseAmount, 0);
-    const totalTip = aggregated.reduce((sum, v) => sum + v.tip, 0);
 
     // Always add TOTAL row with SUM formulas for automatic calculation
     const totalRow = [
@@ -528,47 +617,18 @@ async function createQuarterlySheets(
       sheetRows.push(row);
     }
 
-    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(quarter, "A:M")}:clear`;
-    await fetch(clearUrl, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }
-    });
-
-    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(quarter, `A1:M${sheetRows.length}`)}?valueInputOption=USER_ENTERED`;
-    await fetch(updateUrl, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ values: sheetRows })
-    });
-
-    const quarterSheetId = await getSheetIdByTitle(spreadsheetId, quarter, accessToken);
-    if (quarterSheetId != null && sheetRows.length > 0) {
-      await applyBoldTextFormatToGridRange(spreadsheetId, accessToken, quarterSheetId, {
-        startRowIndex: 0,
-        endRowIndex: Math.min(2, sheetRows.length),
-        startColumnIndex: 0,
-        endColumnIndex: TRACKER_COLUMN_COUNT,
-      });
-      if (sheetRows.length > 2) {
-        await applyThinTextFormatToGridRange(spreadsheetId, accessToken, quarterSheetId, {
-          startRowIndex: 2,
-          endRowIndex: sheetRows.length,
-          startColumnIndex: 0,
-          endColumnIndex: TRACKER_COLUMN_COUNT,
-        });
-        await applyDateDisplayFormatDdMmYyyy(spreadsheetId, accessToken, quarterSheetId, {
-          startRowIndex: 2,
-          endRowIndex: sheetRows.length,
-          startColumnIndex: 3,
-          endColumnIndex: 4,
-        });
-      }
+    const status = await rewriteAggregatedTrackerSheet(
+      accessToken,
+      spreadsheetId,
+      quarter,
+      sheetRows,
+      existingByQuarter[quarter],
+    );
+    if (status === "unchanged") {
+      console.log(`ℹ️  ${quarter} sheet unchanged: skipped clear/update (${aggregated.length} vendors)`);
+    } else {
+      console.log(`✅ Updated ${quarter} sheet: ${aggregated.length} vendors`);
     }
-
-    console.log(`✅ Updated ${quarter} sheet: ${aggregated.length} vendors`);
   }
 }
 
@@ -893,14 +953,17 @@ async function rewriteMeatSheet(
   sheetTitle: string,
   headerRow: string[],
   dataRows: any[][],
+  existingValues?: unknown[][],
 ): Promise<void> {
-  const ensured = await ensureSheetExists(spreadsheetId, sheetTitle, accessToken, headerRow);
-  if (!ensured) {
-    throw new Error(`${sheetTitle} sheet could not be created`);
+  const sheetData = [headerRow, ...dataRows];
+  const clearEndColumnLetter = toA1ColumnLabel(Math.max(headerRow.length, 1));
+  const compareRows = existingValues ?? [];
+  if (areSheetRowsEquivalent(compareRows, sheetData)) {
+    console.log(`ℹ️  ${sheetTitle}: unchanged — skipped clear/update`);
+    return;
   }
 
-  const sheetData = [headerRow, ...dataRows];
-  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, "A:AZ")}:clear`;
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, `A:${clearEndColumnLetter}`)}:clear`;
   const clearRes = await fetchSheetsApiWithRetry(
     clearUrl,
     {
@@ -945,6 +1008,65 @@ async function rewriteMeatSheet(
   }
 }
 
+/** 1-based column index -> A1 column label (1=A, 27=AA). */
+function toA1ColumnLabel(columnIndex: number): string {
+  const safe = Math.max(1, Math.floor(columnIndex));
+  let n = safe;
+  let label = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    label = String.fromCharCode(65 + rem) + label;
+    n = Math.floor((n - 1) / 26);
+  }
+  return label;
+}
+
+function normalizeSheetRows(rows: unknown): string[][] {
+  if (!Array.isArray(rows)) return [];
+  const normalized = rows.map((rawRow) => {
+    const row = Array.isArray(rawRow) ? rawRow : [];
+    const normalizedRow = row.map((cell) => normalizeSheetCell(cell));
+    let lastNonEmpty = normalizedRow.length - 1;
+    while (lastNonEmpty >= 0 && normalizedRow[lastNonEmpty] === "") {
+      lastNonEmpty -= 1;
+    }
+    return normalizedRow.slice(0, lastNonEmpty + 1);
+  });
+  let lastNonEmptyRow = normalized.length - 1;
+  while (lastNonEmptyRow >= 0 && normalized[lastNonEmptyRow].length === 0) {
+    lastNonEmptyRow -= 1;
+  }
+  return normalized.slice(0, lastNonEmptyRow + 1);
+}
+
+function normalizeSheetCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "";
+    if (Object.is(value, -0)) return "0";
+    return String(value);
+  }
+  if (typeof value === "boolean") {
+    return value ? "TRUE" : "FALSE";
+  }
+  return String(value);
+}
+
+function areSheetRowsEquivalent(left: unknown, right: unknown): boolean {
+  const leftRows = normalizeSheetRows(left);
+  const rightRows = normalizeSheetRows(right);
+  if (leftRows.length !== rightRows.length) return false;
+  for (let i = 0; i < leftRows.length; i += 1) {
+    const a = leftRows[i];
+    const b = rightRows[i];
+    if (a.length !== b.length) return false;
+    for (let j = 0; j < a.length; j += 1) {
+      if (a[j] !== b[j]) return false;
+    }
+  }
+  return true;
+}
+
 export async function updateMeatSheets(
   accessToken: string,
   spreadsheetId: string,
@@ -987,6 +1109,17 @@ export async function updateMeatSheets(
   await ensureSheetExists(spreadsheetId, "Meat_Orders", accessToken, ordersHeader);
   await ensureSheetExists(spreadsheetId, "Meat_Cut_Summary", accessToken, cutSummaryHeader);
   await ensureSheetExists(spreadsheetId, "Meat_Monthly_Summary", accessToken, monthlySummaryHeader);
+  const meatReadRanges: Record<string, string> = {
+    Meat_Line_Items: `A1:${toA1ColumnLabel(lineItemHeader.length)}`,
+    Meat_Orders: `A1:${toA1ColumnLabel(ordersHeader.length)}`,
+    Meat_Cut_Summary: `A1:${toA1ColumnLabel(cutSummaryHeader.length)}`,
+    Meat_Monthly_Summary: `A1:${toA1ColumnLabel(monthlySummaryHeader.length)}`,
+  };
+  const existingMeatBySheet = await batchGetSheetValuesByTitle(
+    accessToken,
+    spreadsheetId,
+    meatReadRanges,
+  );
 
   const meatItems = buildMeatLineItems(invoices);
   if (meatItems.length === 0) {
@@ -1006,7 +1139,14 @@ export async function updateMeatSheets(
     item.ivaAmountEur,
     item.totalEur,
   ]);
-  await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Line_Items", lineItemHeader, lineItemRows);
+  await rewriteMeatSheet(
+    accessToken,
+    spreadsheetId,
+    "Meat_Line_Items",
+    lineItemHeader,
+    lineItemRows,
+    existingMeatBySheet.Meat_Line_Items,
+  );
   const meatLineItemsSheetId = await getSheetIdByTitle(spreadsheetId, "Meat_Line_Items", accessToken);
   if (meatLineItemsSheetId != null && lineItemRows.length > 0) {
     /** Format entire Date column (C) for many rows so older lines also show dd/mm/yyyy after one rebuild. */
@@ -1032,15 +1172,36 @@ export async function updateMeatSheets(
     );
   }
   /** Space out meat tab writes — same 60 writes/min bucket as monthly/Q automation above. */
-  await sleepMs(1200);
+  await sleepMs(MEAT_SHEET_WRITE_GAP_MS);
   const ordersRows = buildMeatOrdersRows(meatItems);
-  await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Orders", ordersHeader, ordersRows);
-  await sleepMs(1200);
+  await rewriteMeatSheet(
+    accessToken,
+    spreadsheetId,
+    "Meat_Orders",
+    ordersHeader,
+    ordersRows,
+    existingMeatBySheet.Meat_Orders,
+  );
+  await sleepMs(MEAT_SHEET_WRITE_GAP_MS);
   const cutSummaryRows = buildMeatCutSummaryRows(meatItems);
-  await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Cut_Summary", cutSummaryHeader, cutSummaryRows);
-  await sleepMs(1200);
+  await rewriteMeatSheet(
+    accessToken,
+    spreadsheetId,
+    "Meat_Cut_Summary",
+    cutSummaryHeader,
+    cutSummaryRows,
+    existingMeatBySheet.Meat_Cut_Summary,
+  );
+  await sleepMs(MEAT_SHEET_WRITE_GAP_MS);
   const monthlySummaryRows = buildMeatMonthlySummaryRows(meatItems);
-  await rewriteMeatSheet(accessToken, spreadsheetId, "Meat_Monthly_Summary", monthlySummaryHeader, monthlySummaryRows);
+  await rewriteMeatSheet(
+    accessToken,
+    spreadsheetId,
+    "Meat_Monthly_Summary",
+    monthlySummaryHeader,
+    monthlySummaryRows,
+    existingMeatBySheet.Meat_Monthly_Summary,
+  );
 
   console.log(`✅ Meat sheets updated: ${meatItems.length} line items`);
 }

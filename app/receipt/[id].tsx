@@ -24,6 +24,7 @@ import { useInvoices } from "@/hooks/use-invoices";
 import { getApiBaseUrl } from "@/constants/oauth";
 import { GMAIL_TOKEN_KEY } from "@/lib/gmail-oauth";
 import { displayInvoiceNumber, formatInvoiceDateLongEn } from "@/lib/invoice-display";
+import { runWithScreenStayAwake } from "@/lib/keep-awake-export";
 import { getSheetsExportTarget } from "@/lib/sheets-settings";
 import { getTrpcMutationMessage } from "@/lib/trpc-error-message";
 import { trpc } from "@/lib/trpc";
@@ -112,6 +113,7 @@ export default function ReceiptDetailScreen() {
 
     setExporting(true);
     try {
+      await runWithScreenStayAwake(async () => {
       // Convert image to base64 if it exists
       let imageBase64 = "";
       if (invoice.imageUri) {
@@ -206,6 +208,7 @@ export default function ReceiptDetailScreen() {
       } else {
         Alert.alert("Exported!", "Invoice has been added to your Google Spreadsheet.");
       }
+      });
     } catch (err) {
       console.error("[Export] Error:", err);
       const detail = getTrpcMutationMessage(
