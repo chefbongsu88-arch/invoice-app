@@ -1161,13 +1161,27 @@ function mercadonaSubjectHintsCandidate(subject?: string): ParsedEmailInvoiceCan
   };
 }
 
+function categoryWithVendorHints(categoryRaw: unknown, vendorRaw: unknown): string {
+  const category = String(categoryRaw ?? "Other").trim() || "Other";
+  const compactVendor = String(vendorRaw ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+  if (compactVendor.includes("hipermanacor")) {
+    return "Vegetables";
+  }
+  return category;
+}
+
 function mergeMercadonaSubjectHints(
   candidate: ParsedEmailInvoiceCandidate,
   subject?: string,
 ): ParsedEmailInvoiceCandidate {
   const hints = mercadonaSubjectHintsCandidate(subject);
-  if (!hints) return candidate;
-  return mergeEmailInvoiceCandidates(candidate, hints);
+  const merged = hints ? mergeEmailInvoiceCandidates(candidate, hints) : candidate;
+  return {
+    ...merged,
+    category: categoryWithVendorHints(merged.category, merged.vendor),
+  };
 }
 
 function receiptLikeCandidateFromRawParsed(
@@ -1184,7 +1198,7 @@ function receiptLikeCandidateFromRawParsed(
     totalAmount: totalAmt,
     ivaAmount: parseMoneyNumber(parsed.ivaAmount),
     tipAmount: parseMoneyNumber(parsed.tipAmount),
-    category: String(parsed.category ?? "Other").trim() || "Other",
+    category: categoryWithVendorHints(parsed.category, vendorOut),
     subject: opts.subject ?? "",
     items: applyMeatLineReconcile(normalizeParsedMeatItems(parsed.items), totalAmt, vendorOut),
   };
@@ -1410,7 +1424,7 @@ function normalizeEmailInvoiceModelFields(
       "",
   ).trim();
 
-  const category = String(flat.category ?? "Other").trim() || "Other";
+  const category = categoryWithVendorHints(flat.category, vendor);
 
   const vendorCanon = canonicalVendorDisplayName(vendor) || vendor;
   return {
@@ -2434,7 +2448,7 @@ function fallbackParseEmailInvoiceFromText(
     totalAmount: totalParsed,
     ivaAmount: ivaParsed,
     tipAmount: 0,
-    category: "Other",
+    category: categoryWithVendorHints("Other", vendorOut),
     subject: subject ?? "",
     items: [],
   };
@@ -2620,7 +2634,7 @@ export const appRouter = router({
             totalAmount: totalOcr,
             ivaAmount: parseMoneyNumber(parsed.ivaAmount),
             tipAmount: parseMoneyNumber(parsed.tipAmount),
-            category: String(parsed.category ?? "Other").trim() || "Other",
+            category: categoryWithVendorHints(parsed.category, vendorOcr),
             items: applyMeatLineReconcile(normalizeParsedMeatItems(parsed.items), totalOcr, vendorOcr),
           };
         } catch (err) {

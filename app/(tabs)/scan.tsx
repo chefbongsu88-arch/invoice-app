@@ -97,6 +97,31 @@ function parseDecimalInput(s: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Parse signed decimal from text input (supports one leading `-`, comma or dot decimals). */
+function parseSignedDecimalInput(s: string): number {
+  const t = String(s).replace(",", ".");
+  let out = "";
+  let dotSeen = false;
+  let minusSeen = false;
+  for (const c of t) {
+    if (c >= "0" && c <= "9") {
+      out += c;
+      continue;
+    }
+    if (c === "." && !dotSeen) {
+      out += ".";
+      dotSeen = true;
+      continue;
+    }
+    if (c === "-" && !minusSeen && out.length === 0) {
+      out += "-";
+      minusSeen = true;
+    }
+  }
+  const n = parseFloat(out);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /** Allow only one `.` and digits while typing (keeps `3.` visible until more digits). */
 function sanitizeDecimalTyping(raw: string): string {
   const t = String(raw).replace(",", ".");
@@ -107,6 +132,30 @@ function sanitizeDecimalTyping(raw: string): string {
     else if (c === "." && !dotSeen) {
       out += ".";
       dotSeen = true;
+    }
+  }
+  return out;
+}
+
+/** Allow signed typing for refund amounts: one leading `-`, one `.` and digits. */
+function sanitizeSignedDecimalTyping(raw: string): string {
+  const t = String(raw).replace(",", ".");
+  let out = "";
+  let dotSeen = false;
+  let minusSeen = false;
+  for (const c of t) {
+    if (c >= "0" && c <= "9") {
+      out += c;
+      continue;
+    }
+    if (c === "." && !dotSeen) {
+      out += ".";
+      dotSeen = true;
+      continue;
+    }
+    if (c === "-" && !minusSeen && out.length === 0) {
+      out += "-";
+      minusSeen = true;
     }
   }
   return out;
@@ -177,6 +226,11 @@ const EMPTY_MEAT_ITEM = (): MeatItem => ({
  */
 function keyboardForDecimals(): KeyboardTypeOptions {
   if (Platform.OS === "ios") return "decimal-pad";
+  return "numbers-and-punctuation";
+}
+
+/** iOS decimal-pad has no minus key; refunds need `-` input. */
+function keyboardForSignedDecimals(): KeyboardTypeOptions {
   return "numbers-and-punctuation";
 }
 
@@ -582,9 +636,9 @@ export default function ScanScreen() {
     if (persistScanRef.current) return;
     persistScanRef.current = true;
     try {
-      const total = parseFloat(totalAmount) || 0;
-      const iva = parseFloat(ivaAmount) || 0;
-      const tipAmount = parseFloat(tip) || 0;
+      const total = parseSignedDecimalInput(totalAmount);
+      const iva = parseSignedDecimalInput(ivaAmount);
+      const tipAmount = parseSignedDecimalInput(tip);
 
       // Same resize path as OCR — smaller payload for storage upload + Sheets.
       let imageUrl: string | undefined = undefined;
@@ -891,9 +945,27 @@ export default function ScanScreen() {
               placeholder="e.g. FAC-2024-001 (optional if not on receipt)"
             />
             <FieldRow label="Date (YYYY-MM-DD)" value={date} onChange={setDate} placeholder="2024-01-15" />
-            <FieldRow label="Total Amount (€)" value={totalAmount} onChange={setTotalAmount} keyboardType={keyboardForDecimals()} placeholder="0.00" />
-            <FieldRow label="IVA amount (€)" value={ivaAmount} onChange={setIvaAmount} keyboardType={keyboardForDecimals()} placeholder="0.00" />
-            <FieldRow label="Tip (€) - optional" value={tip} onChange={setTip} keyboardType={keyboardForDecimals()} placeholder="0.00" />
+            <FieldRow
+              label="Total Amount (€)"
+              value={totalAmount}
+              onChange={(v) => setTotalAmount(sanitizeSignedDecimalTyping(v))}
+              keyboardType={keyboardForSignedDecimals()}
+              placeholder="0.00"
+            />
+            <FieldRow
+              label="IVA amount (€)"
+              value={ivaAmount}
+              onChange={(v) => setIvaAmount(sanitizeSignedDecimalTyping(v))}
+              keyboardType={keyboardForSignedDecimals()}
+              placeholder="0.00"
+            />
+            <FieldRow
+              label="Tip (€) - optional"
+              value={tip}
+              onChange={(v) => setTip(sanitizeSignedDecimalTyping(v))}
+              keyboardType={keyboardForSignedDecimals()}
+              placeholder="0.00"
+            />
             <FieldRow label="Notes (optional)" value={notes} onChange={setNotes} placeholder="Any additional notes" />
           </View>
 

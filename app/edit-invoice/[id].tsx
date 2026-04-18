@@ -4,12 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type KeyboardTypeOptions,
 } from "react-native";
 
 import { ScreenContainer } from "@/components/screen-container";
@@ -36,6 +38,39 @@ const CATEGORIES: InvoiceCategory[] = [
   "Beverages",
   "Hardware Store",
 ];
+
+function sanitizeSignedDecimalTyping(raw: string): string {
+  const t = String(raw).replace(",", ".");
+  let out = "";
+  let dotSeen = false;
+  let minusSeen = false;
+  for (const c of t) {
+    if (c >= "0" && c <= "9") {
+      out += c;
+      continue;
+    }
+    if (c === "." && !dotSeen) {
+      out += ".";
+      dotSeen = true;
+      continue;
+    }
+    if (c === "-" && !minusSeen && out.length === 0) {
+      out += "-";
+      minusSeen = true;
+    }
+  }
+  return out;
+}
+
+function parseSignedDecimalInput(raw: string): number {
+  const n = parseFloat(sanitizeSignedDecimalTyping(raw));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function keyboardForSignedDecimals(): KeyboardTypeOptions {
+  if (Platform.OS === "ios") return "numbers-and-punctuation";
+  return "decimal-pad";
+}
 
 function CategoryPicker({
   value,
@@ -78,7 +113,7 @@ function FieldRow({
   label: string;
   value: string;
   onChange: (v: string) => void;
-  keyboardType?: "default" | "decimal-pad";
+  keyboardType?: KeyboardTypeOptions;
   placeholder?: string;
 }) {
   const colors = useColors();
@@ -147,9 +182,9 @@ export default function EditInvoiceScreen() {
 
     setSaving(true);
     try {
-      const total  = parseFloat(totalAmount);
-      const iva    = parseFloat(ivaAmount || "0");
-      const base   = parseFloat(baseAmount || String(total - iva));
+      const total = parseSignedDecimalInput(totalAmount);
+      const iva = parseSignedDecimalInput(ivaAmount || "0");
+      const base = parseSignedDecimalInput(baseAmount || String(total - iva));
 
       const patch = {
         vendor:        vendor.trim(),
@@ -266,22 +301,22 @@ export default function EditInvoiceScreen() {
           <FieldRow
             label="Total Amount (€)"
             value={totalAmount}
-            onChange={setTotalAmount}
-            keyboardType="decimal-pad"
+            onChange={(v) => setTotalAmount(sanitizeSignedDecimalTyping(v))}
+            keyboardType={keyboardForSignedDecimals()}
             placeholder="0.00"
           />
           <FieldRow
             label="IVA (€)"
             value={ivaAmount}
-            onChange={setIvaAmount}
-            keyboardType="decimal-pad"
+            onChange={(v) => setIvaAmount(sanitizeSignedDecimalTyping(v))}
+            keyboardType={keyboardForSignedDecimals()}
             placeholder="0.00"
           />
           <FieldRow
             label="Base Amount (€)"
             value={baseAmount}
-            onChange={setBaseAmount}
-            keyboardType="decimal-pad"
+            onChange={(v) => setBaseAmount(sanitizeSignedDecimalTyping(v))}
+            keyboardType={keyboardForSignedDecimals()}
             placeholder="0.00"
           />
         </View>
