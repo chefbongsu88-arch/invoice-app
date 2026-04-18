@@ -1963,8 +1963,8 @@ Use "Restaurant" for bars, cafés, menús.
 
 items: [{partName, quantity, unit:"kg", pricePerUnit, total, ivaPercent?}] ONLY when category is "Meat" AND the ticket shows weighted line items (carnicería / butcher style); for supermarkets with vegetables, fish, or mixed groceries use []. Otherwise [].
 - On Spanish supplier albaranes, each product line often shows Precio (€/kg ex IVA), IVA % (e.g. 10), P.V.P. (€/kg inc IVA), and Importe (line total). Put ivaPercent as the printed VAT percent per line (e.g. 10) when visible. pricePerUnit should be Precio (ex VAT) €/kg when readable; total must be the line Importe (amount to pay for that line).
-- **La Portenia** / La Porteña only — ALBARÁN table with **CANT.** / **CANT**, **TARIFA**, **IVA**, **IMPORTE**: quantity = under **CANT.** / CANT (kg); pricePerUnit = **TARIFA** (€/kg ex IVA); total = **IMPORTE** (line net). Never use the **IVA** column for quantity, price, or line total.
-- **Es Cuco** only — ALBARÁN table with **CANT**, **P.V.P.**, **IMPORTE** (and often IVA): quantity = number **under CANT**; pricePerUnit = **P.V.P.** (follow the €/kg value under the **P.V.P.** column on that line); total = **IMPORTE** (line net under **IMPORTE**). Do not read line price from TARIFA unless that is what is printed for Es Cuco; do not confuse **IVA** (tax €) with P.V.P. or total.
+- **La Portenia** / La Porteña only — ALBARÁN table **CANT.** / **CANT**, **TARIFA**, **IVA**, **IMPORTE**: read **quantity** only from **CANT** (kg) and **total** only from **IMPORTE** (line €). Set **pricePerUnit = round(IMPORTE ÷ CANT, 2)** when both are visible — this is more reliable than copying **TARIFA** (often misread). Never use the **IVA** column for quantity, price, or line total.
+- **Es Cuco** only — **CANT**, **P.V.P.**, **IMPORTE**: **quantity** from **CANT**; **total** from **IMPORTE**. Set **pricePerUnit = round(IMPORTE ÷ CANT, 2)** when both are visible — prefer that over copying **P.V.P.** (often misaligned). Do not confuse **IVA** (tax €) with P.V.P. or total.
 - For any other meat vendor, use the general albarán line rules above; do not assume La Portenia or Es Cuco column layouts.
 - Never put traceability-only rows in items: lines whose text is mainly "LOTE: …", "Nº lote", "ORIGEN: …", "País de origen", or "TRAZABILIDAD" (often printed under the real cut with IMPORTE 0 or no weight) are not products — omit them entirely. Only real cuts (CHULETÓN, TAPA DE VACUNO, etc.) with real kg and line totals belong in items.
 
@@ -2076,8 +2076,8 @@ For Meat invoices:
 - Include only actual meat cuts or weighted meat line items.
 - Do not include packaging, sauces, drinks, vegetables, fish, or other non-meat products.
 - Omit traceability-only lines (e.g. Spanish albarán "LOTE: … ORIGEN: ESPAÑA", "Nº lote", "País de origen", "TRAZABILIDAD") — they are not billable items even if OCR shows a quantity column.
-- **La Portenia** ALBARÁN PDFs: **CANT.** / CANT, **TARIFA**, **IVA**, **IMPORTE** — quantity under CANT; pricePerUnit = **TARIFA**; total = **IMPORTE** (line net).
-- **Es Cuco** ALBARÁN PDFs: **CANT**, **P.V.P.**, **IMPORTE** — quantity under **CANT**; pricePerUnit = **P.V.P.** (€/kg under that column); total = **IMPORTE**. Never use customer CIF **B56819451** as invoiceNumber.
+- **La Portenia** ALBARÁN PDFs: **CANT**, **IMPORTE** are primary; **pricePerUnit = IMPORTE ÷ CANT** (rounded) when both are clear — do not trust **TARIFA** if it disagrees with Importe÷CANT.
+- **Es Cuco** ALBARÁN PDFs: **CANT**, **IMPORTE** are primary; **pricePerUnit = IMPORTE ÷ CANT** (rounded) when both are clear — **P.V.P.** is fallback only. Never use customer CIF **B56819451** as invoiceNumber.
 - If line items are not clear, return [].
 
 Return only the JSON, no markdown, no explanation.`;

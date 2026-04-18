@@ -150,7 +150,6 @@ async function main() {
       /* optional */
     }
   }
-  tryOpenDefaultBrowser(authUrlString);
 
   let code: string;
 
@@ -175,14 +174,17 @@ Windows PowerShell에서 붙여넣기가 어렵면 이 창을 닫고:
 또는 메모장에 주소 한 줄 저장 후:
   pnpm exec tsx scripts/get-refresh-token.ts --manual --code-file=C:\\경로\\oauth.txt
 `);
+      tryOpenDefaultBrowser(authUrlString);
       const pasted = await promptLine("주소 전체 또는 code 값 붙여넣기: ");
       code = parseAuthCodeFromUserInput(pasted);
     }
   } else {
-    console.log("\n로컬 서버가 3001 포트에서 code를 기다립니다. 브라우저에서 허용하면 자동으로 진행됩니다.");
-    console.log("(연결 거부가 나오면 터미널에서 Ctrl+C 후 같은 명령에 --manual 을 붙여 다시 실행하세요.)\n");
+    console.log(
+      "\n로컬 서버를 먼저 띄운 뒤 브라우저가 열립니다 (localhost 연결 거부 방지).\n" +
+        "로그인 후 허용하면 터미널로 돌아옵니다.\n",
+    );
     try {
-      code = await waitForCode();
+      code = await waitForCode(authUrlString);
     } catch (e) {
       console.error("\n❌ 로컬 서버 오류:", e);
       console.error("   다음으로 다시 실행해 보세요:\n   pnpm exec tsx scripts/get-refresh-token.ts --manual\n");
@@ -227,7 +229,7 @@ Windows PowerShell에서 붙여넣기가 어렵면 이 창을 닫고:
   console.log("\n(access_token does not need to be saved — the server refreshes it automatically)\n");
 }
 
-function waitForCode(): Promise<string> {
+function waitForCode(authUrlString: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       const url = new URL(req.url || "/", "http://localhost:3001");
@@ -235,6 +237,7 @@ function waitForCode(): Promise<string> {
       const error = url.searchParams.get("error");
 
       if (error) {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
         res.end(`<h2>Error: ${error}</h2>`);
         server.close();
         reject(new Error(`OAuth error: ${error}`));
@@ -242,16 +245,14 @@ function waitForCode(): Promise<string> {
       }
 
       if (code) {
-        res.end("<h2>✅ Authentication complete! Return to the terminal.</h2>");
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.end("<h2>OK — Authentication complete. You can close this tab and return to the terminal.</h2>");
         server.close();
         resolve(code);
       } else {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
         res.end("<h2>Missing code parameter.</h2>");
       }
-    });
-
-    server.listen(3001, "0.0.0.0", () => {
-      // Waiting for redirect (all interfaces — avoids some localhost binding issues)
     });
 
     server.on("error", (err: NodeJS.ErrnoException) => {
@@ -264,6 +265,11 @@ function waitForCode(): Promise<string> {
       } else {
         reject(err);
       }
+    });
+
+    server.listen(3001, "0.0.0.0", () => {
+      console.log("✓ localhost:3001 listening — opening Google sign-in in your browser…\n");
+      tryOpenDefaultBrowser(authUrlString);
     });
   });
 }

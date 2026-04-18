@@ -197,6 +197,16 @@ export function reconcileMeatLineItemsForInvoice(
     }
   }
 
+  /**
+   * La Portenia / Es Cuco: printed TARIFA / P.V.P. (€/kg) is OCR’s noisiest field — wrong column or ex/inc mix.
+   * After line totals and kg are reconciled, always derive €/kg from Importe ÷ kg only (ignore OCR price hints).
+   */
+  if (isTrackedMeatSupplierVendor(vendor)) {
+    for (const it of working) {
+      it.priceKgHint = 0;
+    }
+  }
+
   for (const it of working) {
     if (it.quantity <= 0) continue;
     const impliedInc = it.total / it.quantity;

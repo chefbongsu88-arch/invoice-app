@@ -86,6 +86,16 @@ async function uploadMultipartToDrive(
   if (!uploadRes.ok) {
     const errText = await uploadRes.text();
     console.error("[Drive] Upload error:", uploadRes.status, errText);
+    if (
+      uploadRes.status === 403 &&
+      /ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficient authentication scopes/i.test(errText)
+    ) {
+      console.error(
+        "[Drive] Scope fix: GOOGLE_REFRESH_TOKEN was issued without drive.file. " +
+          "Run pnpm exec tsx scripts/get-refresh-token.ts (includes drive.file), " +
+          "put the NEW refresh token in Railway, redeploy, then export again.",
+      );
+    }
     throw new Error(`Failed to upload file to Google Drive (${uploadRes.status})`);
   }
 
@@ -117,6 +127,14 @@ async function makeFilePublic(fileId: string, accessToken: string): Promise<void
   if (!permissionRes.ok) {
     const errText = await permissionRes.text();
     console.error("[Drive] Permission error:", permissionRes.status, errText);
+    if (
+      permissionRes.status === 403 &&
+      /ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficient authentication scopes/i.test(errText)
+    ) {
+      console.error(
+        "[Drive] Scope fix: same as upload — re-issue refresh token with drive.file (get-refresh-token.ts), update Railway.",
+      );
+    }
     throw new Error("Failed to make file public");
   }
 }

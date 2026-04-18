@@ -10,6 +10,7 @@
     "dev:expo": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start",
     "dev:expo:tunnel": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start --tunnel",
     "phone": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start --tunnel",
+    "phone:tunnel": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start --tunnel",
     "phone:lan": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start --lan",
     "phone:clear": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start --tunnel --clear",
     "phone:dev": "cross-env EXPO_USE_METRO_WORKSPACE_ROOT=1 npx expo start --dev-client --lan",

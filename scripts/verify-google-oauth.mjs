@@ -12,14 +12,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 
-for (const name of [".env.local", ".env"]) {
-  const p = path.join(root, name);
-  if (fs.existsSync(p)) {
-    dotenv.config({ path: p });
-  }
+// Base .env first, then .env.local with override — so local always wins (fixes "3rd try" when .env had old GOOGLE_REFRESH_TOKEN).
+const envDefault = path.join(root, ".env");
+const envLocal = path.join(root, ".env.local");
+if (fs.existsSync(envDefault)) {
+  dotenv.config({ path: envDefault });
+}
+if (fs.existsSync(envLocal)) {
+  dotenv.config({ path: envLocal, override: true });
+}
+if (fs.existsSync(envDefault) && fs.existsSync(envLocal)) {
+  console.log("(Loaded .env then .env.local — local wins for duplicate keys.)\n");
 }
 
 async function refreshAccessToken() {
@@ -62,6 +70,20 @@ async function refreshAccessToken() {
   return data.access_token;
 }
 
+/** What scopes this access token actually has (source of truth). */
+async function tokenInfoScopes(accessToken) {
+  const url = new URL("https://oauth2.googleapis.com/tokeninfo");
+  url.searchParams.set("access_token", accessToken);
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    return { ok: false, error: await res.text() };
+  }
+  const j = await res.json();
+  const scopeStr = typeof j.scope === "string" ? j.scope : "";
+  const scopes = scopeStr.split(/\s+/).filter(Boolean);
+  return { ok: true, scopes, raw: j };
+}
+
 async function main() {
   console.log("=== Google OAuth (Sheets + Drive) check ===\n");
 
@@ -70,41 +92,43 @@ async function main() {
 
   console.log("1) Refresh token → access token: OK\n");
 
-  console.log("2) Drive API (drive.file 스코프 + Drive API 사용 설정 확인)…");
-  const aboutRes = await fetch(
-    "https://www.googleapis.com/drive/v3/about?fields=user/emailAddress,user/displayName",
-    { headers: { Authorization: `Bearer ${accessToken}` } },
-  );
-  if (!aboutRes.ok) {
-    const t = await aboutRes.text();
-    console.error("FAIL:", aboutRes.status, t);
-    if (aboutRes.status === 403) {
-      console.error(
-        "      → drive.file 스코프가 refresh token에 없거나, 동의 화면에 반영 안 됐을 수 있습니다.\n" +
-          "      → Google Cloud 에서 Drive API 사용 설정 여부를 확인하세요.",
-      );
-    }
+  console.log("2) 토큰에 붙은 OAuth scope 확인 (tokeninfo)…");
+  const info = await tokenInfoScopes(accessToken);
+  if (!info.ok) {
+    console.error("FAIL: tokeninfo:", info.error);
     process.exitCode = 1;
     return;
   }
-  const about = await aboutRes.json();
-  const email = about.user?.emailAddress ?? "(unknown)";
-  console.log("   OK — Drive 계정:", email);
-  if (about.user?.displayName) {
-    console.log("              이름:", about.user.displayName);
+  console.log("   이 토큰의 scope 목록:");
+  for (const s of info.scopes) {
+    console.log("   -", s);
   }
+
+  if (!info.scopes.includes(DRIVE_FILE_SCOPE)) {
+    console.error("\nFAIL: 이 refresh token에는 `drive.file` 스코프가 없습니다.");
+    console.error(
+      "      → Google 계정 → 보안 → 타사 앱에서 이 앱 연결을 제거한 뒤,\n" +
+        "      → pnpm exec tsx scripts/get-refresh-token.ts 로 다시 발급하고\n" +
+        "      → 나온 GOOGLE_REFRESH_TOKEN 을 .env.local 과 Railway 에 모두 넣으세요.\n" +
+        "      → 동의 화면(데이터 액세스)에 drive.file 이 체크돼 있는지도 확인하세요.",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  console.log("\n   OK — drive.file 이 토큰에 포함되어 있습니다.\n");
 
   const folderId = process.env.GOOGLE_DRIVE_RECEIPTS_FOLDER_ID?.trim();
   if (folderId) {
-    console.log("\n3) 영수증 폴더 GOOGLE_DRIVE_RECEIPTS_FOLDER_ID …");
+    console.log("3) 영수증 폴더 GOOGLE_DRIVE_RECEIPTS_FOLDER_ID (files.get — 업로드와 동일 API)…");
     const fRes = await fetch(
       `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,name,mimeType`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
     if (!fRes.ok) {
-      console.error("FAIL:", fRes.status, await fRes.text());
+      const t = await fRes.text();
+      console.error("FAIL:", fRes.status, t);
       console.error(
-        "      → 폴더 ID가 맞는지, 이 Google 계정으로 해당 폴더에 접근 가능한지 확인하세요.",
+        "      → 폴더 ID가 맞는지, 로그인한 계정이 그 폴더에 접근 가능한지 확인하세요.",
       );
       process.exitCode = 1;
       return;
@@ -117,14 +141,11 @@ async function main() {
     console.log("         폴더 ID:", file.id);
   } else {
     console.log(
-      "\n3) GOOGLE_DRIVE_RECEIPTS_FOLDER_ID 없음 — 영수증 Drive 업로드는 설정 후 가능 (선택).",
+      "3) GOOGLE_DRIVE_RECEIPTS_FOLDER_ID 없음 — Railway 에 폴더 ID를 넣으면 영수증이 그 안으로 올라갑니다.",
     );
   }
 
-  console.log("\n=== 통과: 로컬/Railway에 넣은 토큰으로 Drive까지 동작합니다 ===\n");
-  console.log(
-    "실제 앱에서는 시트 내보내기 시 영수증 이미지가 이 폴더에 올라가는지 한 번 더 확인하면 됩니다.\n",
-  );
+  console.log("\n=== 통과: drive.file 이 토큰에 있고, 필요 시 폴더 접근도 됩니다 ===\n");
 }
 
 main().catch((e) => {

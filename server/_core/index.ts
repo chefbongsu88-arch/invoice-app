@@ -83,7 +83,11 @@ async function startServer() {
         .status(404)
         .type("text/plain")
         .send(
-          "Receipt not found: this /api/receipt-share link is no longer on the server (redeploy, another instance, or expiry). Export the invoice again from the app to get a new link. For permanent links, fix Forge storage: set BUILT_IN_FORGE_API_URL + BUILT_IN_FORGE_API_KEY (or VITE_FRONTEND_FORGE_API_URL + VITE_FRONTEND_FORGE_API_KEY) to the exact values from Manus — the storage API base URL must not be guessed (wrong URL causes upload to fail and falls back here).",
+          "Receipt not found: this /api/receipt-share link is no longer on the server (redeploy, another instance, or expiry). Export the invoice again from the app to get a new link.\n\n" +
+            "Permanent image URLs (recommended):\n" +
+            "• Google Drive: set GOOGLE_DRIVE_RECEIPTS_FOLDER_ID on the server and use the same Google OAuth token that has drive.file scope — exports upload to Drive first (drive.google.com links).\n" +
+            "• Forge/Manus: set BUILT_IN_FORGE_API_URL + BUILT_IN_FORGE_API_KEY (or VITE_FRONTEND_FORGE_API_URL + VITE_FRONTEND_FORGE_API_KEY) to the exact values from Manus — do not guess the storage API base URL.\n" +
+            "• Or mount a Railway volume and set RECEIPT_SHARE_DISK_DIR so receipt-share blobs survive redeploys.",
         );
       return;
     }
