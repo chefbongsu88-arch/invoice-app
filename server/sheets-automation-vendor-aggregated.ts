@@ -95,7 +95,8 @@ export function googleSheetsSerialToIsoYmd(serial: number): string | null {
 
 /**
  * Normalize main-tracker column D when automation reads `valueRenderOption=FORMULA`:
- * `=DATE(…)`, DD/MM/YYYY text, ISO, or numeric serial (Sheets often returns serial for date cells).
+ * `=DATE(…)`, DD/MM/YYYY text, YYYY. M. D text, ISO, or numeric serial
+ * (Sheets often returns serial for date cells).
  */
 export function parseMainTrackerDateCellToIso(val: unknown): string {
   if (val === null || val === undefined || val === "") return "";
@@ -115,6 +116,8 @@ export function parseMainTrackerDateCellToIso(val: unknown): string {
   }
   const mEu = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (mEu) return `${mEu[3]}-${mEu[2].padStart(2, "0")}-${mEu[1].padStart(2, "0")}`;
+  const mDot = s.match(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})$/);
+  if (mDot) return `${mDot[1]}-${mDot[2].padStart(2, "0")}-${mDot[3].padStart(2, "0")}`;
   const isoHead = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (isoHead) return `${isoHead[1]}-${isoHead[2]}-${isoHead[3]}`;
   return s;
@@ -459,11 +462,23 @@ async function createMonthlySheets(
     invoicesByMonth[month] = [];
   }
 
+  let excludedByUnparsedDate = 0;
+  const unparsedDateSamples: string[] = [];
   for (const invoice of invoiceData) {
     const month = getMonthFromDate(invoice.date);
     if (month && invoicesByMonth[month]) {
       invoicesByMonth[month].push(invoice);
+    } else {
+      excludedByUnparsedDate += 1;
+      if (unparsedDateSamples.length < 5) {
+        unparsedDateSamples.push(String(invoice.date ?? "").trim());
+      }
     }
+  }
+  if (excludedByUnparsedDate > 0) {
+    console.warn(
+      `[Sheets] Monthly: skipped ${excludedByUnparsedDate} row(s) with unparsed dates. Samples: ${unparsedDateSamples.join(" | ")}`,
+    );
   }
 
   const header = [
