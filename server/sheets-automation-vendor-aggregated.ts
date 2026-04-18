@@ -963,20 +963,7 @@ async function rewriteMeatSheet(
     return;
   }
 
-  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, `A:${clearEndColumnLetter}`)}:clear`;
-  const clearRes = await fetchSheetsApiWithRetry(
-    clearUrl,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    },
-    `${sheetTitle} values.clear`,
-  );
-  if (!clearRes.ok) {
-    throw new Error(`${sheetTitle} clear error: ${await clearRes.text()}`);
-  }
-
-  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, "A1")}?valueInputOption=USER_ENTERED`;
+  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, `A1:${clearEndColumnLetter}${sheetData.length}`)}?valueInputOption=USER_ENTERED`;
   const writeRes = await fetchSheetsApiWithRetry(
     writeUrl,
     {
@@ -987,6 +974,24 @@ async function rewriteMeatSheet(
     `${sheetTitle} values.update`,
   );
   if (!writeRes.ok) throw new Error(`${sheetTitle} write error: ${await writeRes.text()}`);
+
+  const prevRows = normalizeSheetRows(compareRows).length;
+  if (prevRows > sheetData.length) {
+    const staleStart = sheetData.length + 1;
+    const staleEnd = prevRows;
+    const staleClearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetTitle, `A${staleStart}:${clearEndColumnLetter}${staleEnd}`)}:clear`;
+    const staleClearRes = await fetchSheetsApiWithRetry(
+      staleClearUrl,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      },
+      `${sheetTitle} values.clear(stale-tail)`,
+    );
+    if (!staleClearRes.ok) {
+      throw new Error(`${sheetTitle} stale-tail clear error: ${await staleClearRes.text()}`);
+    }
+  }
 
   const sheetId = await getSheetIdByTitle(spreadsheetId, sheetTitle, accessToken);
   if (sheetId != null && sheetData.length > 0) {
