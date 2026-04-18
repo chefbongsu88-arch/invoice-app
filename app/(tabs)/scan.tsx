@@ -161,6 +161,14 @@ function sanitizeSignedDecimalTyping(raw: string): string {
   return out;
 }
 
+function toggleSignedAmountText(raw: string): string {
+  const cleaned = sanitizeSignedDecimalTyping(raw);
+  if (!cleaned) return "-";
+  if (cleaned === "-") return "";
+  if (cleaned.startsWith("-")) return cleaned.slice(1);
+  return `-${cleaned}`;
+}
+
 type MeatLineDraftTexts = {
   qty: string;
   price: string;
@@ -966,6 +974,23 @@ export default function ScanScreen() {
               keyboardType={keyboardForSignedDecimals()}
               placeholder="0.00"
             />
+            <View style={styles.signToggleRow}>
+              <Pressable
+                onPress={() => {
+                  setTotalAmount((prev) => toggleSignedAmountText(prev));
+                  setIvaAmount((prev) => toggleSignedAmountText(prev));
+                  setTip((prev) => toggleSignedAmountText(prev));
+                }}
+                style={[
+                  styles.signToggleBtn,
+                  { borderColor: colors.border, backgroundColor: colors.background },
+                ]}
+              >
+                <Text style={[styles.signToggleText, { color: colors.primary }]}>
+                  Toggle refund sign (-/+)
+                </Text>
+              </Pressable>
+            </View>
             <FieldRow label="Notes (optional)" value={notes} onChange={setNotes} placeholder="Any additional notes" />
           </View>
 
@@ -1199,6 +1224,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
+  },
+  signToggleRow: {
+    paddingHorizontal: 14,
+    paddingBottom: 8,
+  },
+  signToggleBtn: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: "center",
+  },
+  signToggleText: {
+    fontSize: 13,
+    fontWeight: "600",
   },
   categoryScroll: { marginBottom: 8 },
   catPill: {

@@ -67,6 +67,14 @@ function parseSignedDecimalInput(raw: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function toggleSignedAmountText(raw: string): string {
+  const cleaned = sanitizeSignedDecimalTyping(raw);
+  if (!cleaned) return "-";
+  if (cleaned === "-") return "";
+  if (cleaned.startsWith("-")) return cleaned.slice(1);
+  return `-${cleaned}`;
+}
+
 function keyboardForSignedDecimals(): KeyboardTypeOptions {
   if (Platform.OS === "ios") return "numbers-and-punctuation";
   return "decimal-pad";
@@ -319,6 +327,18 @@ export default function EditInvoiceScreen() {
             keyboardType={keyboardForSignedDecimals()}
             placeholder="0.00"
           />
+          <Pressable
+            onPress={() => {
+              setTotalAmount((prev) => toggleSignedAmountText(prev));
+              setIvaAmount((prev) => toggleSignedAmountText(prev));
+              setBaseAmount((prev) => toggleSignedAmountText(prev));
+            }}
+            style={[styles.signToggleBtn, { borderColor: colors.border, backgroundColor: colors.background }]}
+          >
+            <Text style={[styles.signToggleText, { color: colors.primary }]}>
+              Toggle refund sign (-/+)
+            </Text>
+          </Pressable>
         </View>
 
         <FieldRow
@@ -384,6 +404,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 14,
     gap: 12,
+  },
+  signToggleBtn: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: "center",
+  },
+  signToggleText: {
+    fontSize: 13,
+    fontWeight: "600",
   },
   saveBtn: {
     flexDirection: "row",
