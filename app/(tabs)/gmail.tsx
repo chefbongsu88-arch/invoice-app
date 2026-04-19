@@ -38,9 +38,11 @@ import { getSheetsExportTarget } from "@/lib/sheets-settings";
 import { DEFAULT_MAIN_TRACKER_SHEET_NAME } from "@/shared/sheets-defaults";
 import {
   GMAIL_EMAIL_KEY,
+  GMAIL_NAME_KEY,
   GMAIL_OAUTH_RETURN_HOST,
   GMAIL_TOKEN_KEY,
   getGmailOAuthRedirectBaseUrl,
+  getStoredUploaderLabel,
   parseGmailAuthReturnUrl,
   persistGmailOAuthFromParsed,
 } from "@/lib/gmail-oauth";
@@ -444,7 +446,7 @@ export default function GmailScreen() {
       });
 
       if (result.type === "success" && result.url) {
-        const { token, email, error, detail } = parseGmailAuthReturnUrl(result.url);
+        const { token, email, name, error, detail } = parseGmailAuthReturnUrl(result.url);
         if (error) {
           const hint =
             error === "access_denied"
@@ -467,7 +469,7 @@ export default function GmailScreen() {
           return;
         }
         if (token) {
-          const saved = await persistGmailOAuthFromParsed({ token, email, error });
+          const saved = await persistGmailOAuthFromParsed({ token, email, name, error });
           if (!saved.ok) {
             Alert.alert("Error", "Could not save Gmail connection.");
             return;
@@ -509,8 +511,8 @@ export default function GmailScreen() {
           await configureGoogleSignInForGmail(WEB_GOOGLE_CLIENT_ID, {
             iosClientId: Platform.OS === "ios" ? IOS_GOOGLE_CLIENT_ID : undefined,
           });
-          const { accessToken: token, email } = await signInWithGoogleForGmailAndSheets();
-          const saved = await persistGmailOAuthFromParsed({ token, email });
+          const { accessToken: token, email, name } = await signInWithGoogleForGmailAndSheets();
+          const saved = await persistGmailOAuthFromParsed({ token, email, name });
           if (!saved.ok) {
             Alert.alert("Error", "Could not save Gmail connection.");
             return;
@@ -631,6 +633,7 @@ export default function GmailScreen() {
         if (tokenProblem) {
           await AsyncStorage.removeItem(GMAIL_TOKEN_KEY);
           await AsyncStorage.removeItem(GMAIL_EMAIL_KEY);
+          await AsyncStorage.removeItem(GMAIL_NAME_KEY);
           lastAutoFetchKeyRef.current = "";
           setAccessToken("");
           setUserEmail("");
@@ -705,7 +708,9 @@ export default function GmailScreen() {
       saveInFlightRef.current.add(email.id);
       try {
         const pd = email.parsedData;
-        const uploaderDisplayName = (user?.name ?? user?.email ?? "").trim();
+        const uploaderDisplayName =
+          (user?.name ?? user?.email ?? "").trim() ||
+          (await getStoredUploaderLabel());
         const invoice: Invoice = {
           id: `email_${email.id}`,
           source: "email",
@@ -762,6 +767,7 @@ export default function GmailScreen() {
                     (invoice.uploadedByName?.trim() ||
                       user?.name?.trim() ||
                       user?.email?.trim() ||
+                      (await getStoredUploaderLabel()) ||
                       "") || undefined,
                   ...(gmailTokForExport
                     ? {
@@ -968,6 +974,7 @@ export default function GmailScreen() {
           await signOutGoogleNative();
           await AsyncStorage.removeItem(GMAIL_TOKEN_KEY);
           await AsyncStorage.removeItem(GMAIL_EMAIL_KEY);
+          await AsyncStorage.removeItem(GMAIL_NAME_KEY);
           lastAutoFetchKeyRef.current = "";
           setAccessToken("");
           setUserEmail("");

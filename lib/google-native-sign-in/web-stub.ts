@@ -8,6 +8,7 @@ export async function configureGoogleSignInForGmail(
 export async function signInWithGoogleForGmailAndSheets(): Promise<{
   accessToken: string;
   email: string;
+  name?: string;
 }> {
   throw new Error("Use web OAuth flow on web");
 }

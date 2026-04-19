@@ -58,6 +58,7 @@ export async function configureGoogleSignInForGmail(
 export async function signInWithGoogleForGmailAndSheets(): Promise<{
   accessToken: string;
   email: string;
+  name?: string;
 }> {
   const impl = getNativeImpl();
   if (!impl) {

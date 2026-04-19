@@ -241,20 +241,33 @@ export function registerOAuthRoutes(app: Express) {
       const tokenData = (await tokenRes.json()) as { access_token: string };
 
       let email = "";
+      let name = "";
       try {
         const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
           headers: { Authorization: `Bearer ${tokenData.access_token}` },
         });
         if (userRes.ok) {
-          const userData = (await userRes.json()) as { email?: string };
+          const userData = (await userRes.json()) as {
+            email?: string;
+            name?: string;
+            given_name?: string;
+            family_name?: string;
+          };
           email = userData.email ?? "";
+          const rawName = userData.name?.trim();
+          const joined = [userData.given_name, userData.family_name]
+            .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+            .join(" ")
+            .trim();
+          name = rawName && rawName.length > 0 ? rawName : joined;
         }
       } catch {
-        // non-fatal — email is optional
+        // non-fatal — email/name are optional
       }
 
       const params = new URLSearchParams({ token: tokenData.access_token });
       if (email) params.set("email", email);
+      if (name) params.set("name", name);
       // iOS ASWebAuthenticationSession only returns to the app with a custom URL scheme — not https
       // (unless Universal Links are configured). Redirect into the app so the token is delivered.
       const appLoc = `${appScheme}://gmail-auth?${params.toString()}`;

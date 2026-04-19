@@ -38,6 +38,7 @@ import {
   type MeatItem,
   hasMeatLineItems,
 } from "@/shared/invoice-types";
+import { getStoredUploaderLabel } from "@/lib/gmail-oauth";
 import { getOcrAlertForUser } from "@/lib/ocr-user-message";
 import { trpc } from "@/lib/trpc";
 import { translucentTile } from "@/lib/translucent-ui";
@@ -665,7 +666,9 @@ export default function ScanScreen() {
         }
       }
 
-      const uploaderDisplayName = (user?.name ?? user?.email ?? "").trim();
+      const uploaderDisplayName =
+        (user?.name ?? user?.email ?? "").trim() ||
+        (await getStoredUploaderLabel());
       const invoice: Invoice = {
         id: `cam_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
         source: "camera",

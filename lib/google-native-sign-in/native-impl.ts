@@ -34,6 +34,7 @@ export async function configureGoogleSignInForGmail(
 export async function signInWithGoogleForGmailAndSheets(): Promise<{
   accessToken: string;
   email: string;
+  name?: string;
 }> {
   if (Platform.OS === "android") {
     await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
@@ -52,7 +53,12 @@ export async function signInWithGoogleForGmailAndSheets(): Promise<{
   }
 
   const email = response.data.user.email;
-  return { accessToken: tokens.accessToken, email };
+  const rawName = response.data.user.name;
+  const given = response.data.user.givenName;
+  const family = response.data.user.familyName;
+  const joined = [given, family].filter((p): p is string => typeof p === "string" && p.trim().length > 0).join(" ").trim();
+  const name = (typeof rawName === "string" && rawName.trim().length > 0 ? rawName.trim() : joined) || undefined;
+  return { accessToken: tokens.accessToken, email, name };
 }
 
 export function isGoogleSignInCancelled(err: unknown): boolean {

@@ -23,7 +23,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
 import { getApiBaseUrl } from "@/constants/oauth";
-import { GMAIL_TOKEN_KEY } from "@/lib/gmail-oauth";
+import { GMAIL_TOKEN_KEY, getStoredUploaderLabel } from "@/lib/gmail-oauth";
 import { displayInvoiceNumber, formatInvoiceDateLongEn } from "@/lib/invoice-display";
 import { runWithScreenStayAwake } from "@/lib/keep-awake-export";
 import { getSheetsExportTarget } from "@/lib/sheets-settings";
@@ -136,6 +136,7 @@ export default function ReceiptDetailScreen() {
         }
       }
 
+      const uploaderFallback = await getStoredUploaderLabel();
       const result = await exportMutation.mutateAsync({
         spreadsheetId,
         sheetName,
@@ -157,8 +158,11 @@ export default function ReceiptDetailScreen() {
             imageUrl: imageBase64 ? `data:image/jpeg;base64,${imageBase64}` : "",
             gmailMessageId: invoice.emailId ?? undefined,
             uploadedByName:
-              (invoice.uploadedByName?.trim() || user?.name?.trim() || user?.email?.trim() || "") ||
-              undefined,
+              (invoice.uploadedByName?.trim() ||
+                user?.name?.trim() ||
+                user?.email?.trim() ||
+                uploaderFallback ||
+                "") || undefined,
             ...(gmailReceiptFetch ? { gmailReceiptFetch } : {}),
           },
         ],
