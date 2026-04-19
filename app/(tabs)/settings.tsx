@@ -20,6 +20,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
+import { getUploaderNameOverride, setUploaderNameOverride } from "@/lib/gmail-oauth";
 
 const SETTINGS_KEY = "app_settings_v1";
 
@@ -156,6 +157,7 @@ function EditableField({
 export default function SettingsScreen() {
   const colors = useColors();
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [uploaderName, setUploaderName] = useState<string>("");
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [resetPasswordInput, setResetPasswordInput] = useState("");
   const { reload: reloadInvoices } = useInvoices();
@@ -168,7 +170,13 @@ export default function SettingsScreen() {
     AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
       if (raw) setSettings(JSON.parse(raw) as AppSettings);
     });
+    getUploaderNameOverride().then(setUploaderName);
   }, []);
+
+  const handleSaveUploaderName = async (v: string) => {
+    await setUploaderNameOverride(v);
+    setUploaderName(v.trim());
+  };
 
   const saveSettings = async (updated: AppSettings) => {
     await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
@@ -397,6 +405,18 @@ export default function SettingsScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={[styles.title, { color: colors.foreground }]}>Settings</Text>
 
+        {/* Who is using this device — shown in Sheets column O */}
+        <SectionHeader title="This Device" />
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <EditableField
+            label="Your name"
+            value={uploaderName}
+            placeholder="e.g. Maria, Staff 1"
+            onSave={handleSaveUploaderName}
+            hint="Shown in Google Sheets column O (Uploaded By). Set this on each staff's phone."
+          />
+        </View>
+
         {/* Spreadsheet Configuration */}
         <SectionHeader title="Google Sheets Configuration" />
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -436,6 +456,7 @@ export default function SettingsScreen() {
             ["L", "Receipt", "Image or PDF link"],
             ["M", "Exported At", "Export timestamp"],
             ["N", "Meat line items (JSON)", "Optional meat lines"],
+            ["O", "Uploaded By", "Name of the staff who saved this row"],
           ].map(([col, name, desc]) => (
             <View key={col} style={styles.columnRow}>
               <View style={[styles.columnLetterBox, { backgroundColor: colors.primary }]}>

@@ -6,6 +6,8 @@ export const GMAIL_TOKEN_KEY = "gmail_oauth_token";
 export const GMAIL_EMAIL_KEY = "gmail_email_address";
 /** Display name from Google Sign-In, used to label "Uploaded By" in Sheets when no useAuth() user exists. */
 export const GMAIL_NAME_KEY = "gmail_display_name";
+/** Manual per-device label set in Settings ("Your name"); takes priority over Gmail name/email. */
+export const UPLOADER_NAME_KEY = "uploader_display_name";
 
 /** Must match server redirect (`scheme://gmail-auth?...`). */
 export const GMAIL_OAUTH_RETURN_HOST = "gmail-auth";
@@ -44,13 +46,24 @@ export async function persistGmailOAuthFromParsed(p: {
   return { ok: true };
 }
 
-/** Best-effort uploader label (name preferred, else email). Falls back to "" — caller decides default. */
+/**
+ * Best-effort uploader label for the Sheets "Uploaded By" column.
+ *
+ * Priority:
+ *   1. Manual name set in Settings (UPLOADER_NAME_KEY) — works even if Gmail is never connected.
+ *   2. Google display name stored by Gmail Sign-In.
+ *   3. Google email stored by Gmail Sign-In.
+ *   4. "" — caller decides the default.
+ */
 export async function getStoredUploaderLabel(): Promise<string> {
   try {
-    const [name, email] = await Promise.all([
+    const [manual, name, email] = await Promise.all([
+      AsyncStorage.getItem(UPLOADER_NAME_KEY),
       AsyncStorage.getItem(GMAIL_NAME_KEY),
       AsyncStorage.getItem(GMAIL_EMAIL_KEY),
     ]);
+    const m = manual?.trim();
+    if (m) return m;
     const n = name?.trim();
     if (n) return n;
     const e = email?.trim();
@@ -59,6 +72,24 @@ export async function getStoredUploaderLabel(): Promise<string> {
   } catch {
     return "";
   }
+}
+
+export async function getUploaderNameOverride(): Promise<string> {
+  try {
+    const v = await AsyncStorage.getItem(UPLOADER_NAME_KEY);
+    return v?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export async function setUploaderNameOverride(value: string): Promise<void> {
+  const v = value.trim();
+  if (v.length === 0) {
+    await AsyncStorage.removeItem(UPLOADER_NAME_KEY);
+    return;
+  }
+  await AsyncStorage.setItem(UPLOADER_NAME_KEY, v);
 }
 
 /**
