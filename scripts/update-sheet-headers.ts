@@ -23,7 +23,7 @@ const SERVICE_ACCOUNT_JSON = "";
 
 // ─── Header definition ───────────────────────────────────────────────────────
 
-/** Main tab A–N — same as server `MAIN_TRACKER_HEADER_ROW` (Total after Tip, before Category). */
+/** Main tab A–O — same as server `MAIN_TRACKER_HEADER_ROW` (Total after Tip; adds "Uploaded By" at column O). */
 const MAIN_TRACKER_HEADER = [...MAIN_TRACKER_HEADER_ROW];
 
 /** Monthly / quarterly tabs (no column N). Total (€) inc IVA is column H, after Tip. */

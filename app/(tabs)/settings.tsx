@@ -162,6 +162,7 @@ export default function SettingsScreen() {
   const resetAllDataMutation = trpc.invoices.resetAllData.useMutation();
   const rebuildMeatSheetsMutation = trpc.invoices.rebuildMeatSheetsFromMainTracker.useMutation();
   const runSheetsAutomationMutation = trpc.invoices.runSheetsAutomation.useMutation();
+  const opsCheckMutation = trpc.system.opsCheck.useMutation();
 
   useEffect(() => {
     AsyncStorage.getItem(SETTINGS_KEY).then((raw) => {
@@ -235,6 +236,52 @@ export default function SettingsScreen() {
           },
         },
       ],
+    );
+  };
+
+  const handleOpsCheck = async () => {
+    try {
+      const r = await opsCheckMutation.mutateAsync();
+      const lines: string[] = [];
+      lines.push(`Refresh token set: ${r.refreshTokenSet ? "yes" : "no"}`);
+      lines.push(`Drive folder set: ${r.driveFolderSet ? "yes" : "no"}`);
+      lines.push(`Sheets 429 retries (runtime): ${r.sheets429Retries}`);
+      if (r.warnings.length > 0) {
+        lines.push("");
+        lines.push("Warnings:");
+        for (const w of r.warnings) lines.push(`- ${w}`);
+      } else {
+        lines.push("");
+        lines.push("No warnings.");
+      }
+      Alert.alert(r.ok ? "Server OK" : "Server check", lines.join("\n"));
+    } catch (err) {
+      Alert.alert("Server check failed", err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleNewYearChecklist = () => {
+    const spreadsheetId = settings.spreadsheetId?.trim();
+    const sheetName = settings.sheetName?.trim() || DEFAULT_MAIN_TRACKER_SHEET_NAME;
+    const apiOverride = settings.apiBaseUrlOverride?.trim();
+    Alert.alert(
+      "New year switchover",
+      [
+        "Follow these steps to start a new year safely:",
+        "",
+        "1. Create a new Google Spreadsheet for the new year.",
+        "2. Paste the new Spreadsheet ID above and save it.",
+        "3. (Optional) Create a dedicated Google Drive folder for receipts and update GOOGLE_DRIVE_RECEIPTS_FOLDER_ID on the server.",
+        "4. Confirm server access tokens are still valid via Server Check.",
+        "5. Export one test invoice to verify the new main / monthly / quarterly / meat tabs get created.",
+        "",
+        `Current Spreadsheet ID: ${spreadsheetId || "(not set)"}`,
+        `Current main sheet name: ${sheetName}`,
+        apiOverride ? `API override: ${apiOverride}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      [{ text: "OK" }],
     );
   };
 
@@ -506,6 +553,57 @@ export default function SettingsScreen() {
                 </Text>
                 <Text style={[styles.maintenanceSecondarySubtext, { color: colors.muted }]}>
                   Full rebuild from the main tab (same pipeline as after export). Use “Rebuild meat” below for meat only.
+                </Text>
+              </View>
+            </Pressable>
+
+            <Pressable
+              onPress={handleOpsCheck}
+              disabled={opsCheckMutation.isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Check server OAuth and rate limit status"
+              style={({ pressed }) => [
+                styles.maintenanceSecondaryBtn,
+                {
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
+                  opacity: opsCheckMutation.isPending ? 0.55 : 1,
+                },
+                pressed && !opsCheckMutation.isPending && { opacity: 0.92, transform: [{ scale: 0.985 }] },
+              ]}
+            >
+              {opsCheckMutation.isPending ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <IconSymbol name="checkmark.shield.fill" size={15} color={colors.primary} />
+              )}
+              <View style={styles.maintenanceButtonTextWrap}>
+                <Text style={[styles.maintenanceSecondaryBtnText, { color: colors.foreground }]}>
+                  Server check (tokens & 429)
+                </Text>
+                <Text style={[styles.maintenanceSecondarySubtext, { color: colors.muted }]}>
+                  Verifies refresh token, Drive folder, and recent Sheets 429 retries
+                </Text>
+              </View>
+            </Pressable>
+
+            <Pressable
+              onPress={handleNewYearChecklist}
+              accessibilityRole="button"
+              accessibilityLabel="New year switchover checklist"
+              style={({ pressed }) => [
+                styles.maintenanceSecondaryBtn,
+                { backgroundColor: colors.background, borderColor: colors.border },
+                pressed && { opacity: 0.92, transform: [{ scale: 0.985 }] },
+              ]}
+            >
+              <IconSymbol name="calendar" size={15} color={colors.primary} />
+              <View style={styles.maintenanceButtonTextWrap}>
+                <Text style={[styles.maintenanceSecondaryBtnText, { color: colors.foreground }]}>
+                  New year switchover checklist
+                </Text>
+                <Text style={[styles.maintenanceSecondarySubtext, { color: colors.muted }]}>
+                  Steps for switching to a new yearly spreadsheet (ID, Drive folder, test export)
                 </Text>
               </View>
             </Pressable>

@@ -124,6 +124,8 @@ export interface Invoice {
   exportedToSheets: boolean;
   exportedAt?: string;
   createdAt: string;
+  /** Display name of the signed-in user who saved this invoice (Google account name). Blank for pre-feature rows. */
+  uploadedByName?: string;
 }
 
 export interface DashboardStats {

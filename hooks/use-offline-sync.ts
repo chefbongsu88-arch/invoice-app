@@ -26,6 +26,8 @@ export interface OfflineInvoiceEntry {
     notes?: string;
     imageUrl?: string;
     items?: any[];
+    /** Display name of the signed-in user who queued this offline row; forwarded to Sheets column O. */
+    uploadedByName?: string;
   };
 }
 

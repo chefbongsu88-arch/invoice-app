@@ -22,6 +22,7 @@ import {
 
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { useAuth } from "@/hooks/use-auth";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
 import type { Invoice, InvoiceCategory, MeatItem } from "@/shared/invoice-types";
@@ -307,6 +308,7 @@ function EmailCard({
 export default function GmailScreen() {
   const colors = useColors();
   const { addInvoice, updateInvoice } = useInvoices();
+  const { user } = useAuth();
   const [emails, setEmails] = useState<EmailMessage[]>([]);
   const [fetching, setFetching] = useState(false);
   const [parsingId, setParsingId] = useState<string | null>(null);
@@ -703,6 +705,7 @@ export default function GmailScreen() {
       saveInFlightRef.current.add(email.id);
       try {
         const pd = email.parsedData;
+        const uploaderDisplayName = (user?.name ?? user?.email ?? "").trim();
         const invoice: Invoice = {
           id: `email_${email.id}`,
           source: "email",
@@ -719,6 +722,7 @@ export default function GmailScreen() {
           items: Array.isArray(pd.items) && pd.items.length > 0 ? pd.items : undefined,
           exportedToSheets: false,
           createdAt: new Date().toISOString(),
+          uploadedByName: uploaderDisplayName || undefined,
         };
         await addInvoice(invoice);
 
@@ -754,6 +758,11 @@ export default function GmailScreen() {
                   items: invoice.items,
                   imageUrl: "",
                   gmailMessageId: email.id,
+                  uploadedByName:
+                    (invoice.uploadedByName?.trim() ||
+                      user?.name?.trim() ||
+                      user?.email?.trim() ||
+                      "") || undefined,
                   ...(gmailTokForExport
                     ? {
                         gmailReceiptFetch: {
@@ -906,6 +915,7 @@ export default function GmailScreen() {
       relabelMutation,
       schedulePendingSheetsAutomation,
       updateInvoice,
+      user,
     ],
   );
 

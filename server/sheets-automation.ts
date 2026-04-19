@@ -68,6 +68,11 @@ export function sleepMs(ms: number): Promise<void> {
 
 const SHEETS_WRITE_MAX_RETRIES = 8;
 const SHEETS_WRITE_BASE_DELAY_MS = 2500;
+let sheets429RetryCount = 0;
+
+export function getSheets429RetryCount(): number {
+  return sheets429RetryCount;
+}
 
 /**
  * Retry on HTTP 429 (Sheets API per-user quota — write and read limits both return 429).
@@ -87,6 +92,7 @@ export async function fetchSheetsApiWithRetry(
     const waitMs = ra
       ? Math.min(Math.max(parseInt(ra, 10) * 1000, delayMs), 120_000)
       : delayMs;
+    sheets429RetryCount += 1;
     console.warn(
       `[Sheets] ${context}: 429 — waiting ${Math.round(waitMs)}ms (attempt ${attempt}/${SHEETS_WRITE_MAX_RETRIES})`,
     );

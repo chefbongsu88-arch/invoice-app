@@ -19,6 +19,7 @@ export const MAIN_TRACKER_HEADER_ROW: readonly string[] = [
   "Receipt",
   "Exported At",
   "Meat line items (JSON)",
+  "Uploaded By",
 ];
 
 export type MainTrackerMoneyIndices = {

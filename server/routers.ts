@@ -1092,8 +1092,8 @@ function applyMeatLineReconcile(
 function scoreEmailInvoiceCandidate(candidate: Partial<ParsedEmailInvoiceCandidate> | null | undefined): number {
   if (!candidate) return -1;
   let score = 0;
-  if ((candidate.totalAmount ?? 0) > 0) score += 4;
-  if ((candidate.ivaAmount ?? 0) > 0) score += 1;
+  if (Math.abs(candidate.totalAmount ?? 0) > 0) score += 4;
+  if (Math.abs(candidate.ivaAmount ?? 0) > 0) score += 1;
   if (cleanParsedVendorName(candidate.vendor)) score += 3;
   if (String(candidate.date ?? "").trim()) score += 1;
   if (String(candidate.invoiceNumber ?? "").trim()) score += 1;
@@ -1110,7 +1110,7 @@ function chooseBetterEmailInvoiceCandidate(
   const nextScore = scoreEmailInvoiceCandidate(next);
   if (nextScore > currentScore) return next;
   if (nextScore < currentScore) return current;
-  if ((next.totalAmount ?? 0) > (current.totalAmount ?? 0)) return next;
+  if (Math.abs(next.totalAmount ?? 0) > Math.abs(current.totalAmount ?? 0)) return next;
   return current;
 }
 
@@ -1128,9 +1128,9 @@ function mergeEmailInvoiceCandidates(
     invoiceNumber: String(primaryInvoiceNumber || secondaryInvoiceNumber || "").trim(),
     vendor: chosenVendor,
     date: String(primary.date || secondary.date || "").trim(),
-    totalAmount: primary.totalAmount > 0 ? primary.totalAmount : secondary.totalAmount,
-    ivaAmount: primary.ivaAmount > 0 ? primary.ivaAmount : secondary.ivaAmount,
-    tipAmount: primary.tipAmount > 0 ? primary.tipAmount : secondary.tipAmount,
+    totalAmount: choosePreferredSignedNumber(primary.totalAmount, secondary.totalAmount),
+    ivaAmount: choosePreferredSignedNumber(primary.ivaAmount, secondary.ivaAmount),
+    tipAmount: choosePreferredSignedNumber(primary.tipAmount, secondary.tipAmount),
     category:
       String(primary.category || "").trim() && primary.category !== "Other"
         ? primary.category
@@ -1172,14 +1172,74 @@ function categoryWithVendorHints(categoryRaw: unknown, vendorRaw: unknown): stri
   return category;
 }
 
+function normalizeTextForKeywordMatch(raw: unknown): string {
+  return String(raw ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function parseBooleanLike(raw: unknown): boolean {
+  if (raw === true || raw === 1) return true;
+  const s = String(raw ?? "").trim().toLowerCase();
+  return s === "true" || s === "1" || s === "yes" || s === "y" || s === "si";
+}
+
+function looksLikeRefundDocument(...signals: unknown[]): boolean {
+  const text = signals.map((s) => normalizeTextForKeywordMatch(s)).join(" ");
+  if (!text.trim()) return false;
+  return (
+    /\brefund\b/.test(text) ||
+    /\bcredit\s*note\b/.test(text) ||
+    /\breembolso\b/.test(text) ||
+    /\bdevolucion\b/.test(text) ||
+    /\bdevolucio\b/.test(text) ||
+    /\babono\b/.test(text) ||
+    /\brectificativa\b/.test(text) ||
+    /\bstorno\b/.test(text)
+  );
+}
+
+function choosePreferredSignedNumber(primary: number, secondary: number): number {
+  if (Math.abs(primary) > 0) return primary;
+  return secondary;
+}
+
+function enforceRefundSign(
+  amounts: { totalAmount: number; ivaAmount: number; tipAmount: number },
+  refundDetected: boolean,
+): { totalAmount: number; ivaAmount: number; tipAmount: number } {
+  if (!refundDetected) return amounts;
+  return {
+    totalAmount: amounts.totalAmount > 0 ? -amounts.totalAmount : amounts.totalAmount,
+    ivaAmount: amounts.ivaAmount > 0 ? -amounts.ivaAmount : amounts.ivaAmount,
+    tipAmount: amounts.tipAmount > 0 ? -amounts.tipAmount : amounts.tipAmount,
+  };
+}
+
 function mergeMercadonaSubjectHints(
   candidate: ParsedEmailInvoiceCandidate,
   subject?: string,
 ): ParsedEmailInvoiceCandidate {
   const hints = mercadonaSubjectHintsCandidate(subject);
   const merged = hints ? mergeEmailInvoiceCandidates(candidate, hints) : candidate;
+  const refundDetected = looksLikeRefundDocument(
+    merged.subject,
+    merged.invoiceNumber,
+    merged.vendor,
+    merged.category,
+  );
+  const signed = enforceRefundSign(
+    {
+      totalAmount: merged.totalAmount,
+      ivaAmount: merged.ivaAmount,
+      tipAmount: merged.tipAmount,
+    },
+    refundDetected,
+  );
   return {
     ...merged,
+    ...signed,
     category: categoryWithVendorHints(merged.category, merged.vendor),
   };
 }
@@ -1191,16 +1251,35 @@ function receiptLikeCandidateFromRawParsed(
   const parsed = normalizeReceiptParsedFields(rawParsed);
   const vendorOut = canonicalVendorDisplayName(pickBestParsedVendor(parsed.vendor, opts.headerFrom));
   const totalAmt = parseMoneyNumber(parsed.totalAmount);
+  const refundDetected =
+    parseBooleanLike(parsed.isRefund) ||
+    parseBooleanLike(parsed.refund) ||
+    looksLikeRefundDocument(
+      parsed.documentType,
+      parsed.tipoDocumento,
+      parsed.notes,
+      parsed.invoiceNumber,
+      parsed.vendor,
+      opts.subject,
+    );
+  const signed = enforceRefundSign(
+    {
+      totalAmount: totalAmt,
+      ivaAmount: parseMoneyNumber(parsed.ivaAmount),
+      tipAmount: parseMoneyNumber(parsed.tipAmount),
+    },
+    refundDetected,
+  );
   return {
     invoiceNumber: cleanParsedInvoiceNumber(parsed.invoiceNumber),
     vendor: vendorOut,
     date: resolveReceiptDateIso(parsed) || dateIsoFromEmailDateHeader(opts.headerDate),
-    totalAmount: totalAmt,
-    ivaAmount: parseMoneyNumber(parsed.ivaAmount),
-    tipAmount: parseMoneyNumber(parsed.tipAmount),
+    totalAmount: signed.totalAmount,
+    ivaAmount: signed.ivaAmount,
+    tipAmount: signed.tipAmount,
     category: categoryWithVendorHints(parsed.category, vendorOut),
     subject: opts.subject ?? "",
-    items: applyMeatLineReconcile(normalizeParsedMeatItems(parsed.items), totalAmt, vendorOut),
+    items: applyMeatLineReconcile(normalizeParsedMeatItems(parsed.items), signed.totalAmount, vendorOut),
   };
 }
 
@@ -1362,7 +1441,7 @@ function normalizeEmailInvoiceModelFields(
   for (const k of totalKeys) {
     if (flat[k] !== undefined && flat[k] !== null && String(flat[k]).trim() !== "") {
       const n = parseMoneyNumber(flat[k]);
-      if (n > 0) {
+      if (Math.abs(n) > 0) {
         totalAmount = n;
         break;
       }
@@ -1425,17 +1504,36 @@ function normalizeEmailInvoiceModelFields(
   ).trim();
 
   const category = categoryWithVendorHints(flat.category, vendor);
+  const refundDetected =
+    parseBooleanLike(flat.isRefund) ||
+    parseBooleanLike(flat.refund) ||
+    looksLikeRefundDocument(
+      flat.documentType,
+      flat.tipoDocumento,
+      flat.notes,
+      flat.subject,
+      invoiceNumber,
+      vendor,
+    );
+  const signed = enforceRefundSign(
+    {
+      totalAmount,
+      ivaAmount,
+      tipAmount,
+    },
+    refundDetected,
+  );
 
   const vendorCanon = canonicalVendorDisplayName(vendor) || vendor;
   return {
-    totalAmount,
-    ivaAmount,
-    tipAmount,
+    totalAmount: signed.totalAmount,
+    ivaAmount: signed.ivaAmount,
+    tipAmount: signed.tipAmount,
     vendor,
     dateIso,
     invoiceNumber,
     category,
-    items: applyMeatLineReconcile(normalizeParsedMeatItems(flat.items), totalAmount, vendorCanon),
+    items: applyMeatLineReconcile(normalizeParsedMeatItems(flat.items), signed.totalAmount, vendorCanon),
   };
 }
 
@@ -1944,6 +2042,7 @@ const RECEIPT_PARSE_SYSTEM = `You read printed receipt and ticket photos from Sp
 
 You MUST output exactly one JSON object. Use these English key names (read Spanish text from the image but put values under the keys below; do not use other Spanish keys like importe or emisor):
 invoiceNumber, vendor, date, totalAmount, ivaAmount, tipAmount, category, items
+Optional extra key "isRefund" (boolean): true when the document is a refund/credit note (abono/devolución/rectificativa/storno).
 Optional extra key "fecha" (string): the date exactly as printed on the ticket when it shows slashes or dashes (e.g. "11/03/2026"). Helps verify DD/MM order alongside ISO in "date".
 
 CRITICAL — amounts (European style):
@@ -1951,6 +2050,7 @@ CRITICAL — amounts (European style):
 - Large amounts may look like 1.234,56 (dot = thousands, comma = decimals) → use JSON number 1234.56.
 - totalAmount = final amount to pay: look for TOTAL, IMPORTE TOTAL, TOTAL A PAGAR, SUMA, IMPORTE, Factura totals, or the bottom-line payment. NEVER use 0 for totalAmount if any plausible final total appears on the ticket.
 - ivaAmount = VAT: IVA, CUOTA IVA, BASE IMPONIBLE, % IVA lines; use 0 only if no tax amount is visible.
+- If the document is a refund / credit note (ABONO, DEVOLUCIÓN, RECTIFICATIVA, STORNO, CREDIT NOTE), output negative amounts for totalAmount, ivaAmount, and tipAmount, and set isRefund=true.
 
 invoiceNumber (document reference):
 - Prefer the printed invoice / factura id when you see labels like Nº Factura, FACTURA, Invoice No., etc.
@@ -2079,6 +2179,7 @@ Return ONLY a valid JSON object with these exact keys:
 - totalAmount: number (total amount in EUR)
 - ivaAmount: number (IVA/VAT amount in EUR, 0 if not found)
 - tipAmount: number (tip/gratuity amount in EUR, 0 if not found)
+- isRefund: boolean (true if this is a refund/credit note: abono/devolución/rectificativa/storno/credit note)
 - category: string (one of: "Meat", "Mercadona", "Seafood", "Vegetables", "Restaurant", "Gas Station", "Water", "Beverages", "Asian Market", "Caviar", "Truffle", "Organic Farm", "Hardware Store", "Other")
 - subject: string (email subject line)
 - items: array of {partName, quantity, unit:"kg", pricePerUnit, total, ivaPercent?}
@@ -2440,14 +2541,23 @@ function fallbackParseEmailInvoiceFromText(
     fromMatch?.[1],
     opts?.headerFrom,
   );
+  const refundDetected = looksLikeRefundDocument(rawMultiline, subject, invoiceNumberOut, vendorOut);
+  const signed = enforceRefundSign(
+    {
+      totalAmount: totalParsed,
+      ivaAmount: ivaParsed,
+      tipAmount: 0,
+    },
+    refundDetected,
+  );
 
   return {
     invoiceNumber: invoiceNumberOut,
     vendor: vendorOut,
     date: safeDate,
-    totalAmount: totalParsed,
-    ivaAmount: ivaParsed,
-    tipAmount: 0,
+    totalAmount: signed.totalAmount,
+    ivaAmount: signed.ivaAmount,
+    tipAmount: signed.tipAmount,
     category: categoryWithVendorHints("Other", vendorOut),
     subject: subject ?? "",
     items: [],
@@ -2627,15 +2737,35 @@ export const appRouter = router({
             canonicalVendorDisplayName(String(parsed.vendor ?? "").trim()) ||
             String(parsed.vendor ?? "").trim();
           const totalOcr = parseMoneyNumber(parsed.totalAmount);
+          const refundDetected =
+            parseBooleanLike(parsed.isRefund) ||
+            parseBooleanLike(parsed.refund) ||
+            looksLikeRefundDocument(
+              parsed.documentType,
+              parsed.tipoDocumento,
+              parsed.notes,
+              parsed.invoiceNumber,
+              parsed.vendor,
+              cleaned,
+            );
+          const signed = enforceRefundSign(
+            {
+              totalAmount: totalOcr,
+              ivaAmount: parseMoneyNumber(parsed.ivaAmount),
+              tipAmount: parseMoneyNumber(parsed.tipAmount),
+            },
+            refundDetected,
+          );
           return {
             invoiceNumber: String(parsed.invoiceNumber ?? "").trim(),
             vendor: vendorOcr,
             date: dateOut,
-            totalAmount: totalOcr,
-            ivaAmount: parseMoneyNumber(parsed.ivaAmount),
-            tipAmount: parseMoneyNumber(parsed.tipAmount),
+            totalAmount: signed.totalAmount,
+            ivaAmount: signed.ivaAmount,
+            tipAmount: signed.tipAmount,
+            refundDetected,
             category: categoryWithVendorHints(parsed.category, vendorOcr),
-            items: applyMeatLineReconcile(normalizeParsedMeatItems(parsed.items), totalOcr, vendorOcr),
+            items: applyMeatLineReconcile(normalizeParsedMeatItems(parsed.items), signed.totalAmount, vendorOcr),
           };
         } catch (err) {
           if (err instanceof TRPCError) throw err;
@@ -3324,6 +3454,8 @@ export const appRouter = router({
                 })
                 .optional(),
               tip: z.number().optional(),
+              /** Display name of the signed-in user that saved/uploaded this row — written to column O "Uploaded By". */
+              uploadedByName: z.string().max(200).optional(),
               items: z.array(
                 z.object({
                   partName: z.string(),
@@ -3379,7 +3511,7 @@ export const appRouter = router({
         const headerValues = [[...MAIN_TRACKER_HEADER_ROW]];
 
         // Check if sheet exists and has headers
-        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:N1")}`;
+        const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:O1")}`;
         const checkRes = await fetch(checkUrl, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -3391,7 +3523,7 @@ export const appRouter = router({
           if (!checkData.values || checkData.values.length === 0) {
             // Add headers
             await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:N1")}?valueInputOption=RAW`,
+              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:O1")}?valueInputOption=RAW`,
               {
                 method: "PUT",
                 headers: {
@@ -3401,10 +3533,10 @@ export const appRouter = router({
                 body: JSON.stringify({ values: headerValues }),
               }
             );
-          } else if ((checkData.values[0]?.length ?? 0) < 14) {
-            // Migrate 13-column tracker → add "Meat line items (JSON)" so new rows align.
+          } else if ((checkData.values[0]?.length ?? 0) < MAIN_TRACKER_HEADER_ROW.length) {
+            // Migrate older trackers (13/14 columns) → ensure full header (incl. Uploaded By at O) so new rows align.
             await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:N1")}?valueInputOption=RAW`,
+              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeValuesRange(sheetName, "A1:O1")}?valueInputOption=RAW`,
               {
                 method: "PUT",
                 headers: {
@@ -3772,11 +3904,12 @@ export const appRouter = router({
               clampStringForSheetsCell(imageColumnValue, "Receipt"),
               clampStringForSheetsCell(now, "Exported At"),
               meatCell,
+              clampStringForSheetsCell(r.uploadedByName ?? "", "Uploaded By"),         // O - Uploaded By
             ];
           })
         );
 
-        const range = `${sheetName}!A:N`;
+        const range = `${sheetName}!A:O`;
         const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
         let appendRes: Response | null = null;
         let appendErrText = "";

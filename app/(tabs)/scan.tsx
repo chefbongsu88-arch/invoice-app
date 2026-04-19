@@ -29,6 +29,7 @@ import {
 import { APP_SCAN_STEP_TITLE } from "@/constants/app-typography";
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { useAuth } from "@/hooks/use-auth";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
 import {
@@ -480,6 +481,7 @@ export default function ScanScreen() {
   const tile = translucentTile(colors);
   const router = useRouter();
   const { addInvoice, checkDuplicate } = useInvoices();
+  const { user } = useAuth();
   const [step, setStep] = useState<ScanStep>("capture");
   const [imageUri, setImageUri] = useState<string | null>(null);
   /** Prefer Expo ImagePicker base64 (reliable on iOS/Android); FileSystem read is fallback */
@@ -621,7 +623,13 @@ export default function ScanScreen() {
       );
       setTotalAmount(parsed.totalAmount?.toString() ?? "");
       setIvaAmount(parsed.ivaAmount?.toString() ?? "");
-      setTip(""); // Reset tip for manual entry
+      setTip(parsed.tipAmount?.toString() ?? "");
+      if (parsed.refundDetected) {
+        Alert.alert(
+          "Refund detected",
+          "This receipt looks like a refund/credit note. Amounts were set to negative automatically. Please review before saving.",
+        );
+      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setMeatEditorKey((k) => k + 1);
       setStep("review");
@@ -657,6 +665,7 @@ export default function ScanScreen() {
         }
       }
 
+      const uploaderDisplayName = (user?.name ?? user?.email ?? "").trim();
       const invoice: Invoice = {
         id: `cam_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
         source: "camera",
@@ -669,13 +678,14 @@ export default function ScanScreen() {
         currency: "EUR",
         category,
         notes: notes.trim(),
-        tip: tipAmount > 0 ? tipAmount : undefined,
+        tip: tipAmount !== 0 ? tipAmount : undefined,
         imageUri: imageUrl ?? undefined,
         items: sanitizeMeatItemsForSave(
           items.length > 0 && meatMergeRef.current ? meatMergeRef.current() : items,
         ),
         exportedToSheets: false,
         createdAt: new Date().toISOString(),
+        uploadedByName: uploaderDisplayName || undefined,
       };
 
       const duplicate = await checkDuplicate(invoice);
@@ -706,6 +716,7 @@ export default function ScanScreen() {
     addInvoice,
     checkDuplicate,
     items,
+    user,
   ]);
 
   const resetScan = useCallback(() => {

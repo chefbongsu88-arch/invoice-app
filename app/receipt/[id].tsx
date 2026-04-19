@@ -19,6 +19,7 @@ import {
 import { APP_RECEIPT_VENDOR } from "@/constants/app-typography";
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { useAuth } from "@/hooks/use-auth";
 import { useColors } from "@/hooks/use-colors";
 import { useInvoices } from "@/hooks/use-invoices";
 import { getApiBaseUrl } from "@/constants/oauth";
@@ -80,6 +81,7 @@ export default function ReceiptDetailScreen() {
   const colors = useColors();
   const router = useRouter();
   const { invoices, deleteInvoice, updateInvoice, reload } = useInvoices();
+  const { user } = useAuth();
   const [exporting, setExporting] = useState(false);
 
   const exportMutation = trpc.invoices.exportToSheets.useMutation();
@@ -154,6 +156,9 @@ export default function ReceiptDetailScreen() {
             items: invoice.items,
             imageUrl: imageBase64 ? `data:image/jpeg;base64,${imageBase64}` : "",
             gmailMessageId: invoice.emailId ?? undefined,
+            uploadedByName:
+              (invoice.uploadedByName?.trim() || user?.name?.trim() || user?.email?.trim() || "") ||
+              undefined,
             ...(gmailReceiptFetch ? { gmailReceiptFetch } : {}),
           },
         ],
