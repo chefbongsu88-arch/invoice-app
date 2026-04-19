@@ -155,7 +155,7 @@ const config: ExpoConfig = {
       {
         // Reversed Web client ID — required for iOS native Google Sign-In (no custom Manus bounce URL).
         iosUrlScheme:
-          "com.googleusercontent.apps.614052249025-n9uf9hirmtop9phdl1bjsdod8d6sfhg2",
+          "com.googleusercontent.apps.738380741083-sa2qlbd83jefbaig9utnat4p7rt5r81v",
       },
     ],
   ],

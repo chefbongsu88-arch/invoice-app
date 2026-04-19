@@ -71,7 +71,7 @@ async function mergeAppSettingsPatch(patch: Record<string, unknown>): Promise<vo
 
 const WEB_GOOGLE_CLIENT_ID =
   process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ??
-  "614052249025-n9uf9hirmtop9phdl1bjsdod8d6sfhg2.apps.googleusercontent.com";
+  "738380741083-sa2qlbd83jefbaig9utnat4p7rt5r81v.apps.googleusercontent.com";
 const IOS_GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? "";
 const GMAIL_FETCH_PAGE_SIZE = 10;
 
